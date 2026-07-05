@@ -1,0 +1,121 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum RoleName {
+  GRAPHIC_TEAM_LEADER
+  MAPPING_INSPECTOR
+  GRAPHIC_QA
+  OPS_ADMIN
+}
+
+enum MapPhase {
+  INTAKE
+  PREP
+  UPLOAD_REVIEW
+  FIELD
+  POLISH
+  QA_REVIEW
+  APPROVED
+}
+
+enum InspectorStatus {
+  ACCEPTED
+  PROCESSING
+  DONE
+}
+
+enum QaStatus {
+  FIX
+  FIX_DONE
+  APPROVED
+}
+
+enum TaskStatus {
+  PENDING
+  ACCEPTED
+  PROCESSING
+  DONE
+  FIX
+  FIX_DONE
+}
+
+model User {
+  id        String     @id @default(cuid())
+  email     String     @unique
+  name      String
+  avatarUrl String?
+  googleId  String?    @unique
+  roles     UserRole[]
+  assignedMapsAsInspector Map[]  @relation("InspectorMaps")
+  assignedMapsAsQa      Map[]  @relation("QaMaps")
+  assignedTasks           Task[]
+  createdTasks            Task[] @relation("TaskCreator")
+  events                  MapEvent[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+}
+
+model UserRole {
+  id     String   @id @default(cuid())
+  userId String
+  role   RoleName
+  user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, role])
+}
+
+model Map {
+  id              String           @id @default(cuid())
+  mapNumber       String           @unique
+  jiraTicketId    String?
+  client          String
+  area            String?
+  description     String?
+  phase           MapPhase         @default(INTAKE)
+  inspectorStatus InspectorStatus?
+  qaStatus        QaStatus?
+  uploadApproved  Boolean          @default(false)
+  assignedInspectorId String?
+  assignedInspector   User?        @relation("InspectorMaps", fields: [assignedInspectorId], references: [id])
+  assignedQaId        String?
+  assignedQa          User?        @relation("QaMaps", fields: [assignedQaId], references: [id])
+  tasks           Task[]
+  events          MapEvent[]
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+}
+
+model Task {
+  id          String     @id @default(cuid())
+  mapId       String
+  map         Map        @relation(fields: [mapId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  status      TaskStatus @default(PENDING)
+  phase       MapPhase
+  createdById String
+  createdBy   User       @relation("TaskCreator", fields: [createdById], references: [id])
+  assignedToId String?
+  assignedTo   User?     @relation(fields: [assignedToId], references: [id])
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
+model MapEvent {
+  id        String   @id @default(cuid())
+  mapId     String
+  map       Map      @relation(fields: [mapId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  action    String
+  note      String?
+  metadata  String?
+  createdAt DateTime @default(now())
+}
