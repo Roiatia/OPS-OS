@@ -256,6 +256,105 @@ export async function assignInspector(
   return prisma.map.findUnique({ where: { id: mapId }, include: mapIncludes });
 }
 
+export async function shuffleAssignInspectors(
+  mapIds: string[],
+  inspectorIds: string[],
+  user: AuthUser
+) {
+  if (mapIds.length === 0) throw new Error("No maps to assign");
+  if (inspectorIds.length === 0) throw new Error("Select at least one inspector");
+
+  const maps = await prisma.map.findMany({
+    where: { id: { in: mapIds } },
+    orderBy: { mapNumber: "asc" },
+  });
+  if (maps.length !== mapIds.length) throw new Error("Some maps were not found");
+
+  for (const map of maps) {
+    if (map.phase !== MapPhase.INTAKE) {
+      throw new Error(`${map.mapNumber} is not unassigned`);
+    }
+  }
+
+  const inspectors = await prisma.user.findMany({
+    where: {
+      id: { in: inspectorIds },
+      roles: { some: { role: RoleName.MAPPING_INSPECTOR } },
+    },
+    orderBy: { name: "asc" },
+  });
+  if (inspectors.length === 0) throw new Error("No valid inspectors found");
+
+  const activeCounts = await prisma.map.groupBy({
+    by: ["assignedInspectorId"],
+    where: {
+      assignedInspectorId: { in: inspectorIds },
+      phase: { notIn: ARCHIVED_PHASES },
+    },
+    _count: { _all: true },
+  });
+
+  const workload = new Map<string, number>();
+  for (const id of inspectorIds) workload.set(id, 0);
+  for (const row of activeCounts) {
+    if (row.assignedInspectorId) {
+      workload.set(row.assignedInspectorId, row._count._all);
+    }
+  }
+
+  const assignments: { mapId: string; inspectorId: string; inspectorName: string }[] = [];
+
+  for (const map of maps) {
+    const pick = [...inspectors].sort((a, b) => {
+      const diff = (workload.get(a.id) ?? 0) - (workload.get(b.id) ?? 0);
+      return diff !== 0 ? diff : a.name.localeCompare(b.name);
+    })[0]!;
+    workload.set(pick.id, (workload.get(pick.id) ?? 0) + 1);
+    assignments.push({ mapId: map.id, inspectorId: pick.id, inspectorName: pick.name });
+  }
+
+  await prisma.$transaction(async (tx) => {
+    for (const { mapId, inspectorId, inspectorName } of assignments) {
+      await tx.map.update({
+        where: { id: mapId },
+        data: {
+          assignedInspectorId: inspectorId,
+          phase: MapPhase.PREP,
+          inspectorStatus: null,
+          qaStatus: null,
+        },
+      });
+      await tx.mapPhaseHistory.create({
+        data: {
+          mapId,
+          phase: MapPhase.PREP,
+          userId: user.id,
+          note: `Shuffle assigned to ${inspectorName}`,
+        },
+      });
+      await tx.mapEvent.create({
+        data: {
+          mapId,
+          userId: user.id,
+          action: "assigned_inspector",
+          note: `Shuffle assigned to ${inspectorName}`,
+        },
+      });
+    }
+  });
+
+  const distribution = inspectors.map((inspector) => ({
+    inspectorId: inspector.id,
+    inspectorName: inspector.name,
+    assigned: assignments.filter((a) => a.inspectorId === inspector.id).length,
+    totalAfter:
+      (activeCounts.find((r) => r.assignedInspectorId === inspector.id)?._count._all ?? 0) +
+      assignments.filter((a) => a.inspectorId === inspector.id).length,
+  }));
+
+  return { assigned: assignments.length, distribution };
+}
+
 export async function assignQa(
   mapId: string,
   qaId: string,
@@ -560,6 +659,7 @@ export async function createMapFromJira(
     client: string;
     area?: string;
     description?: string;
+    dueDate?: string;
   },
   user: AuthUser
 ) {
@@ -570,12 +670,35 @@ export async function createMapFromJira(
       client: data.client,
       area: data.area,
       description: data.description,
+      dueDate: data.dueDate ? new Date(data.dueDate) : undefined,
       phase: MapPhase.INTAKE,
     },
     include: mapIncludes,
   });
   await logPhaseEntry(map.id, MapPhase.INTAKE, user.id, "Map created from CS");
   await logEvent(map.id, user.id, "map_created", `From Jira ${data.jiraTicketId ?? ""}`);
+  return map;
+}
+
+export async function updateMapDueDate(mapId: string, dueDate: string | null, user: AuthUser) {
+  const existing = await prisma.map.findUnique({ where: { id: mapId } });
+  if (!existing) throw new Error("Map not found");
+  if (ARCHIVED_PHASES.includes(existing.phase)) {
+    throw new Error("Cannot update deadline on archived maps");
+  }
+
+  const map = await prisma.map.update({
+    where: { id: mapId },
+    data: { dueDate: dueDate ? new Date(dueDate) : null },
+    include: mapIncludes,
+  });
+
+  await logEvent(
+    mapId,
+    user.id,
+    "due_date_updated",
+    dueDate ? `Deadline set to ${dueDate}` : "Deadline cleared"
+  );
   return map;
 }
 

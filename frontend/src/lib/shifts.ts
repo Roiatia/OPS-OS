@@ -15,19 +15,19 @@ export const SHIFTS: ShiftDefinition[] = [
     id: "morning",
     label: "Morning",
     hours: "06:00 – 14:00",
-    memberEmails: ["inspector@ops-demo.local"],
+    memberEmails: ["inspector@ops-demo.local", "inspector2@ops-demo.local"],
   },
   {
     id: "afternoon",
     label: "Afternoon",
     hours: "14:00 – 22:00",
-    memberEmails: ["inspector@ops-demo.local"],
+    memberEmails: ["inspector3@ops-demo.local"],
   },
   {
     id: "night",
     label: "Night",
     hours: "22:00 – 06:00",
-    memberEmails: ["inspector@ops-demo.local"],
+    memberEmails: ["inspector4@ops-demo.local"],
   },
 ];
 

@@ -2,7 +2,7 @@ import { PrismaClient, RoleName } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
-/** Three fictional graphics-team users — one role each. */
+/** Demo graphics-team users */
 const DEMO_USERS = [
   {
     email: "leader@ops-demo.local",
@@ -15,8 +15,33 @@ const DEMO_USERS = [
     roles: [RoleName.MAPPING_INSPECTOR] as RoleName[],
   },
   {
+    email: "inspector2@ops-demo.local",
+    name: "Yossi Barak",
+    roles: [RoleName.MAPPING_INSPECTOR] as RoleName[],
+  },
+  {
+    email: "inspector3@ops-demo.local",
+    name: "Noa Mizrahi",
+    roles: [RoleName.MAPPING_INSPECTOR] as RoleName[],
+  },
+  {
+    email: "inspector4@ops-demo.local",
+    name: "Amir Goldberg",
+    roles: [RoleName.MAPPING_INSPECTOR] as RoleName[],
+  },
+  {
     email: "qa@ops-demo.local",
     name: "Maya Rosen",
+    roles: [RoleName.GRAPHIC_QA] as RoleName[],
+  },
+  {
+    email: "qa2@ops-demo.local",
+    name: "Rina Shalev",
+    roles: [RoleName.GRAPHIC_QA] as RoleName[],
+  },
+  {
+    email: "qa3@ops-demo.local",
+    name: "Tomer Avivi",
     roles: [RoleName.GRAPHIC_QA] as RoleName[],
   },
 ];

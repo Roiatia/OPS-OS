@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { MapRecord, TeamMember } from "../../types";
 import { Modal } from "./Modal";
-import { canAssignInspector, countInspectorWorkload } from "../../lib/mapDisplay";
+import { pickLeastLoadedInspector, countInspectorActiveMaps } from "../../lib/assignment";
+import { canAssignInspector } from "../../lib/mapDisplay";
 import { SHIFTS, type ShiftId, getShiftInspectors } from "../../lib/shifts";
 
 type AssignMode = "individual" | "shift";
@@ -22,11 +23,16 @@ interface Props {
 
 export function AssignMapModal({ map, team, maps, loading, onClose, onAssign }: Props) {
   const [mode, setMode] = useState<AssignMode>("individual");
-  const [memberId, setMemberId] = useState(map.assignedInspector?.id ?? "");
   const [shiftId, setShiftId] = useState<ShiftId>("morning");
   const [file, setFile] = useState<File | null>(null);
 
   const inspectors = team.filter((m) => m.roles.some((r) => r.role === "MAPPING_INSPECTOR"));
+  const inspectorIds = inspectors.map((m) => m.id);
+  const suggestedInspectorId = useMemo(
+    () => pickLeastLoadedInspector(inspectorIds, maps) ?? map.assignedInspector?.id ?? "",
+    [inspectorIds, maps, map.assignedInspector?.id]
+  );
+  const [memberId, setMemberId] = useState(suggestedInspectorId);
   const shiftInspectors = getShiftInspectors(team, shiftId);
   const canAssign = canAssignInspector(map);
 
@@ -135,10 +141,14 @@ export function AssignMapModal({ map, team, maps, loading, onClose, onAssign }: 
               <option value="">Select inspector...</option>
               {inspectors.map((m) => (
                 <option key={m.id} value={m.id}>
-                  {m.name} · {countInspectorWorkload(maps, m.id)} active
+                  {m.name} · {countInspectorActiveMaps(maps, m.id)} active
+                  {m.id === suggestedInspectorId ? " · suggested" : ""}
                 </option>
               ))}
             </select>
+            <p className="text-xs text-muted mt-1.5">
+              Suggested inspector has the fewest active maps.
+            </p>
           </label>
         )}
 

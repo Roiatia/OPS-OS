@@ -19,9 +19,16 @@ const NAV_ITEMS: NavItem[] = [
 interface Props {
   activeSection: LeaderSection;
   onSectionChange: (section: LeaderSection) => void;
+  idleInspectorCount?: number;
+  needsQaCount?: number;
 }
 
-export function LeaderSidebar({ activeSection, onSectionChange }: Props) {
+export function LeaderSidebar({
+  activeSection,
+  onSectionChange,
+  idleInspectorCount = 0,
+  needsQaCount = 0,
+}: Props) {
   return (
     <aside className="w-60 shrink-0 border-r border-border bg-white flex flex-col h-[calc(100vh-4rem)] sticky top-16 shadow-sm">
       <div className="px-4 py-5 border-b border-border">
@@ -55,6 +62,26 @@ export function LeaderSidebar({ activeSection, onSectionChange }: Props) {
                 <path strokeLinecap="round" strokeLinejoin="round" d={item.icon} />
               </svg>
               <span className="text-sm font-medium">{item.label}</span>
+              {item.id === "maps" && needsQaCount > 0 && (
+                <span
+                  className={`ml-auto text-[10px] font-bold tabular-nums px-1.5 py-0.5 rounded-full ${
+                    active ? "bg-white/20 text-white" : "bg-violet-100 text-violet-800"
+                  }`}
+                  title={`${needsQaCount} map(s) need QA assignment`}
+                >
+                  {needsQaCount}
+                </span>
+              )}
+              {item.id === "team" && idleInspectorCount > 0 && (
+                <span
+                  className={`ml-auto text-[10px] font-bold tabular-nums px-1.5 py-0.5 rounded-full ${
+                    active ? "bg-white/20 text-white" : "bg-amber-100 text-amber-800"
+                  }`}
+                  title={`${idleInspectorCount} inspector(s) with 0–1 active maps`}
+                >
+                  {idleInspectorCount}
+                </span>
+              )}
             </button>
           );
         })}

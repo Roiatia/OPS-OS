@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { AssignmentBoard } from "../components/leader/AssignmentBoard";
 import { CompanyDashboardPanel } from "../components/leader/CompanyDashboardPanel";
@@ -6,6 +6,8 @@ import { HistoryPanel } from "../components/leader/HistoryPanel";
 import { LeaderSidebar, type LeaderSection } from "../components/leader/LeaderSidebar";
 import { SettingsPanel } from "../components/leader/SettingsPanel";
 import { TeamPanel } from "../components/leader/TeamPanel";
+import { getIdleInspectors } from "../lib/assignment";
+import { needsQaAssignment } from "../lib/mapDisplay";
 import type { MapRecord, TeamMember } from "../types";
 
 const SECTION_TITLES: Record<LeaderSection, { title: string; subtitle: string }> = {
@@ -45,6 +47,7 @@ export function LeaderDashboardPage() {
     client: "",
     area: "",
     description: "",
+    dueDate: "",
   });
 
   function load() {
@@ -78,9 +81,10 @@ export function LeaderDashboardPage() {
         client: form.client,
         area: form.area || undefined,
         description: form.description || undefined,
+        dueDate: form.dueDate || undefined,
       });
       setShowAddMap(false);
-      setForm({ mapNumber: "", jiraTicketId: "", client: "", area: "", description: "" });
+      setForm({ mapNumber: "", jiraTicketId: "", client: "", area: "", description: "", dueDate: "" });
       load();
     } catch (err) {
       setError((err as Error).message);
@@ -90,15 +94,31 @@ export function LeaderDashboardPage() {
   const stats = {
     total: maps.length,
     qa: maps.filter((m) => ["UPLOAD_REVIEW", "QA_REVIEW"].includes(m.phase)).length,
+    needsQa: maps.filter((m) => needsQaAssignment(m)).length,
     inProgress: maps.filter((m) => ["PREP", "POLISH", "FIELD"].includes(m.phase)).length,
     intake: maps.filter((m) => m.phase === "INTAKE").length,
   };
+
+  const idleInspectorCount = useMemo(
+    () => getIdleInspectors(team, maps).length,
+    [team, maps]
+  );
+
+  const needsQaCount = useMemo(
+    () => maps.filter((m) => needsQaAssignment(m)).length,
+    [maps]
+  );
 
   const { title, subtitle } = SECTION_TITLES[activeSection];
 
   return (
     <div className="flex min-h-[calc(100vh-3.5rem)]">
-      <LeaderSidebar activeSection={activeSection} onSectionChange={setActiveSection} />
+      <LeaderSidebar
+        activeSection={activeSection}
+        onSectionChange={setActiveSection}
+        idleInspectorCount={idleInspectorCount}
+        needsQaCount={needsQaCount}
+      />
 
       <div className="flex-1 min-w-0 px-6 py-6 overflow-y-auto">
         <div className="space-y-6">
@@ -124,15 +144,18 @@ export function LeaderDashboardPage() {
             <>
               {activeSection === "maps" && (
                 <>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                     {[
                       { label: "All maps", value: stats.total },
                       { label: "Awaiting assign", value: stats.intake },
                       { label: "In progress", value: stats.inProgress },
                       { label: "In QA", value: stats.qa },
+                      { label: "Needs QA assign", value: stats.needsQa, highlight: stats.needsQa > 0 },
                     ].map((s) => (
                       <div key={s.label} className="bg-card border border-border rounded-2xl p-4 shadow-sm">
-                        <div className="text-2xl font-bold text-brand-600">{s.value}</div>
+                        <div className={`text-2xl font-bold ${s.highlight ? "text-violet-600" : "text-brand-600"}`}>
+                          {s.value}
+                        </div>
                         <div className="text-sm text-muted">{s.label}</div>
                       </div>
                     ))}
@@ -176,6 +199,15 @@ export function LeaderDashboardPage() {
                         className="border border-border rounded-lg px-3 py-2 text-sm sm:col-span-2"
                         rows={2}
                       />
+                      <label className="block sm:col-span-2">
+                        <span className="text-sm text-muted">Deadline (optional)</span>
+                        <input
+                          type="date"
+                          value={form.dueDate}
+                          onChange={(e) => setForm({ ...form, dueDate: e.target.value })}
+                          className="mt-1 w-full border border-border rounded-lg px-3 py-2 text-sm"
+                        />
+                      </label>
                       {error && <p className="sm:col-span-2 text-sm text-red-600">{error}</p>}
                       <div className="sm:col-span-2 flex gap-2">
                         <button

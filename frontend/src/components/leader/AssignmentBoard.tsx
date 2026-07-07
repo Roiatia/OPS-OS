@@ -1,13 +1,26 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api";
 import type { MapRecord, TeamMember } from "../../types";
 import { Badge } from "../Badge";
 import { AssignMapModal } from "./AssignMapModal";
+import { AssignQaModal } from "./AssignQaModal";
+import { Modal } from "./Modal";
+import {
+  buildBalancedInspectorAssignments,
+  countInspectorActiveMaps,
+  countQaActiveMaps,
+  summarizeShufflePlan,
+} from "../../lib/assignment";
+import {
+  DUE_DATE_CLASS,
+  formatDueDate,
+  getDueDateStatus,
+  toDateInputValue,
+} from "../../lib/dates";
 import {
   canAssignInspector,
   canAssignQa,
-  countInspectorWorkload,
   EMPTY_COLUMN_FILTERS,
   getInspectorLabel,
   getMapDisplayState,
@@ -24,6 +37,7 @@ import {
   type MapColumnFilters,
 } from "../../lib/mapDisplay";
 import { SHIFTS, getShiftInspectors, type ShiftId } from "../../lib/shifts";
+import { ROLE_LABELS } from "../../types";
 
 interface Props {
   maps: MapRecord[];
@@ -50,8 +64,15 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [assignMap, setAssignMap] = useState<MapRecord | null>(null);
+  const [assignQaMap, setAssignQaMap] = useState<MapRecord | null>(null);
+  const [bulkQaId, setBulkQaId] = useState("");
+  const [dueDateSaving, setDueDateSaving] = useState<string | null>(null);
+  const [shuffleOpen, setShuffleOpen] = useState(false);
+  const [shuffleStep, setShuffleStep] = useState<"pick" | "preview">("pick");
+  const [shuffleInspectorIds, setShuffleInspectorIds] = useState<Set<string>>(new Set());
 
   const inspectors = team.filter((m) => m.roles.some((r) => r.role === "MAPPING_INSPECTOR"));
+  const qaMembers = team.filter((m) => m.roles.some((r) => r.role === "GRAPHIC_QA"));
 
   const filterOptions = useMemo(() => {
     const clients = new Set<string>();
@@ -98,13 +119,35 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
     [maps]
   );
 
-  const assignableSelected = useMemo(
+  const selectedForShuffle = useMemo(
     () =>
       filteredMaps.filter(
-        (m) => selected.has(m.id) && canAssignInspector(m) && needsInspectorAssignment(m)
+        (m) => selected.has(m.id) && needsInspectorAssignment(m)
       ),
     [filteredMaps, selected]
   );
+
+  const selectedNeedingQa = useMemo(
+    () =>
+      filteredMaps.filter(
+        (m) => selected.has(m.id) && needsQaAssignment(m)
+      ),
+    [filteredMaps, selected]
+  );
+
+  const assignableSelected = selectedForShuffle;
+
+  useEffect(() => {
+    if (inspectors.length === 0) return;
+    setShuffleInspectorIds((prev) => {
+      if (prev.size > 0) {
+        const next = new Set([...prev].filter((id) => inspectors.some((m) => m.id === id)));
+        for (const m of inspectors) next.add(m.id);
+        return next;
+      }
+      return new Set(inspectors.map((m) => m.id));
+    });
+  }, [inspectors]);
 
   function updateFilter(key: keyof MapColumnFilters, value: string) {
     setColumnFilters((prev) => ({ ...prev, [key]: value }));
@@ -125,7 +168,7 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
 
   function toggleSelectAll() {
     const assignable = filteredMaps.filter(
-      (m) => canAssignInspector(m) && needsInspectorAssignment(m)
+      (m) => needsInspectorAssignment(m) || needsQaAssignment(m)
     );
     if (assignable.every((m) => selected.has(m.id))) {
       setSelected((prev) => {
@@ -204,14 +247,122 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
     }
   }
 
+  const shuffleInspectors = inspectors.filter((m) => shuffleInspectorIds.has(m.id));
+
+  const shufflePreviewRows = useMemo(() => {
+    if (assignableSelected.length < 2 || shuffleInspectors.length === 0) return [];
+    const plan = buildBalancedInspectorAssignments(
+      assignableSelected,
+      shuffleInspectors,
+      maps
+    );
+    return summarizeShufflePlan(plan, shuffleInspectors, maps);
+  }, [assignableSelected, shuffleInspectors, maps]);
+
+  function openShuffleModal() {
+    setError("");
+    setShuffleStep("pick");
+    setShuffleInspectorIds(new Set(inspectors.map((m) => m.id)));
+    setShuffleOpen(true);
+  }
+
+  function toggleShuffleInspector(id: string) {
+    setShuffleInspectorIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        if (next.size > 1) next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
+
+  async function handleShuffleAssign() {
+    if (assignableSelected.length < 2 || shuffleInspectors.length === 0) return;
+    setError("");
+    setLoading(true);
+    try {
+      await api.shuffleAssignMaps(
+        assignableSelected.map((m) => m.id),
+        shuffleInspectors.map((m) => m.id)
+      );
+      setShuffleOpen(false);
+      setSelected(new Set());
+      onRefresh();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleBulkQaAssign() {
+    if (!bulkQaId || selectedNeedingQa.length === 0) return;
+    setError("");
+    setLoading(true);
+    try {
+      for (const map of selectedNeedingQa) {
+        await api.assignQa(map.id, bulkQaId);
+      }
+      setSelected(new Set());
+      setBulkQaId("");
+      onRefresh();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleQaAssign(opts: {
+    qaId: string;
+    attachment?: { fileName: string; mimeType: string; data: string };
+  }) {
+    if (!assignQaMap) return;
+    setError("");
+    setLoading(true);
+    try {
+      await api.assignQa(assignQaMap.id, opts.qaId, opts.attachment);
+      setAssignQaMap(null);
+      setSelected(new Set());
+      onRefresh();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleDueDateChange(mapId: string, value: string) {
+    setError("");
+    setDueDateSaving(mapId);
+    try {
+      await api.updateMapDueDate(mapId, value || null);
+      onRefresh();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setDueDateSaving(null);
+    }
+  }
+
   const assignableInView = filteredMaps.filter(
-    (m) => canAssignInspector(m) && needsInspectorAssignment(m)
+    (m) => needsInspectorAssignment(m) || needsQaAssignment(m)
   );
   const allAssignableSelected =
     assignableInView.length > 0 && assignableInView.every((m) => selected.has(m.id));
 
-  function canShowAssign(map: MapRecord) {
+  function canSelectMap(map: MapRecord) {
+    return needsInspectorAssignment(map) || needsQaAssignment(map);
+  }
+
+  function canShowInspectorAssign(map: MapRecord) {
     return canAssignInspector(map);
+  }
+
+  function canShowQaAssign(map: MapRecord) {
+    return canAssignQa(map);
   }
 
   return (
@@ -235,6 +386,8 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
         )}
       </div>
 
+      {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg p-3">{error}</p>}
+
       <div className="flex flex-wrap gap-2">
         {QUEUE_TABS.map((tab) => (
           <button
@@ -257,40 +410,88 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
         ))}
       </div>
 
-      {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg p-3">{error}</p>}
+      {(selectedForShuffle.length > 0 || selectedNeedingQa.length > 0) && (
+        <div className="space-y-2">
+          {selectedForShuffle.length > 0 && (
+            <div className="flex flex-wrap items-center gap-3 bg-brand-50 border border-brand-200 rounded-xl px-4 py-3">
+              <span className="text-sm font-medium text-brand-800">
+                {selectedForShuffle.length} map{selectedForShuffle.length !== 1 ? "s" : ""} for
+                inspector assign
+              </span>
 
-      {assignableSelected.length > 0 && (
-        <div className="flex flex-wrap items-center gap-3 bg-brand-50 border border-brand-200 rounded-xl px-4 py-3">
-          <span className="text-sm font-medium text-brand-800">
-            {assignableSelected.length} map{assignableSelected.length !== 1 ? "s" : ""} selected
-          </span>
-          <select
-            value={bulkInspectorId}
-            onChange={(e) => setBulkInspectorId(e.target.value)}
-            className="border border-border rounded-lg px-3 py-1.5 text-sm bg-white"
-          >
-            <option value="">Assign inspector...</option>
-            {inspectors.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name} ({countInspectorWorkload(maps, m.id)} active)
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            disabled={!bulkInspectorId || loading}
-            onClick={handleBulkAssign}
-            className="px-4 py-1.5 text-sm bg-brand-600 text-white rounded-lg disabled:opacity-50"
-          >
-            Assign selected
-          </button>
-          <button
-            type="button"
-            onClick={() => setSelected(new Set())}
-            className="text-sm text-muted hover:text-slate-900"
-          >
-            Clear
-          </button>
+              {selectedForShuffle.length >= 2 && (
+                <button
+                  type="button"
+                  disabled={loading || inspectors.length === 0}
+                  onClick={openShuffleModal}
+                  className="px-4 py-1.5 text-sm font-semibold bg-violet-600 text-white rounded-lg hover:bg-violet-700 disabled:opacity-50"
+                >
+                  Shuffle assign
+                </button>
+              )}
+
+              <select
+                value={bulkInspectorId}
+                onChange={(e) => setBulkInspectorId(e.target.value)}
+                className="border border-border rounded-lg px-3 py-1.5 text-sm bg-white"
+              >
+                <option value="">Assign inspector...</option>
+                {inspectors.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name} ({countInspectorActiveMaps(maps, m.id)} active)
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={!bulkInspectorId || loading}
+                onClick={handleBulkAssign}
+                className="px-4 py-1.5 text-sm bg-brand-600 text-white rounded-lg disabled:opacity-50"
+              >
+                Assign to inspector
+              </button>
+            </div>
+          )}
+
+          {selectedNeedingQa.length > 0 && (
+            <div className="flex flex-wrap items-center gap-3 bg-violet-50 border border-violet-200 rounded-xl px-4 py-3">
+              <span className="text-sm font-medium text-violet-800">
+                {selectedNeedingQa.length} map{selectedNeedingQa.length !== 1 ? "s" : ""} for QA
+                assign
+              </span>
+
+              <select
+                value={bulkQaId}
+                onChange={(e) => setBulkQaId(e.target.value)}
+                className="border border-border rounded-lg px-3 py-1.5 text-sm bg-white"
+              >
+                <option value="">Assign QA...</option>
+                {qaMembers.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name} ({countQaActiveMaps(maps, m.id)} active)
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={!bulkQaId || loading}
+                onClick={handleBulkQaAssign}
+                className="px-4 py-1.5 text-sm bg-violet-600 text-white rounded-lg disabled:opacity-50"
+              >
+                Assign to QA
+              </button>
+            </div>
+          )}
+
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() => setSelected(new Set())}
+              className="text-sm text-muted hover:text-slate-900"
+            >
+              Clear selection
+            </button>
+          </div>
         </div>
       )}
 
@@ -320,7 +521,8 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
                 <th className="px-3 py-2 font-medium min-w-[120px]">State</th>
                 <th className="px-3 py-2 font-medium min-w-[110px]">Inspector</th>
                 <th className="px-3 py-2 font-medium min-w-[100px]">QA</th>
-                <th className="px-3 py-2 font-medium w-[90px]">Assign</th>
+                <th className="px-3 py-2 font-medium min-w-[110px]">Deadline</th>
+                <th className="px-3 py-2 font-medium w-[120px]">Actions</th>
               </tr>
               <tr className="bg-white border-b border-border">
                 <th className="px-3 py-2" />
@@ -419,12 +621,13 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
                   </select>
                 </th>
                 <th className="px-3 py-2" />
+                <th className="px-3 py-2" />
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
               {filteredMaps.map((map) => {
                 const taskType = getTaskType(map);
-                const showCheckbox = canAssignInspector(map) && needsInspectorAssignment(map);
+                const selectable = canSelectMap(map);
                 return (
                   <tr
                     key={map.id}
@@ -436,22 +639,25 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
                           : ""
                     }`}
                   >
-                    <td className="px-3 py-3">
-                      {showCheckbox && (
+                    <td className="px-3 py-3 w-10">
+                      {selectable ? (
                         <input
                           type="checkbox"
                           checked={selected.has(map.id)}
                           onChange={() => toggleSelect(map.id)}
+                          aria-label={`Select ${map.mapNumber}`}
                         />
-                      )}
+                      ) : null}
                     </td>
                     <td className="px-3 py-3">
-                      <Link
-                        to={`/app/maps/${map.id}`}
-                        className="font-mono font-medium text-brand-600 hover:underline"
-                      >
-                        {map.mapNumber}
-                      </Link>
+                      <div className="flex items-center gap-2">
+                        <Link
+                          to={`/app/maps/${map.id}`}
+                          className="font-mono font-medium text-brand-600 hover:underline"
+                        >
+                          {map.mapNumber}
+                        </Link>
+                      </div>
                     </td>
                     <td className="px-3 py-3 text-muted">{map.client}</td>
                     <td className="px-3 py-3">
@@ -492,20 +698,56 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
                       )}
                     </td>
                     <td className="px-3 py-3">
-                      {canShowAssign(map) ? (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setError("");
-                            setAssignMap(map);
-                          }}
-                          className="px-3 py-1.5 text-xs font-medium bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors"
-                        >
-                          Assign
-                        </button>
-                      ) : (
-                        <span className="text-xs text-slate-300">—</span>
-                      )}
+                      <div className="flex flex-col gap-0.5 min-w-[100px]">
+                        <input
+                          type="date"
+                          value={toDateInputValue(map.dueDate)}
+                          disabled={dueDateSaving === map.id}
+                          onChange={(e) => handleDueDateChange(map.id, e.target.value)}
+                          className="w-full border border-border rounded px-1.5 py-1 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:opacity-50"
+                          title="Set map deadline"
+                        />
+                        {map.dueDate && (
+                          <span
+                            className={`text-[10px] ${DUE_DATE_CLASS[getDueDateStatus(map.dueDate)]}`}
+                          >
+                            {formatDueDate(map.dueDate)}
+                            {getDueDateStatus(map.dueDate) === "overdue" && " · Overdue"}
+                            {getDueDateStatus(map.dueDate) === "soon" && " · Due soon"}
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-3 py-3">
+                      <div className="flex flex-col gap-1">
+                        {canShowInspectorAssign(map) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setError("");
+                              setAssignMap(map);
+                            }}
+                            className="px-2.5 py-1 text-xs font-medium bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors"
+                          >
+                            Inspector
+                          </button>
+                        )}
+                        {canShowQaAssign(map) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setError("");
+                              setAssignQaMap(map);
+                            }}
+                            className="px-2.5 py-1 text-xs font-medium bg-violet-600 text-white rounded-lg hover:bg-violet-700 transition-colors"
+                          >
+                            QA
+                          </button>
+                        )}
+                        {!canShowInspectorAssign(map) && !canShowQaAssign(map) && (
+                          <span className="text-xs text-slate-300">—</span>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );
@@ -524,6 +766,148 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
           onClose={() => setAssignMap(null)}
           onAssign={handleAssign}
         />
+      )}
+
+      {assignQaMap && (
+        <AssignQaModal
+          map={assignQaMap}
+          team={team}
+          maps={maps}
+          loading={loading}
+          onClose={() => setAssignQaMap(null)}
+          onAssign={handleQaAssign}
+        />
+      )}
+
+      {shuffleOpen && (
+        <Modal
+          title={
+            shuffleStep === "pick"
+              ? `Choose inspectors for shuffle (${selectedForShuffle.length} maps)`
+              : `Preview shuffle (${selectedForShuffle.length} maps)`
+          }
+          onClose={() => !loading && setShuffleOpen(false)}
+          wide
+        >
+          <div className="space-y-4">
+            {shuffleStep === "pick" ? (
+              <>
+                <p className="text-sm text-muted">
+                  Select which mapping inspectors should receive maps. Maps are split evenly —
+                  those with fewer active maps get more.
+                </p>
+
+                <ul className="rounded-xl border border-border divide-y divide-border max-h-72 overflow-y-auto">
+                  {inspectors.map((member) => {
+                    const active = countInspectorActiveMaps(maps, member.id);
+                    const checked = shuffleInspectorIds.has(member.id);
+                    return (
+                      <li key={member.id}>
+                        <label className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-slate-50">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleShuffleInspector(member.id)}
+                          />
+                          <div className="w-9 h-9 shrink-0 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-sm font-semibold">
+                            {member.name.charAt(0)}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-medium">{member.name}</div>
+                            <div className="text-xs text-muted">
+                              {ROLE_LABELS.MAPPING_INSPECTOR} · {active} active map
+                              {active !== 1 ? "s" : ""}
+                            </div>
+                          </div>
+                        </label>
+                      </li>
+                    );
+                  })}
+                </ul>
+
+                {inspectors.length === 0 && (
+                  <p className="text-sm text-muted">No mapping inspectors on the team.</p>
+                )}
+
+                <div className="flex gap-2 justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setShuffleOpen(false)}
+                    className="px-4 py-2 text-sm text-muted"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={shuffleInspectorIds.size === 0}
+                    onClick={() => setShuffleStep("preview")}
+                    className="px-5 py-2 text-sm font-semibold bg-violet-600 text-white rounded-xl hover:bg-violet-700 disabled:opacity-50"
+                  >
+                    Continue
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-muted">
+                  {shuffleInspectors.length} inspector{shuffleInspectors.length !== 1 ? "s" : ""}{" "}
+                  selected · maps go to whoever has the lightest workload.
+                </p>
+
+                <div className="rounded-xl border border-border overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-slate-50 text-left text-muted border-b border-border">
+                        <th className="px-4 py-2 font-medium">Inspector</th>
+                        <th className="px-4 py-2 font-medium text-right">Active now</th>
+                        <th className="px-4 py-2 font-medium text-right">Receiving</th>
+                        <th className="px-4 py-2 font-medium text-right">Total after</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {shufflePreviewRows.map((row) => (
+                        <tr
+                          key={row.inspectorId}
+                          className={row.receiving > 0 ? "bg-violet-50/40" : ""}
+                        >
+                          <td className="px-4 py-2.5 font-medium">{row.inspectorName}</td>
+                          <td className="px-4 py-2.5 text-right tabular-nums">
+                            {row.currentActive}
+                          </td>
+                          <td className="px-4 py-2.5 text-right tabular-nums text-violet-700 font-semibold">
+                            +{row.receiving}
+                          </td>
+                          <td className="px-4 py-2.5 text-right tabular-nums font-semibold">
+                            {row.totalAfter}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="flex gap-2 justify-end">
+                  <button
+                    type="button"
+                    disabled={loading}
+                    onClick={() => setShuffleStep("pick")}
+                    className="px-4 py-2 text-sm text-muted"
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="button"
+                    disabled={loading}
+                    onClick={handleShuffleAssign}
+                    className="px-5 py-2 text-sm font-semibold bg-violet-600 text-white rounded-xl hover:bg-violet-700 disabled:opacity-50"
+                  >
+                    {loading ? "Assigning..." : "Confirm shuffle"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </Modal>
       )}
     </section>
   );

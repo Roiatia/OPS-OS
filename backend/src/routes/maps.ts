@@ -24,6 +24,35 @@ router.get("/history", requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_A
   }
 });
 
+router.post(
+  "/shuffle-assign",
+  requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN),
+  async (req, res) => {
+    try {
+      const { mapIds, inspectorIds } = req.body as {
+        mapIds?: string[];
+        inspectorIds?: string[];
+      };
+      if (!mapIds?.length) {
+        res.status(400).json({ error: "mapIds required" });
+        return;
+      }
+      if (!inspectorIds?.length) {
+        res.status(400).json({ error: "inspectorIds required" });
+        return;
+      }
+      const result = await workflow.shuffleAssignInspectors(
+        mapIds,
+        inspectorIds,
+        (req as AuthedRequest).user
+      );
+      res.json(result);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
 router.get("/team", requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN), async (_req, res) => {
   const team = await workflow.listTeamMembers();
   res.json(team);
@@ -95,6 +124,28 @@ router.post(
         qaId,
         (req as AuthedRequest).user,
         attachment
+      );
+      res.json(map);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+router.patch(
+  "/:id/due-date",
+  requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN),
+  async (req, res) => {
+    try {
+      const { dueDate } = req.body as { dueDate?: string | null };
+      if (dueDate !== null && dueDate !== undefined && Number.isNaN(Date.parse(dueDate))) {
+        res.status(400).json({ error: "Invalid dueDate" });
+        return;
+      }
+      const map = await workflow.updateMapDueDate(
+        req.params.id,
+        dueDate ?? null,
+        (req as AuthedRequest).user
       );
       res.json(map);
     } catch (e) {

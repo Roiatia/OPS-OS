@@ -59,10 +59,17 @@ export const api = {
     client: string;
     area?: string;
     description?: string;
+    dueDate?: string;
   }) =>
     request<import("./types").MapRecord>("/maps", {
       method: "POST",
       body: JSON.stringify(data),
+    }),
+
+  updateMapDueDate: (mapId: string, dueDate: string | null) =>
+    request<import("./types").MapRecord>(`/maps/${mapId}/due-date`, {
+      method: "PATCH",
+      body: JSON.stringify({ dueDate }),
     }),
 
   assignInspector: (
@@ -73,6 +80,20 @@ export const api = {
     request<import("./types").MapRecord>(`/maps/${mapId}/assign`, {
       method: "POST",
       body: JSON.stringify({ inspectorId, attachment }),
+    }),
+
+  shuffleAssignMaps: (mapIds: string[], inspectorIds: string[]) =>
+    request<{
+      assigned: number;
+      distribution: {
+        inspectorId: string;
+        inspectorName: string;
+        assigned: number;
+        totalAfter: number;
+      }[];
+    }>("/maps/shuffle-assign", {
+      method: "POST",
+      body: JSON.stringify({ mapIds, inspectorIds }),
     }),
 
   assignQa: (

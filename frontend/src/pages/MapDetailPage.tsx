@@ -5,16 +5,26 @@ import { useAuth, hasRole } from "../context/AuthContext";
 import { PhaseStepper } from "../components/PhaseStepper";
 import { Badge } from "../components/Badge";
 import { TaskTable } from "../components/TaskTable";
-import { getMapDisplayState, workflowStateTone } from "../lib/mapDisplay";
-import type { MapRecord } from "../types";
+import { AssignMapModal } from "../components/leader/AssignMapModal";
+import { AssignQaModal } from "../components/leader/AssignQaModal";
+import { getMapDisplayState, workflowStateTone, canAssignInspector, canAssignQa } from "../lib/mapDisplay";
+import { toDateInputValue, formatDueDate, getDueDateStatus, DUE_DATE_CLASS } from "../lib/dates";
+import { SHIFTS, getShiftInspectors } from "../lib/shifts";
+import type { MapRecord, TeamMember } from "../types";
 import { PHASE_LABELS } from "../types";
 
 export function MapDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { user } = useAuth();
   const [map, setMap] = useState<MapRecord | null>(null);
+  const [allMaps, setAllMaps] = useState<MapRecord[]>([]);
+  const [team, setTeam] = useState<TeamMember[]>([]);
   const [error, setError] = useState("");
   const [taskForm, setTaskForm] = useState({ title: "", description: "" });
+  const [assignInspectorOpen, setAssignInspectorOpen] = useState(false);
+  const [assignQaOpen, setAssignQaOpen] = useState(false);
+  const [assignLoading, setAssignLoading] = useState(false);
+  const [dueDateSaving, setDueDateSaving] = useState(false);
 
   const isLeader = hasRole(user!, "GRAPHIC_TEAM_LEADER", "OPS_ADMIN");
   const isInspector = hasRole(user!, "MAPPING_INSPECTOR");
@@ -29,6 +39,14 @@ export function MapDetailPage() {
   useEffect(() => {
     load();
   }, [id]);
+
+  useEffect(() => {
+    if (!user || !hasRole(user, "GRAPHIC_TEAM_LEADER", "OPS_ADMIN")) return;
+    Promise.all([api.getMaps(), api.getTeam()]).then(([m, t]) => {
+      setAllMaps(m);
+      setTeam(t);
+    });
+  }, [user]);
 
   async function act(fn: () => Promise<MapRecord>) {
     setError("");
@@ -259,6 +277,62 @@ export function MapDetailPage() {
                 </ActionBlock>
               )}
 
+              {isLeader && !isArchived && (
+                <ActionBlock title="Leader assignments" hint="Assign team members and set deadlines.">
+                  <div className="space-y-3">
+                    {canAssignInspector(map) && (
+                      <button
+                        type="button"
+                        onClick={() => setAssignInspectorOpen(true)}
+                        className="w-full py-2.5 bg-brand-600 text-white text-sm font-medium rounded-xl hover:bg-brand-700"
+                      >
+                        {map.assignedInspector ? "Reassign inspector" : "Assign inspector"}
+                      </button>
+                    )}
+                    {canAssignQa(map) && (
+                      <button
+                        type="button"
+                        onClick={() => setAssignQaOpen(true)}
+                        className="w-full py-2.5 bg-violet-600 text-white text-sm font-medium rounded-xl hover:bg-violet-700"
+                      >
+                        {map.assignedQa ? "Reassign QA" : "Assign QA"}
+                      </button>
+                    )}
+                    <label className="block">
+                      <span className="text-xs text-muted">Deadline</span>
+                      <input
+                        type="date"
+                        value={toDateInputValue(map.dueDate)}
+                        disabled={dueDateSaving}
+                        onChange={async (e) => {
+                          setDueDateSaving(true);
+                          setError("");
+                          try {
+                            const updated = await api.updateMapDueDate(
+                              map.id,
+                              e.target.value || null
+                            );
+                            setMap(updated);
+                          } catch (err) {
+                            setError((err as Error).message);
+                          } finally {
+                            setDueDateSaving(false);
+                          }
+                        }}
+                        className="mt-1 w-full border border-border rounded-xl px-3 py-2 text-sm disabled:opacity-50"
+                      />
+                      {map.dueDate && (
+                        <span
+                          className={`block text-xs mt-1 ${DUE_DATE_CLASS[getDueDateStatus(map.dueDate)]}`}
+                        >
+                          {formatDueDate(map.dueDate)}
+                        </span>
+                      )}
+                    </label>
+                  </div>
+                </ActionBlock>
+              )}
+
               {isQa && map.phase === "QA_REVIEW" && !map.qaStatus && (
                 <ActionBlock title="Polish QA review" hint="Approve or request fixes.">
                   <div className="grid grid-cols-2 gap-2">
@@ -376,6 +450,78 @@ export function MapDetailPage() {
           </div>
         )}
       </div>
+
+      {isLeader && map && assignInspectorOpen && (
+        <AssignMapModal
+          map={map}
+          team={team}
+          maps={allMaps}
+          loading={assignLoading}
+          onClose={() => setAssignInspectorOpen(false)}
+          onAssign={async (opts) => {
+            setAssignLoading(true);
+            setError("");
+            try {
+              if (opts.mode === "individual" && opts.memberId) {
+                const updated = await api.assignInspector(map.id, opts.memberId, opts.attachment);
+                setMap(updated);
+              } else if (opts.mode === "shift" && opts.shiftId) {
+                const shift = SHIFTS.find((s) => s.id === opts.shiftId)!;
+                const shiftInspectors = getShiftInspectors(team, opts.shiftId);
+                const leadInspector = shiftInspectors[0];
+                if (!leadInspector) throw new Error("No inspectors on this shift");
+
+                const updated = await api.assignInspector(
+                  map.id,
+                  leadInspector.id,
+                  opts.attachment
+                );
+                setMap(updated);
+
+                const taskPhase =
+                  map.phase === "POLISH" || map.phase === "QA_REVIEW" ? "POLISH" : "PREP";
+                for (const inspector of shiftInspectors) {
+                  await api.createTask(map.id, {
+                    title: `${shift.label} shift — ${map.mapNumber}`,
+                    description: `Assigned to ${shift.label} shift (${shift.hours})`,
+                    assignedToId: inspector.id,
+                    phase: taskPhase,
+                  });
+                }
+                load();
+              }
+              setAssignInspectorOpen(false);
+            } catch (err) {
+              setError((err as Error).message);
+            } finally {
+              setAssignLoading(false);
+            }
+          }}
+        />
+      )}
+
+      {isLeader && map && assignQaOpen && (
+        <AssignQaModal
+          map={map}
+          team={team}
+          maps={allMaps}
+          loading={assignLoading}
+          onClose={() => setAssignQaOpen(false)}
+          onAssign={async (opts) => {
+            setAssignLoading(true);
+            setError("");
+            try {
+              const updated = await api.assignQa(map.id, opts.qaId, opts.attachment);
+              setMap(updated);
+              setAssignQaOpen(false);
+            } catch (err) {
+              setError((err as Error).message);
+            } finally {
+              setAssignLoading(false);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }
