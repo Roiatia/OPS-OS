@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { AssignmentBoard } from "../components/leader/AssignmentBoard";
+import { NewMapsPanel } from "../components/leader/NewMapsPanel";
 import { CompanyDashboardPanel } from "../components/leader/CompanyDashboardPanel";
 import { HistoryPanel } from "../components/leader/HistoryPanel";
 import { LeaderSidebar, type LeaderSection } from "../components/leader/LeaderSidebar";
 import { SettingsPanel } from "../components/leader/SettingsPanel";
 import { TeamPanel } from "../components/leader/TeamPanel";
 import { getIdleInspectors } from "../lib/assignment";
-import { needsQaAssignment } from "../lib/mapDisplay";
+import { isNewMapForLeader, isPipelineMapForLeader, needsQaAssignment } from "../lib/mapDisplay";
 import type { MapRecord, TeamMember } from "../types";
 
 const SECTION_TITLES: Record<LeaderSection, { title: string; subtitle: string }> = {
@@ -91,12 +92,16 @@ export function LeaderDashboardPage() {
     }
   }
 
+  const newMaps = useMemo(() => maps.filter(isNewMapForLeader), [maps]);
+  const pipelineMaps = useMemo(() => maps.filter(isPipelineMapForLeader), [maps]);
+
   const stats = {
     total: maps.length,
+    newMaps: newMaps.length,
     qa: maps.filter((m) => ["UPLOAD_REVIEW", "QA_REVIEW"].includes(m.phase)).length,
-    needsQa: maps.filter((m) => needsQaAssignment(m)).length,
-    inProgress: maps.filter((m) => ["PREP", "POLISH", "FIELD"].includes(m.phase)).length,
-    intake: maps.filter((m) => m.phase === "INTAKE").length,
+    needsQa: maps.filter((m) => needsQaAssignment(m) && isPipelineMapForLeader(m)).length,
+    inProgress: maps.filter((m) => ["PREP", "POLISH"].includes(m.phase)).length,
+    onDashboard: maps.filter((m) => m.phase === "FIELD").length,
   };
 
   const idleInspectorCount = useMemo(
@@ -104,9 +109,11 @@ export function LeaderDashboardPage() {
     [team, maps]
   );
 
+  const newMapsCount = newMaps.length;
+
   const needsQaCount = useMemo(
-    () => maps.filter((m) => needsQaAssignment(m)).length,
-    [maps]
+    () => pipelineMaps.filter((m) => needsQaAssignment(m)).length,
+    [pipelineMaps]
   );
 
   const { title, subtitle } = SECTION_TITLES[activeSection];
@@ -118,6 +125,7 @@ export function LeaderDashboardPage() {
         onSectionChange={setActiveSection}
         idleInspectorCount={idleInspectorCount}
         needsQaCount={needsQaCount}
+        newMapsCount={newMapsCount}
       />
 
       <div className="flex-1 min-w-0 px-6 py-6 overflow-y-auto">
@@ -144,11 +152,12 @@ export function LeaderDashboardPage() {
             <>
               {activeSection === "maps" && (
                 <>
-                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
                     {[
                       { label: "All maps", value: stats.total },
-                      { label: "Awaiting assign", value: stats.intake },
-                      { label: "In progress", value: stats.inProgress },
+                      { label: "New maps", value: stats.newMaps, highlight: stats.newMaps > 0 },
+                      { label: "Inspector work", value: stats.inProgress },
+                      { label: "On dashboard", value: stats.onDashboard },
                       { label: "In QA", value: stats.qa },
                       { label: "Needs QA assign", value: stats.needsQa, highlight: stats.needsQa > 0 },
                     ].map((s) => (
@@ -227,7 +236,14 @@ export function LeaderDashboardPage() {
                     </form>
                   )}
 
-                  <AssignmentBoard maps={maps} team={team} onRefresh={load} />
+                  <NewMapsPanel maps={maps} team={team} onRefresh={load} />
+
+                  <AssignmentBoard
+                    maps={pipelineMaps}
+                    allMaps={maps}
+                    team={team}
+                    onRefresh={load}
+                  />
                 </>
               )}
 
@@ -235,7 +251,9 @@ export function LeaderDashboardPage() {
                 <TeamPanel team={team} maps={maps} onRefresh={load} />
               )}
 
-              {activeSection === "history" && <HistoryPanel maps={historyMaps} />}
+              {activeSection === "history" && (
+                <HistoryPanel maps={historyMaps} onRefresh={load} />
+              )}
 
               {activeSection === "company-dashboard" && <CompanyDashboardPanel />}
 

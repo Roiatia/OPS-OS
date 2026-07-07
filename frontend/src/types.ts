@@ -14,6 +14,8 @@ export type MapPhase =
   | "APPROVED"
   | "CANCELLED";
 
+export type WorkflowPhaseTarget = "PRE_UPLOAD" | "UPLOADED" | "POLISH" | "POLISHED";
+
 export type InspectorStatus = "ACCEPTED" | "PROCESSING" | "DONE";
 export type QaStatus = "FIX" | "FIX_DONE" | "APPROVED";
 export type TaskStatus = "PENDING" | "ACCEPTED" | "PROCESSING" | "DONE" | "FIX" | "FIX_DONE";
@@ -80,6 +82,10 @@ export interface MapRecord {
   phase: MapPhase;
   inspectorStatus: InspectorStatus | null;
   qaStatus: QaStatus | null;
+  inspectorAssignAccepted: boolean;
+  qaAssignAccepted: boolean;
+  releasedToPipeline: boolean;
+  workflowPhaseTarget: WorkflowPhaseTarget;
   uploadApproved: boolean;
   assignedInspector: { id: string; name: string; email: string } | null;
   assignedQa: { id: string; name: string; email: string } | null;
@@ -107,16 +113,17 @@ export const ROLE_LABELS: Record<RoleName, string> = {
 };
 
 export const PHASE_LABELS: Record<MapPhase, string> = {
-  INTAKE: "Intake",
-  PREP: "Initial Prep",
-  UPLOAD_REVIEW: "Upload Approval",
-  FIELD: "Field Work",
-  POLISH: "Polish",
-  QA_REVIEW: "QA Review",
+  INTAKE: "Pre-upload · Awaiting assign",
+  PREP: "Pre-upload · Inspector",
+  UPLOAD_REVIEW: "Pre-upload · QA",
+  FIELD: "Uploaded to dashboard",
+  POLISH: "Polish · Inspector",
+  QA_REVIEW: "Polish · QA",
   APPROVED: "Approved",
   CANCELLED: "Cancelled",
 };
 
+/** @deprecated Timeline UI uses WORKFLOW_TIMELINE in mapDisplay.ts */
 export const PHASE_ORDER: MapPhase[] = [
   "INTAKE",
   "PREP",

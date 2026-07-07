@@ -8,13 +8,14 @@ export const ROLE_LABELS: Record<RoleName, string> = {
 };
 
 export const PHASE_LABELS: Record<string, string> = {
-  INTAKE: "Intake (from Jira)",
-  PREP: "Initial Prep",
-  UPLOAD_REVIEW: "Upload Approval (QA)",
-  FIELD: "Field Work (Supervisors)",
-  POLISH: "Polish",
-  QA_REVIEW: "QA Review",
+  INTAKE: "Pre-upload · Awaiting assign",
+  PREP: "Pre-upload · Inspector",
+  UPLOAD_REVIEW: "Pre-upload · QA",
+  FIELD: "Uploaded to dashboard",
+  POLISH: "Polish · Inspector",
+  QA_REVIEW: "Polish · QA",
   APPROVED: "Approved",
+  CANCELLED: "Cancelled",
 };
 
 export type AuthUser = {

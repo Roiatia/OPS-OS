@@ -64,7 +64,7 @@ export function requireRoles(...roles: RoleName[]) {
   return (req: Request, res: Response, next: NextFunction) => {
     const user = (req as AuthedRequest).user;
     if (!roles.some((r) => user.roles.includes(r))) {
-      res.status(403).json({ error: "Forbidden" });
+      res.status(403).json({ error: "Forbidden — leader or admin role required" });
       return;
     }
     next();

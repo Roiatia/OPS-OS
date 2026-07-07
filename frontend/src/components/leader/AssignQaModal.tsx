@@ -59,7 +59,9 @@ export function AssignQaModal({ map, team, maps, loading, onClose, onAssign }: P
       <form onSubmit={handleSubmit} className="space-y-5">
         <p className="text-sm text-muted">
           Assign a graphic QA reviewer for{" "}
-          {map.phase === "UPLOAD_REVIEW" ? "upload review" : "polish QA review"}.
+          {map.phase === "UPLOAD_REVIEW"
+            ? "pre-upload (upload readiness check)"
+            : "polish (final approval)"}.
         </p>
 
         <label className="block">

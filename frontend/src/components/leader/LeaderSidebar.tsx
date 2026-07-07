@@ -21,6 +21,7 @@ interface Props {
   onSectionChange: (section: LeaderSection) => void;
   idleInspectorCount?: number;
   needsQaCount?: number;
+  newMapsCount?: number;
 }
 
 export function LeaderSidebar({
@@ -28,6 +29,7 @@ export function LeaderSidebar({
   onSectionChange,
   idleInspectorCount = 0,
   needsQaCount = 0,
+  newMapsCount = 0,
 }: Props) {
   return (
     <aside className="w-60 shrink-0 border-r border-border bg-white flex flex-col h-[calc(100vh-4rem)] sticky top-16 shadow-sm">
@@ -62,7 +64,17 @@ export function LeaderSidebar({
                 <path strokeLinecap="round" strokeLinejoin="round" d={item.icon} />
               </svg>
               <span className="text-sm font-medium">{item.label}</span>
-              {item.id === "maps" && needsQaCount > 0 && (
+              {item.id === "maps" && newMapsCount > 0 && (
+                <span
+                  className={`ml-auto text-[10px] font-bold tabular-nums px-1.5 py-0.5 rounded-full ${
+                    active ? "bg-white/20 text-white" : "bg-amber-100 text-amber-800"
+                  }`}
+                  title={`${newMapsCount} new map(s) awaiting assignment`}
+                >
+                  {newMapsCount}
+                </span>
+              )}
+              {item.id === "maps" && newMapsCount === 0 && needsQaCount > 0 && (
                 <span
                   className={`ml-auto text-[10px] font-bold tabular-nums px-1.5 py-0.5 rounded-full ${
                     active ? "bg-white/20 text-white" : "bg-violet-100 text-violet-800"

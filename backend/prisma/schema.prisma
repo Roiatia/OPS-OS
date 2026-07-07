@@ -47,6 +47,13 @@ enum TaskStatus {
   FIX_DONE
 }
 
+enum WorkflowPhaseTarget {
+  PRE_UPLOAD
+  UPLOADED
+  POLISH
+  POLISHED
+}
+
 model User {
   id        String     @id @default(cuid())
   email     String     @unique
@@ -86,6 +93,10 @@ model Map {
   phase           MapPhase         @default(INTAKE)
   inspectorStatus InspectorStatus?
   qaStatus        QaStatus?
+  inspectorAssignAccepted Boolean @default(false)
+  qaAssignAccepted        Boolean @default(false)
+  releasedToPipeline      Boolean @default(false)
+  workflowPhaseTarget     WorkflowPhaseTarget @default(PRE_UPLOAD)
   uploadApproved  Boolean          @default(false)
   assignedInspectorId String?
   assignedInspector   User?        @relation("InspectorMaps", fields: [assignedInspectorId], references: [id])

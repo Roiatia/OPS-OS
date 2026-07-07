@@ -1,12 +1,11 @@
 import type { MapPhase } from "../types";
-import { PHASE_LABELS, PHASE_ORDER } from "../types";
-
-export interface PhaseHistoryEntry {
-  phase: MapPhase;
-  enteredAt: string;
-  user: { id: string; name: string };
-  note?: string | null;
-}
+import {
+  WORKFLOW_TIMELINE,
+  getTimelineHistoryEntry,
+  getWorkflowTimelineIndex,
+  getWorkflowTimelinePhase,
+  type TimelineHistoryEntry,
+} from "../lib/mapDisplay";
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleString(undefined, {
@@ -23,37 +22,31 @@ export function PhaseStepper({
   variant = "horizontal",
 }: {
   current: MapPhase;
-  phaseHistory: PhaseHistoryEntry[];
+  phaseHistory: TimelineHistoryEntry[];
   variant?: "horizontal" | "vertical";
 }) {
-  const historyByPhase = new Map<MapPhase, PhaseHistoryEntry>();
-  for (const entry of phaseHistory) {
-    historyByPhase.set(entry.phase, entry);
-  }
-
-  const currentIdx =
-    current === "CANCELLED"
-      ? -1
-      : PHASE_ORDER.indexOf(current as (typeof PHASE_ORDER)[number]);
+  const currentIdx = getWorkflowTimelineIndex(current);
+  const activeTimelinePhase = getWorkflowTimelinePhase(current);
 
   if (variant === "vertical") {
-    const steps = [...PHASE_ORDER];
-    if (current === "CANCELLED") steps.push("CANCELLED" as MapPhase);
+    const steps = [...WORKFLOW_TIMELINE];
+    const showCancelled = current === "CANCELLED";
 
     return (
       <ol className="relative space-y-0">
-        {steps.map((phase, i) => {
+        {steps.map((step, i) => {
           const done = currentIdx >= 0 && i < currentIdx;
-          const active = phase === current;
-          const entry = historyByPhase.get(phase);
-          const isLast = i === steps.length - 1;
+          const active = step.id === activeTimelinePhase && current !== "APPROVED";
+          const complete = current === "APPROVED" && i < steps.length;
+          const entry = getTimelineHistoryEntry(step.id, phaseHistory);
+          const isLast = i === steps.length - 1 && !showCancelled;
 
           return (
-            <li key={phase} className="relative flex gap-4 pb-8 last:pb-0">
+            <li key={step.id} className="relative flex gap-4 pb-8 last:pb-0">
               {!isLast && (
                 <span
                   className={`absolute left-[15px] top-8 bottom-0 w-0.5 ${
-                    done || active ? "bg-brand-300" : "bg-slate-200"
+                    done || complete || active ? "bg-brand-300" : "bg-slate-200"
                   }`}
                 />
               )}
@@ -61,29 +54,26 @@ export function PhaseStepper({
                 className={`relative z-10 w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-xs font-bold ${
                   active
                     ? "bg-brand-600 text-white ring-4 ring-brand-100"
-                    : done
+                    : done || complete
                       ? "bg-brand-100 text-brand-700"
-                      : phase === "CANCELLED"
-                        ? "bg-red-100 text-red-700"
-                        : "bg-slate-100 text-slate-400"
+                      : "bg-slate-100 text-slate-400"
                 }`}
               >
-                {done ? "✓" : i + 1}
+                {done || complete ? "✓" : i + 1}
               </div>
               <div className="flex-1 min-w-0 pt-0.5">
                 <p
                   className={`text-sm font-semibold ${
                     active
                       ? "text-brand-700"
-                      : done
+                      : done || complete
                         ? "text-slate-800"
-                        : phase === "CANCELLED"
-                          ? "text-red-700"
-                          : "text-slate-400"
+                        : "text-slate-400"
                   }`}
                 >
-                  {PHASE_LABELS[phase]}
+                  {step.label}
                 </p>
+                <p className="text-xs text-muted mt-0.5">{step.hint}</p>
                 {entry ? (
                   <div className="mt-1">
                     <p className="text-xs text-muted">{formatDate(entry.enteredAt)}</p>
@@ -96,6 +86,21 @@ export function PhaseStepper({
             </li>
           );
         })}
+        {showCancelled && (
+          <li className="relative flex gap-4">
+            <div className="relative z-10 w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-xs font-bold bg-red-100 text-red-700">
+              ✕
+            </div>
+            <div className="flex-1 min-w-0 pt-0.5">
+              <p className="text-sm font-semibold text-red-700">Cancelled</p>
+              {phaseHistory.find((e) => e.phase === "CANCELLED") && (
+                <p className="text-xs text-muted mt-1">
+                  {formatDate(phaseHistory.find((e) => e.phase === "CANCELLED")!.enteredAt)}
+                </p>
+              )}
+            </div>
+          </li>
+        )}
       </ol>
     );
   }
@@ -103,24 +108,25 @@ export function PhaseStepper({
   return (
     <div className="space-y-0">
       <div className="flex items-start gap-1 overflow-x-auto pb-2">
-        {PHASE_ORDER.map((phase, i) => {
+        {WORKFLOW_TIMELINE.map((step, i) => {
           const done = currentIdx >= 0 && i < currentIdx;
-          const active = phase === current;
-          const entry = historyByPhase.get(phase);
+          const active = step.id === activeTimelinePhase && current !== "APPROVED";
+          const complete = current === "APPROVED";
+          const entry = getTimelineHistoryEntry(step.id, phaseHistory);
 
           return (
-            <div key={phase} className="flex items-start shrink-0">
-              <div className="flex flex-col items-center min-w-[100px] max-w-[120px]">
+            <div key={step.id} className="flex items-start shrink-0">
+              <div className="flex flex-col items-center min-w-[120px] max-w-[160px]">
                 <div
                   className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap w-full text-center ${
                     active
                       ? "bg-brand-600 text-white"
-                      : done
+                      : done || complete
                         ? "bg-brand-100 text-brand-700"
                         : "bg-slate-100 text-slate-400"
                   }`}
                 >
-                  {PHASE_LABELS[phase]}
+                  {step.label}
                 </div>
                 {entry && (
                   <div className="mt-1.5 text-center px-1">
@@ -131,9 +137,11 @@ export function PhaseStepper({
                   </div>
                 )}
               </div>
-              {i < PHASE_ORDER.length - 1 && (
+              {i < WORKFLOW_TIMELINE.length - 1 && (
                 <div
-                  className={`w-4 h-0.5 mt-3 mx-0.5 shrink-0 ${done || active ? "bg-brand-300" : "bg-slate-200"}`}
+                  className={`w-4 h-0.5 mt-3 mx-0.5 shrink-0 ${
+                    done || complete || active ? "bg-brand-300" : "bg-slate-200"
+                  }`}
                 />
               )}
             </div>
@@ -146,16 +154,6 @@ export function PhaseStepper({
               <div className="px-3 py-1.5 rounded-full text-xs font-medium bg-red-100 text-red-800 w-full text-center">
                 Cancelled
               </div>
-              {historyByPhase.get("CANCELLED") && (
-                <div className="mt-1.5 text-center px-1">
-                  <p className="text-[10px] text-muted leading-tight">
-                    {formatDate(historyByPhase.get("CANCELLED")!.enteredAt)}
-                  </p>
-                  <p className="text-[10px] font-medium text-slate-700 leading-tight">
-                    {historyByPhase.get("CANCELLED")!.user.name}
-                  </p>
-                </div>
-              )}
             </div>
           </div>
         )}

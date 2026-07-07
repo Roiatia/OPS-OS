@@ -3,6 +3,7 @@ import {
   MapPhase,
   InspectorStatus,
   QaStatus,
+  WorkflowPhaseTarget,
   type Prisma,
 } from "@prisma/client";
 
@@ -12,13 +13,78 @@ export type DemoMapInput = {
   client: string;
   area?: string;
   description?: string;
+  dueDate?: string;
   phase: MapPhase;
   inspectorStatus?: InspectorStatus | null;
   qaStatus?: QaStatus | null;
   uploadApproved?: boolean;
   assignInspector?: boolean;
   assignQa?: boolean;
+  inspectorAssignAccepted?: boolean;
+  qaAssignAccepted?: boolean;
+  releasedToPipeline?: boolean;
+  workflowPhaseTarget?: WorkflowPhaseTarget;
 };
+
+const NEW_INTAKE_CLIENTS: { client: string; area: string }[] = [
+  { client: "FreshMart", area: "Netanya" },
+  { client: "SuperPharm", area: "Jerusalem" },
+  { client: "Shufersal", area: "Petah Tikva" },
+  { client: "Rami Levy", area: "Kiryat Gat" },
+  { client: "Victory", area: "Holon" },
+  { client: "Tiv Taam", area: "Ra'anana" },
+  { client: "MegaStore", area: "Ramat Gan" },
+  { client: "CityShop", area: "Beer Sheva" },
+  { client: "Urban Retail", area: "Tel Aviv" },
+  { client: "North Market", area: "Haifa" },
+  { client: "Corner Store", area: "Eilat" },
+  { client: "Prime Outlet", area: "Ashdod" },
+  { client: "GreenGrocer", area: "Modi'in" },
+  { client: "ValueMart", area: "Rishon LeZion" },
+  { client: "Lifestyle", area: "Herzliya" },
+  { client: "Daily Market", area: "Kfar Saba" },
+  { client: "Budget Foods", area: "Nahariya" },
+  { client: "Express Mart", area: "Rehovot" },
+  { client: "Family Shop", area: "Afula" },
+  { client: "QuickStop", area: "Bat Yam" },
+];
+
+const NEW_INTAKE_DESCRIPTIONS = [
+  "New intake from CS — awaiting assignment",
+  "Store expansion layout from Jira ticket",
+  "Seasonal refresh — assign inspector and QA",
+  "CS urgent request — new floor plan",
+  "Remap after fixture change",
+  "New branch opening map",
+  "Category reset from merchandising",
+  "Promo zone update from CS",
+  "Back wall refresh — needs graphics",
+  "End-cap realignment map",
+];
+
+/** Twenty fresh INTAKE maps for the leader new-maps box (0115–0134). */
+export const NEW_INTAKE_MAPS: DemoMapInput[] = NEW_INTAKE_CLIENTS.map((entry, i) => {
+  const num = String(115 + i).padStart(4, "0");
+  const workflowPhaseTarget =
+    i % 5 === 1
+      ? WorkflowPhaseTarget.UPLOADED
+      : i % 5 === 2
+        ? WorkflowPhaseTarget.POLISH
+        : WorkflowPhaseTarget.PRE_UPLOAD;
+
+  return {
+    mapNumber: `MAP-2024-${num}`,
+    jiraTicketId: `OPS-46${num}`,
+    client: entry.client,
+    area: entry.area,
+    description: NEW_INTAKE_DESCRIPTIONS[i % NEW_INTAKE_DESCRIPTIONS.length],
+    phase: MapPhase.INTAKE,
+    workflowPhaseTarget,
+    ...(i === 3 ? { dueDate: "2026-07-14" } : {}),
+    ...(i === 7 ? { assignInspector: true } : {}),
+    ...(i === 11 ? { assignInspector: true, assignQa: true } : {}),
+  };
+});
 
 export const DEMO_MAPS: DemoMapInput[] = [
   {
@@ -39,6 +105,53 @@ export const DEMO_MAPS: DemoMapInput[] = [
     area: "Netanya",
     description: "New intake from CS — awaiting assignment",
     phase: MapPhase.INTAKE,
+  },
+  {
+    mapNumber: "MAP-2024-0110",
+    jiraTicketId: "OPS-4610",
+    client: "SuperPharm",
+    area: "Jerusalem",
+    description: "New store layout — assign inspector and QA",
+    phase: MapPhase.INTAKE,
+  },
+  {
+    mapNumber: "MAP-2024-0111",
+    jiraTicketId: "OPS-4611",
+    client: "Shufersal",
+    area: "Petah Tikva",
+    description: "Seasonal refresh from CS ticket",
+    phase: MapPhase.INTAKE,
+  },
+  {
+    mapNumber: "MAP-2024-0112",
+    jiraTicketId: "OPS-4612",
+    client: "Rami Levy",
+    area: "Kiryat Gat",
+    description: "Urgent map — due this week",
+    phase: MapPhase.INTAKE,
+    dueDate: "2026-07-12",
+  },
+  {
+    mapNumber: "MAP-2024-0113",
+    jiraTicketId: "OPS-4613",
+    client: "Victory",
+    area: "Holon",
+    description: "Inspector assigned — still needs QA",
+    phase: MapPhase.INTAKE,
+    assignInspector: true,
+  },
+  {
+    mapNumber: "MAP-2024-0114",
+    jiraTicketId: "OPS-4614",
+    client: "Tiv Taam",
+    area: "Ra'anana",
+    description: "Fully assigned — waiting for team to accept",
+    phase: MapPhase.INTAKE,
+    assignInspector: true,
+    assignQa: true,
+    inspectorAssignAccepted: false,
+    qaAssignAccepted: false,
+    releasedToPipeline: true,
   },
   {
     mapNumber: "MAP-2024-0102",
@@ -132,6 +245,7 @@ export const DEMO_MAPS: DemoMapInput[] = [
     inspectorStatus: InspectorStatus.ACCEPTED,
     assignInspector: true,
   },
+  ...NEW_INTAKE_MAPS,
 ];
 
 export async function seedDemoMaps(prisma: PrismaClient) {
@@ -156,10 +270,16 @@ export async function seedDemoMaps(prisma: PrismaClient) {
       client: demo.client,
       area: demo.area,
       description: demo.description,
+      ...(demo.dueDate ? { dueDate: new Date(demo.dueDate) } : {}),
       phase: demo.phase,
       inspectorStatus: demo.inspectorStatus ?? null,
       qaStatus: demo.qaStatus ?? null,
       uploadApproved: demo.uploadApproved ?? false,
+      inspectorAssignAccepted: demo.inspectorAssignAccepted ?? false,
+      qaAssignAccepted: demo.qaAssignAccepted ?? false,
+      workflowPhaseTarget: demo.workflowPhaseTarget ?? WorkflowPhaseTarget.PRE_UPLOAD,
+      releasedToPipeline:
+        demo.releasedToPipeline ?? demo.phase !== MapPhase.INTAKE,
       ...(demo.assignInspector ? { assignedInspector: { connect: { id: inspector.id } } } : {}),
       ...(demo.assignQa ? { assignedQa: { connect: { id: qa.id } } } : {}),
     };

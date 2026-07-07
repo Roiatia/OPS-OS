@@ -13,11 +13,11 @@ const FEATURES = [
   },
   {
     title: "Full workflow tracking",
-    body: "Follow each map through prep, QA upload approval, field work, polish and final QA — with a clear activity log.",
+    body: "Follow each map through pre-upload, dashboard upload, and polish — with inspector and QA checkpoints at each stage.",
   },
 ];
 
-const FLOW = ["Intake", "Prep", "QA Upload", "Field", "Polish", "QA Review", "Approved"];
+const FLOW = ["Pre-upload", "Uploaded to dashboard", "Polish", "Approved"];
 
 export function LandingPage() {
   const { user } = useAuth();

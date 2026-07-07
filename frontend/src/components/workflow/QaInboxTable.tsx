@@ -18,7 +18,7 @@ function formatDate(iso: string) {
   });
 }
 
-export function InspectorInboxTable({ maps, onRefresh }: Props) {
+export function QaInboxTable({ maps, onRefresh }: Props) {
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [error, setError] = useState("");
 
@@ -26,11 +26,7 @@ export function InspectorInboxTable({ maps, onRefresh }: Props) {
     setError("");
     setLoadingId(map.id);
     try {
-      if (map.phase === "INTAKE") {
-        await api.acceptInspectorAssignment(map.id);
-      } else {
-        await api.updateInspectorStatus(map.id, "ACCEPTED");
-      }
+      await api.acceptQaAssignment(map.id);
       onRefresh();
     } catch (e) {
       setError((e as Error).message);
@@ -41,7 +37,7 @@ export function InspectorInboxTable({ maps, onRefresh }: Props) {
 
   if (maps.length === 0) {
     return (
-      <p className="text-sm text-muted py-6 text-center border border-dashed border-amber-200 rounded-xl bg-amber-50/40">
+      <p className="text-sm text-muted py-6 text-center border border-dashed border-violet-200 rounded-xl bg-violet-50/40">
         No new maps assigned to you.
       </p>
     );
@@ -52,19 +48,19 @@ export function InspectorInboxTable({ maps, onRefresh }: Props) {
       {error && (
         <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>
       )}
-      <div className="overflow-x-auto rounded-xl border border-amber-200 bg-amber-50/30">
+      <div className="overflow-x-auto rounded-xl border border-violet-200 bg-violet-50/30">
         <table className="w-full text-sm">
           <thead>
-            <tr className="bg-amber-100/80 text-left text-xs text-amber-900 border-b border-amber-200">
+            <tr className="bg-violet-100/80 text-left text-xs text-violet-900 border-b border-violet-200">
               <th className="px-3 py-2.5 font-semibold">Date</th>
               <th className="px-3 py-2.5 font-semibold">Map</th>
               <th className="px-3 py-2.5 font-semibold">Customer</th>
-              <th className="px-3 py-2.5 font-semibold">Task</th>
+              <th className="px-3 py-2.5 font-semibold">Inspector</th>
               <th className="px-3 py-2.5 font-semibold">Due</th>
               <th className="px-3 py-2.5 font-semibold w-28">Action</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-amber-100">
+          <tbody className="divide-y divide-violet-100">
             {maps.map((map) => {
               const taskType = getTaskType(map);
               return (
@@ -77,14 +73,15 @@ export function InspectorInboxTable({ maps, onRefresh }: Props) {
                     >
                       {map.mapNumber}
                     </Link>
+                    {taskType && (
+                      <div className="mt-1">
+                        <Badge label={taskType} tone={taskType === "Upload" ? "PREP" : "POLISH"} />
+                      </div>
+                    )}
                   </td>
                   <td className="px-3 py-3">{map.client}</td>
-                  <td className="px-3 py-3">
-                    {taskType ? (
-                      <Badge label={taskType} tone={taskType === "Upload" ? "PREP" : "POLISH"} />
-                    ) : (
-                      "—"
-                    )}
+                  <td className="px-3 py-3 text-muted">
+                    {map.assignedInspector?.name ?? "—"}
                   </td>
                   <td className="px-3 py-3 text-muted text-xs">
                     {map.dueDate ? formatDate(map.dueDate) : "—"}
@@ -94,7 +91,7 @@ export function InspectorInboxTable({ maps, onRefresh }: Props) {
                       type="button"
                       disabled={loadingId === map.id}
                       onClick={() => accept(map)}
-                      className="px-3 py-1.5 text-xs font-medium bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:opacity-50"
+                      className="px-3 py-1.5 text-xs font-medium bg-violet-600 text-white rounded-lg hover:bg-violet-700 disabled:opacity-50"
                     >
                       Accept
                     </button>

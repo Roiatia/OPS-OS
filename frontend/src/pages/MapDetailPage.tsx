@@ -1,28 +1,29 @@
 import { useEffect, useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { useAuth, hasRole } from "../context/AuthContext";
 import { PhaseStepper } from "../components/PhaseStepper";
 import { Badge } from "../components/Badge";
 import { TaskTable } from "../components/TaskTable";
-import { AssignMapModal } from "../components/leader/AssignMapModal";
-import { AssignQaModal } from "../components/leader/AssignQaModal";
-import { getMapDisplayState, workflowStateTone, canAssignInspector, canAssignQa } from "../lib/mapDisplay";
+import { DeleteMapButton } from "../components/leader/DeleteMapButton";
+import { InspectorAssignModal } from "../components/leader/InspectorAssignModal";
+import { QaAssignModal } from "../components/leader/QaAssignModal";
+import { getMapDisplayState, getWorkflowTimelineLabel, workflowStateTone, canAssignInspector, canAssignQa } from "../lib/mapDisplay";
 import { toDateInputValue, formatDueDate, getDueDateStatus, DUE_DATE_CLASS } from "../lib/dates";
 import { SHIFTS, getShiftInspectors } from "../lib/shifts";
 import type { MapRecord, TeamMember } from "../types";
-import { PHASE_LABELS } from "../types";
 
 export function MapDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const { user } = useAuth();
   const [map, setMap] = useState<MapRecord | null>(null);
   const [allMaps, setAllMaps] = useState<MapRecord[]>([]);
   const [team, setTeam] = useState<TeamMember[]>([]);
   const [error, setError] = useState("");
   const [taskForm, setTaskForm] = useState({ title: "", description: "" });
-  const [assignInspectorOpen, setAssignInspectorOpen] = useState(false);
-  const [assignQaOpen, setAssignQaOpen] = useState(false);
+  const [inspectorModalOpen, setInspectorModalOpen] = useState(false);
+  const [qaModalOpen, setQaModalOpen] = useState(false);
   const [assignLoading, setAssignLoading] = useState(false);
   const [dueDateSaving, setDueDateSaving] = useState(false);
 
@@ -87,7 +88,7 @@ export function MapDetailPage() {
         {/* Header */}
         <div className="text-center mb-8">
           <p className="text-xs font-semibold uppercase tracking-widest text-brand-500 mb-2">
-            {PHASE_LABELS[map.phase]}
+            {getWorkflowTimelineLabel(map.phase)}
           </p>
           <h1 className="text-3xl font-bold text-slate-900">{map.mapNumber}</h1>
           <p className="text-muted mt-2">
@@ -201,7 +202,7 @@ export function MapDetailPage() {
                 <p className="text-sm text-red-600 bg-red-50 rounded-xl p-3 text-center">{error}</p>
               )}
 
-              {isInspector && isAssignedInspector && map.qaStatus === "FIX" && map.phase === "POLISH" && (
+              {isInspector && isAssignedInspector && map.qaStatus === "FIX" && (
                 <ActionBlock title="Fix requested by QA" hint="Complete fixes and mark FixDone.">
                   <button
                     onClick={() => act(() => api.qaReview(map.id, "fix_done"))}
@@ -217,7 +218,7 @@ export function MapDetailPage() {
                 map.qaStatus !== "FIX" &&
                 (map.phase === "PREP" || map.phase === "POLISH") && (
                   <ActionBlock
-                    title={map.phase === "PREP" ? "Upload prep" : "Polish work"}
+                    title={map.phase === "PREP" ? "Pre-upload · Inspector" : "Polish · Inspector"}
                     hint="Update your workflow state."
                   >
                     <div className="grid grid-cols-3 gap-2">
@@ -244,35 +245,46 @@ export function MapDetailPage() {
                   </ActionBlock>
                 )}
 
-              {isQa && map.phase === "UPLOAD_REVIEW" && (
+              {isQa && map.phase === "UPLOAD_REVIEW" && map.qaStatus !== "FIX" && (
                 <ActionBlock
-                  title="Upload approval"
-                  hint="Inspector finished prep. Approve before field work."
+                  title="Upload QA"
+                  hint={
+                    map.qaStatus === "FIX_DONE"
+                      ? "Inspector completed fixes. Approve to upload to dashboard."
+                      : "Inspector finished prep. Approve or request fixes."
+                  }
                 >
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       onClick={() => act(() => api.uploadReview(map.id, true))}
                       className="py-2.5 bg-emerald-600 text-white text-sm font-medium rounded-xl hover:bg-emerald-700"
                     >
-                      Approve
+                      Approved
                     </button>
-                    <button
-                      onClick={() => act(() => api.uploadReview(map.id, false, "Needs revision"))}
-                      className="py-2.5 bg-red-50 text-red-700 text-sm font-medium rounded-xl border border-red-200 hover:bg-red-100"
-                    >
-                      Reject
-                    </button>
+                    {map.qaStatus !== "FIX_DONE" && (
+                      <button
+                        onClick={() =>
+                          act(() => api.uploadReview(map.id, false, "Corrections needed"))
+                        }
+                        className="py-2.5 bg-red-50 text-red-700 text-sm font-medium rounded-xl border border-red-200 hover:bg-red-100"
+                      >
+                        Fix
+                      </button>
+                    )}
                   </div>
                 </ActionBlock>
               )}
 
               {isLeader && map.phase === "FIELD" && (
-                <ActionBlock title="Field work" hint="Mark complete to start polish.">
+                <ActionBlock
+                  title="Uploaded to dashboard"
+                  hint="Map is live on the client dashboard. Start polish when ready."
+                >
                   <button
                     onClick={() => act(() => api.fieldComplete(map.id))}
                     className="w-full py-2.5 bg-brand-600 text-white text-sm font-medium rounded-xl hover:bg-brand-700"
                   >
-                    Field complete → start polish
+                    Start polish →
                   </button>
                 </ActionBlock>
               )}
@@ -283,19 +295,19 @@ export function MapDetailPage() {
                     {canAssignInspector(map) && (
                       <button
                         type="button"
-                        onClick={() => setAssignInspectorOpen(true)}
+                        onClick={() => setInspectorModalOpen(true)}
                         className="w-full py-2.5 bg-brand-600 text-white text-sm font-medium rounded-xl hover:bg-brand-700"
                       >
-                        {map.assignedInspector ? "Reassign inspector" : "Assign inspector"}
+                        {map.assignedInspector ? "Inspector · Assigned" : "Inspector · Assign"}
                       </button>
                     )}
                     {canAssignQa(map) && (
                       <button
                         type="button"
-                        onClick={() => setAssignQaOpen(true)}
+                        onClick={() => setQaModalOpen(true)}
                         className="w-full py-2.5 bg-violet-600 text-white text-sm font-medium rounded-xl hover:bg-violet-700"
                       >
-                        {map.assignedQa ? "Reassign QA" : "Assign QA"}
+                        {map.assignedQa ? "QA · Assigned" : "QA · Assign"}
                       </button>
                     )}
                     <label className="block">
@@ -334,7 +346,7 @@ export function MapDetailPage() {
               )}
 
               {isQa && map.phase === "QA_REVIEW" && !map.qaStatus && (
-                <ActionBlock title="Polish QA review" hint="Approve or request fixes.">
+                <ActionBlock title="Polish · QA" hint="Approve or request fixes.">
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       onClick={() => act(() => api.qaReview(map.id, "approved"))}
@@ -364,16 +376,25 @@ export function MapDetailPage() {
               )}
 
               {isLeader && (
-                <button
-                  onClick={() => {
-                    if (confirm(`Cancel ${map.mapNumber}? It will move to History.`)) {
-                      act(() => api.cancelMap(map.id));
-                    }
-                  }}
-                  className="w-full py-2 text-xs text-red-500 hover:text-red-700"
-                >
-                  Cancel this map
-                </button>
+                <div className="space-y-2 pt-2 border-t border-border">
+                  {!isArchived && (
+                    <button
+                      onClick={() => {
+                        if (confirm(`Cancel ${map.mapNumber}? It will move to History.`)) {
+                          act(() => api.cancelMap(map.id));
+                        }
+                      }}
+                      className="w-full py-2 text-xs text-red-500 hover:text-red-700"
+                    >
+                      Cancel this map
+                    </button>
+                  )}
+                  <DeleteMapButton
+                    map={map}
+                    onDeleted={() => navigate("/app")}
+                    className="w-full py-2"
+                  />
+                </div>
               )}
             </div>
           )}
@@ -451,33 +472,22 @@ export function MapDetailPage() {
         )}
       </div>
 
-      {isLeader && map && assignInspectorOpen && (
-        <AssignMapModal
+      {isLeader && map && inspectorModalOpen && (
+        <InspectorAssignModal
           map={map}
           team={team}
           maps={allMaps}
           loading={assignLoading}
-          onClose={() => setAssignInspectorOpen(false)}
+          onClose={() => setInspectorModalOpen(false)}
           onAssign={async (opts) => {
             setAssignLoading(true);
             setError("");
             try {
-              if (opts.mode === "individual" && opts.memberId) {
-                const updated = await api.assignInspector(map.id, opts.memberId, opts.attachment);
-                setMap(updated);
-              } else if (opts.mode === "shift" && opts.shiftId) {
+              if (opts.mode === "shift" && opts.shiftId) {
                 const shift = SHIFTS.find((s) => s.id === opts.shiftId)!;
                 const shiftInspectors = getShiftInspectors(team, opts.shiftId);
-                const leadInspector = shiftInspectors[0];
-                if (!leadInspector) throw new Error("No inspectors on this shift");
-
-                const updated = await api.assignInspector(
-                  map.id,
-                  leadInspector.id,
-                  opts.attachment
-                );
+                let updated = await api.assignInspector(map.id, opts.inspectorId, opts.attachment);
                 setMap(updated);
-
                 const taskPhase =
                   map.phase === "POLISH" || map.phase === "QA_REVIEW" ? "POLISH" : "PREP";
                 for (const inspector of shiftInspectors) {
@@ -489,8 +499,24 @@ export function MapDetailPage() {
                   });
                 }
                 load();
+              } else {
+                const updated = await api.assignInspector(map.id, opts.inspectorId, opts.attachment);
+                setMap(updated);
               }
-              setAssignInspectorOpen(false);
+              setInspectorModalOpen(false);
+            } catch (err) {
+              setError((err as Error).message);
+            } finally {
+              setAssignLoading(false);
+            }
+          }}
+          onUnassign={async () => {
+            setAssignLoading(true);
+            setError("");
+            try {
+              const updated = await api.unassignInspector(map.id);
+              setMap(updated);
+              setInspectorModalOpen(false);
             } catch (err) {
               setError((err as Error).message);
             } finally {
@@ -500,20 +526,33 @@ export function MapDetailPage() {
         />
       )}
 
-      {isLeader && map && assignQaOpen && (
-        <AssignQaModal
+      {isLeader && map && qaModalOpen && (
+        <QaAssignModal
           map={map}
           team={team}
           maps={allMaps}
           loading={assignLoading}
-          onClose={() => setAssignQaOpen(false)}
+          onClose={() => setQaModalOpen(false)}
           onAssign={async (opts) => {
             setAssignLoading(true);
             setError("");
             try {
               const updated = await api.assignQa(map.id, opts.qaId, opts.attachment);
               setMap(updated);
-              setAssignQaOpen(false);
+              setQaModalOpen(false);
+            } catch (err) {
+              setError((err as Error).message);
+            } finally {
+              setAssignLoading(false);
+            }
+          }}
+          onUnassign={async () => {
+            setAssignLoading(true);
+            setError("");
+            try {
+              const updated = await api.unassignQa(map.id);
+              setMap(updated);
+              setQaModalOpen(false);
             } catch (err) {
               setError((err as Error).message);
             } finally {

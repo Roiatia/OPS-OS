@@ -6,6 +6,11 @@ export interface MapAssignment {
   inspectorId: string;
 }
 
+export interface QaAssignment {
+  mapId: string;
+  qaId: string;
+}
+
 export interface ShufflePreviewRow {
   inspectorId: string;
   inspectorName: string;
@@ -54,6 +59,57 @@ export function buildBalancedInspectorAssignments(
   }
 
   return assignments;
+}
+
+export function buildBalancedQaAssignments(
+  mapsToAssign: MapRecord[],
+  qaMembers: Pick<TeamMember, "id" | "name">[],
+  allMaps: MapRecord[]
+): QaAssignment[] {
+  if (qaMembers.length === 0 || mapsToAssign.length === 0) return [];
+
+  const workload = new Map<string, number>();
+  for (const member of qaMembers) {
+    workload.set(member.id, countQaActiveMaps(allMaps, member.id));
+  }
+
+  const assignments: QaAssignment[] = [];
+  for (const map of mapsToAssign) {
+    const sorted = [...qaMembers].sort((a, b) => {
+      const diff = (workload.get(a.id) ?? 0) - (workload.get(b.id) ?? 0);
+      return diff !== 0 ? diff : a.name.localeCompare(b.name);
+    });
+    const pick = sorted[0]!;
+    workload.set(pick.id, (workload.get(pick.id) ?? 0) + 1);
+    assignments.push({ mapId: map.id, qaId: pick.id });
+  }
+
+  return assignments;
+}
+
+export function summarizeQaShufflePlan(
+  plan: QaAssignment[],
+  qaMembers: Pick<TeamMember, "id" | "name">[],
+  allMaps: MapRecord[]
+): ShufflePreviewRow[] {
+  const receiving = new Map<string, number>();
+  for (const { qaId } of plan) {
+    receiving.set(qaId, (receiving.get(qaId) ?? 0) + 1);
+  }
+
+  return qaMembers
+    .map((member) => {
+      const currentActive = countQaActiveMaps(allMaps, member.id);
+      const add = receiving.get(member.id) ?? 0;
+      return {
+        inspectorId: member.id,
+        inspectorName: member.name,
+        currentActive,
+        receiving: add,
+        totalAfter: currentActive + add,
+      };
+    })
+    .sort((a, b) => a.totalAfter - b.totalAfter || a.inspectorName.localeCompare(b.inspectorName));
 }
 
 export function summarizeShufflePlan(

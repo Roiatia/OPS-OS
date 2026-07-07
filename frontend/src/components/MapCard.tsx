@@ -1,7 +1,6 @@
 import { Link } from "react-router-dom";
 import type { MapRecord } from "../types";
-import { PHASE_LABELS } from "../types";
-import { getMapDisplayState, workflowStateTone } from "../lib/mapDisplay";
+import { getMapDisplayState, getWorkflowTimelineLabel, workflowStateTone, workflowTimelineTone, getWorkflowTimelinePhase } from "../lib/mapDisplay";
 import { Badge } from "./Badge";
 
 export function MapCard({ map }: { map: MapRecord }) {
@@ -20,7 +19,10 @@ export function MapCard({ map }: { map: MapRecord }) {
             {map.area ? ` · ${map.area}` : ""}
           </div>
         </div>
-        <Badge label={PHASE_LABELS[map.phase]} tone={map.phase} />
+        <Badge
+          label={getWorkflowTimelineLabel(map.phase)}
+          tone={workflowTimelineTone(getWorkflowTimelinePhase(map.phase))}
+        />
       </div>
       <div className="flex flex-wrap gap-2 mt-3">
         {map.jiraTicketId && <Badge label={map.jiraTicketId} />}

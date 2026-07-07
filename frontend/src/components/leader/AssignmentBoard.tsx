@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api";
 import type { MapRecord, TeamMember } from "../../types";
 import { Badge } from "../Badge";
-import { AssignMapModal } from "./AssignMapModal";
-import { AssignQaModal } from "./AssignQaModal";
+import { AssignCellButton } from "./AssignCellButton";
+import { DeleteMapButton } from "./DeleteMapButton";
+import { InspectorAssignModal } from "./InspectorAssignModal";
+import { QaAssignModal } from "./QaAssignModal";
 import { Modal } from "./Modal";
 import {
   buildBalancedInspectorAssignments,
@@ -19,18 +21,21 @@ import {
   toDateInputValue,
 } from "../../lib/dates";
 import {
-  canAssignInspector,
-  canAssignQa,
+  showInspectorAssignControl,
+  showQaAssignControl,
+  canDeleteMap,
+  getBulkDeleteConfirmMessage,
   EMPTY_COLUMN_FILTERS,
   getInspectorLabel,
   getMapDisplayState,
-  getMapStation,
   getQaLabel,
   getTaskType,
+  MAP_STATIONS,
   matchesColumnFilters,
   matchesQueue,
   needsInspectorAssignment,
   needsQaAssignment,
+  isAwaitingTeamAcceptance,
   WORKFLOW_STATES,
   workflowStateTone,
   type AssignmentQueue,
@@ -38,16 +43,18 @@ import {
 } from "../../lib/mapDisplay";
 import { SHIFTS, getShiftInspectors, type ShiftId } from "../../lib/shifts";
 import { ROLE_LABELS } from "../../types";
+import { StationSelect } from "../workflow/StationSelect";
 
 interface Props {
   maps: MapRecord[];
+  /** Full map list for column filter options (includes new maps not yet in the pipeline table). */
+  allMaps?: MapRecord[];
   team: TeamMember[];
   onRefresh: () => void;
 }
 
 const QUEUE_TABS: { id: AssignmentQueue; label: string }[] = [
   { id: "all", label: "All" },
-  { id: "unassigned", label: "Unassigned" },
   { id: "needs_qa", label: "Needs QA" },
   { id: "in_progress", label: "In progress" },
   { id: "in_qa", label: "In QA" },
@@ -56,14 +63,14 @@ const QUEUE_TABS: { id: AssignmentQueue; label: string }[] = [
 const filterInputClass =
   "w-full border border-border rounded px-2 py-1 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-brand-500";
 
-export function AssignmentBoard({ maps, team, onRefresh }: Props) {
+export function AssignmentBoard({ maps, allMaps, team, onRefresh }: Props) {
   const [queue, setQueue] = useState<AssignmentQueue>("all");
   const [columnFilters, setColumnFilters] = useState<MapColumnFilters>(EMPTY_COLUMN_FILTERS);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkInspectorId, setBulkInspectorId] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [assignMap, setAssignMap] = useState<MapRecord | null>(null);
+  const [assignInspectorMap, setAssignInspectorMap] = useState<MapRecord | null>(null);
   const [assignQaMap, setAssignQaMap] = useState<MapRecord | null>(null);
   const [bulkQaId, setBulkQaId] = useState("");
   const [dueDateSaving, setDueDateSaving] = useState<string | null>(null);
@@ -71,21 +78,27 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
   const [shuffleStep, setShuffleStep] = useState<"pick" | "preview">("pick");
   const [shuffleInspectorIds, setShuffleInspectorIds] = useState<Set<string>>(new Set());
 
-  const inspectors = team.filter((m) => m.roles.some((r) => r.role === "MAPPING_INSPECTOR"));
-  const qaMembers = team.filter((m) => m.roles.some((r) => r.role === "GRAPHIC_QA"));
+  const inspectors = useMemo(
+    () => team.filter((m) => m.roles.some((r) => r.role === "MAPPING_INSPECTOR")),
+    [team]
+  );
+  const qaMembers = useMemo(
+    () => team.filter((m) => m.roles.some((r) => r.role === "GRAPHIC_QA")),
+    [team]
+  );
+
+  const filterSource = allMaps ?? maps;
 
   const filterOptions = useMemo(() => {
     const clients = new Set<string>();
     const tasks = new Set<string>();
-    const stations = new Set<string>();
     const states = new Set<string>();
     const inspectorNames = new Set<string>();
     const qaNames = new Set<string>();
 
-    for (const map of maps) {
+    for (const map of filterSource) {
       clients.add(map.client);
       tasks.add(getTaskType(map) ?? "—");
-      stations.add(getMapStation(map));
       states.add(getMapDisplayState(map));
       inspectorNames.add(getInspectorLabel(map));
       qaNames.add(getQaLabel(map));
@@ -94,12 +107,12 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
     return {
       clients: [...clients].sort(),
       tasks: [...tasks].sort(),
-      stations: [...stations].sort(),
+      stations: MAP_STATIONS.map((s) => s.label),
       states: [...states].sort(),
       inspectors: [...inspectorNames].sort(),
       qa: [...qaNames].sort(),
     };
-  }, [maps]);
+  }, [filterSource]);
 
   const filteredMaps = useMemo(
     () =>
@@ -135,19 +148,12 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
     [filteredMaps, selected]
   );
 
-  const assignableSelected = selectedForShuffle;
+  const selectedDeletable = useMemo(
+    () => filteredMaps.filter((m) => selected.has(m.id) && canDeleteMap(m)),
+    [filteredMaps, selected]
+  );
 
-  useEffect(() => {
-    if (inspectors.length === 0) return;
-    setShuffleInspectorIds((prev) => {
-      if (prev.size > 0) {
-        const next = new Set([...prev].filter((id) => inspectors.some((m) => m.id === id)));
-        for (const m of inspectors) next.add(m.id);
-        return next;
-      }
-      return new Set(inspectors.map((m) => m.id));
-    });
-  }, [inspectors]);
+  const assignableSelected = selectedForShuffle;
 
   function updateFilter(key: keyof MapColumnFilters, value: string) {
     setColumnFilters((prev) => ({ ...prev, [key]: value }));
@@ -167,45 +173,38 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
   }
 
   function toggleSelectAll() {
-    const assignable = filteredMaps.filter(
-      (m) => needsInspectorAssignment(m) || needsQaAssignment(m)
-    );
-    if (assignable.every((m) => selected.has(m.id))) {
+    const selectable = filteredMaps.filter((m) => canDeleteMap(m));
+    if (selectable.every((m) => selected.has(m.id))) {
       setSelected((prev) => {
         const next = new Set(prev);
-        assignable.forEach((m) => next.delete(m.id));
+        selectable.forEach((m) => next.delete(m.id));
         return next;
       });
     } else {
       setSelected((prev) => {
         const next = new Set(prev);
-        assignable.forEach((m) => next.add(m.id));
+        selectable.forEach((m) => next.add(m.id));
         return next;
       });
     }
   }
 
-  async function handleAssign(opts: {
+  async function handleInspectorAssign(opts: {
     mode: "individual" | "shift";
-    memberId?: string;
+    inspectorId: string;
     shiftId?: ShiftId;
     attachment?: { fileName: string; mimeType: string; data: string };
   }) {
-    if (!assignMap) return;
+    if (!assignInspectorMap) return;
     setError("");
     setLoading(true);
     try {
-      const map = assignMap;
+      const map = assignInspectorMap;
 
-      if (opts.mode === "individual" && opts.memberId) {
-        await api.assignInspector(map.id, opts.memberId, opts.attachment);
-      } else if (opts.mode === "shift" && opts.shiftId) {
+      if (opts.mode === "shift" && opts.shiftId) {
         const shift = SHIFTS.find((s) => s.id === opts.shiftId)!;
         const shiftInspectors = getShiftInspectors(team, opts.shiftId);
-        const leadInspector = shiftInspectors[0];
-        if (!leadInspector) throw new Error("No inspectors on this shift");
-
-        await api.assignInspector(map.id, leadInspector.id, opts.attachment);
+        await api.assignInspector(map.id, opts.inspectorId, opts.attachment);
 
         const taskPhase =
           map.phase === "POLISH" || map.phase === "QA_REVIEW" ? "POLISH" : "PREP";
@@ -217,9 +216,76 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
             phase: taskPhase,
           });
         }
+      } else {
+        await api.assignInspector(map.id, opts.inspectorId, opts.attachment);
       }
 
-      setAssignMap(null);
+      setAssignInspectorMap(null);
+      setSelected(new Set());
+      onRefresh();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleInspectorUnassign() {
+    if (!assignInspectorMap) return;
+    setError("");
+    setLoading(true);
+    try {
+      await api.unassignInspector(assignInspectorMap.id);
+      setAssignInspectorMap(null);
+      onRefresh();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleQaAssign(opts: {
+    qaId: string;
+    attachment?: { fileName: string; mimeType: string; data: string };
+  }) {
+    if (!assignQaMap) return;
+    setError("");
+    setLoading(true);
+    try {
+      await api.assignQa(assignQaMap.id, opts.qaId, opts.attachment);
+      setAssignQaMap(null);
+      setSelected(new Set());
+      onRefresh();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleQaUnassign() {
+    if (!assignQaMap) return;
+    setError("");
+    setLoading(true);
+    try {
+      await api.unassignQa(assignQaMap.id);
+      setAssignQaMap(null);
+      onRefresh();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleBulkDelete() {
+    if (selectedDeletable.length === 0) return;
+    if (!confirm(getBulkDeleteConfirmMessage(selectedDeletable.length))) return;
+    setError("");
+    setLoading(true);
+    try {
+      await api.deleteMaps(selectedDeletable.map((m) => m.id));
       setSelected(new Set());
       onRefresh();
     } catch (err) {
@@ -315,25 +381,6 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
     }
   }
 
-  async function handleQaAssign(opts: {
-    qaId: string;
-    attachment?: { fileName: string; mimeType: string; data: string };
-  }) {
-    if (!assignQaMap) return;
-    setError("");
-    setLoading(true);
-    try {
-      await api.assignQa(assignQaMap.id, opts.qaId, opts.attachment);
-      setAssignQaMap(null);
-      setSelected(new Set());
-      onRefresh();
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }
-
   async function handleDueDateChange(mapId: string, value: string) {
     setError("");
     setDueDateSaving(mapId);
@@ -347,34 +394,31 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
     }
   }
 
-  const assignableInView = filteredMaps.filter(
-    (m) => needsInspectorAssignment(m) || needsQaAssignment(m)
-  );
-  const allAssignableSelected =
-    assignableInView.length > 0 && assignableInView.every((m) => selected.has(m.id));
+  const deletableInView = filteredMaps.filter((m) => canDeleteMap(m));
+  const allDeletableSelected =
+    deletableInView.length > 0 && deletableInView.every((m) => selected.has(m.id));
 
   function canSelectMap(map: MapRecord) {
-    return needsInspectorAssignment(map) || needsQaAssignment(map);
-  }
-
-  function canShowInspectorAssign(map: MapRecord) {
-    return canAssignInspector(map);
-  }
-
-  function canShowQaAssign(map: MapRecord) {
-    return canAssignQa(map);
+    return canDeleteMap(map);
   }
 
   return (
     <section className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold">Maps</h2>
+          <h2 className="text-lg font-semibold">Pipeline</h2>
           <p className="text-sm text-muted">
-            {filteredMaps.length} of {maps.filter((m) => matchesQueue(m, queue)).length} maps
-            {hasActiveFilters && " (column filters active)"}
+            Assigned maps in progress — team members update status as they work.
           </p>
         </div>
+        <p className="text-sm text-muted">
+          {filteredMaps.length} of {maps.length} maps
+          {hasActiveFilters && " (filters active)"}
+        </p>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div />
         {hasActiveFilters && (
           <button
             type="button"
@@ -410,7 +454,7 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
         ))}
       </div>
 
-      {(selectedForShuffle.length > 0 || selectedNeedingQa.length > 0) && (
+      {(selectedForShuffle.length > 0 || selectedNeedingQa.length > 0 || selectedDeletable.length > 0) && (
         <div className="space-y-2">
           {selectedForShuffle.length > 0 && (
             <div className="flex flex-wrap items-center gap-3 bg-brand-50 border border-brand-200 rounded-xl px-4 py-3">
@@ -483,6 +527,22 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
             </div>
           )}
 
+          {selectedDeletable.length > 0 && (
+            <div className="flex flex-wrap items-center gap-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+              <span className="text-sm font-medium text-red-800">
+                {selectedDeletable.length} map{selectedDeletable.length !== 1 ? "s" : ""} selected
+              </span>
+              <button
+                type="button"
+                disabled={loading}
+                onClick={handleBulkDelete}
+                className="px-4 py-1.5 text-sm font-semibold text-red-700 bg-white border border-red-200 rounded-lg hover:bg-red-100 disabled:opacity-50"
+              >
+                Delete selected
+              </button>
+            </div>
+          )}
+
           <div className="flex justify-end">
             <button
               type="button"
@@ -505,12 +565,12 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
             <thead>
               <tr className="bg-slate-50 text-left text-muted border-b border-border">
                 <th className="px-3 py-2 w-10">
-                  {assignableInView.length > 0 && (
+                  {deletableInView.length > 0 && (
                     <input
                       type="checkbox"
-                      checked={allAssignableSelected}
+                      checked={allDeletableSelected}
                       onChange={toggleSelectAll}
-                      title="Select all assignable maps"
+                      title="Select all maps"
                     />
                   )}
                 </th>
@@ -522,7 +582,6 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
                 <th className="px-3 py-2 font-medium min-w-[110px]">Inspector</th>
                 <th className="px-3 py-2 font-medium min-w-[100px]">QA</th>
                 <th className="px-3 py-2 font-medium min-w-[110px]">Deadline</th>
-                <th className="px-3 py-2 font-medium w-[120px]">Actions</th>
               </tr>
               <tr className="bg-white border-b border-border">
                 <th className="px-3 py-2" />
@@ -621,7 +680,6 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
                   </select>
                 </th>
                 <th className="px-3 py-2" />
-                <th className="px-3 py-2" />
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -636,7 +694,9 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
                         ? "bg-amber-50/40"
                         : needsQaAssignment(map)
                           ? "bg-violet-50/40"
-                          : ""
+                          : isAwaitingTeamAcceptance(map)
+                            ? "bg-sky-50/40"
+                            : ""
                     }`}
                   >
                     <td className="px-3 py-3 w-10">
@@ -650,13 +710,18 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
                       ) : null}
                     </td>
                     <td className="px-3 py-3">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1">
                         <Link
                           to={`/app/maps/${map.id}`}
                           className="font-mono font-medium text-brand-600 hover:underline"
                         >
                           {map.mapNumber}
                         </Link>
+                        <DeleteMapButton
+                          map={map}
+                          onDeleted={onRefresh}
+                          variant="icon"
+                        />
                       </div>
                     </td>
                     <td className="px-3 py-3 text-muted">{map.client}</td>
@@ -671,7 +736,12 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
                       )}
                     </td>
                     <td className="px-3 py-3">
-                      <Badge label={getMapStation(map)} tone={map.phase} />
+                      <StationSelect
+                        map={map}
+                        disabled={loading}
+                        onUpdated={onRefresh}
+                        onError={setError}
+                      />
                     </td>
                     <td className="px-3 py-3">
                       {(() => {
@@ -684,17 +754,33 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
                       })()}
                     </td>
                     <td className="px-3 py-3">
-                      {map.assignedInspector?.name ?? (
-                        <span className="text-amber-700 text-xs font-medium">Unassigned</span>
+                      {showInspectorAssignControl(map) ? (
+                        <AssignCellButton
+                          assigned={!!map.assignedInspector}
+                          assigneeName={map.assignedInspector?.name}
+                          tone="brand"
+                          onClick={() => {
+                            setError("");
+                            setAssignInspectorMap(map);
+                          }}
+                        />
+                      ) : (
+                        <span className="text-sm text-muted">{map.assignedInspector?.name ?? "—"}</span>
                       )}
                     </td>
                     <td className="px-3 py-3">
-                      {canAssignQa(map) ? (
-                        map.assignedQa?.name ?? (
-                          <span className="text-violet-700 text-xs font-medium">Needs QA</span>
-                        )
+                      {showQaAssignControl(map) ? (
+                        <AssignCellButton
+                          assigned={!!map.assignedQa}
+                          assigneeName={map.assignedQa?.name}
+                          tone="violet"
+                          onClick={() => {
+                            setError("");
+                            setAssignQaMap(map);
+                          }}
+                        />
                       ) : (
-                        map.assignedQa?.name ?? "—"
+                        <span className="text-sm text-muted">{map.assignedQa?.name ?? "—"}</span>
                       )}
                     </td>
                     <td className="px-3 py-3">
@@ -718,37 +804,6 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
                         )}
                       </div>
                     </td>
-                    <td className="px-3 py-3">
-                      <div className="flex flex-col gap-1">
-                        {canShowInspectorAssign(map) && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setError("");
-                              setAssignMap(map);
-                            }}
-                            className="px-2.5 py-1 text-xs font-medium bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors"
-                          >
-                            Inspector
-                          </button>
-                        )}
-                        {canShowQaAssign(map) && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setError("");
-                              setAssignQaMap(map);
-                            }}
-                            className="px-2.5 py-1 text-xs font-medium bg-violet-600 text-white rounded-lg hover:bg-violet-700 transition-colors"
-                          >
-                            QA
-                          </button>
-                        )}
-                        {!canShowInspectorAssign(map) && !canShowQaAssign(map) && (
-                          <span className="text-xs text-slate-300">—</span>
-                        )}
-                      </div>
-                    </td>
                   </tr>
                 );
               })}
@@ -757,25 +812,27 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
         </div>
       )}
 
-      {assignMap && (
-        <AssignMapModal
-          map={assignMap}
+      {assignInspectorMap && (
+        <InspectorAssignModal
+          map={assignInspectorMap}
           team={team}
           maps={maps}
           loading={loading}
-          onClose={() => setAssignMap(null)}
-          onAssign={handleAssign}
+          onClose={() => setAssignInspectorMap(null)}
+          onAssign={handleInspectorAssign}
+          onUnassign={handleInspectorUnassign}
         />
       )}
 
       {assignQaMap && (
-        <AssignQaModal
+        <QaAssignModal
           map={assignQaMap}
           team={team}
           maps={maps}
           loading={loading}
           onClose={() => setAssignQaMap(null)}
           onAssign={handleQaAssign}
+          onUnassign={handleQaUnassign}
         />
       )}
 

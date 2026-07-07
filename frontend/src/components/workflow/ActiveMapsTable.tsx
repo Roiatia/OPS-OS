@@ -8,10 +8,12 @@ import {
   getCurrentStatusValue,
   getInspectorStatusOptions,
   getQaStatusOptions,
+  getRoleStatusLabel,
   statusRowClass,
   type StatusOption,
 } from "../../lib/activeMapsWorkflow";
 import { Badge } from "../Badge";
+import { StationSelect } from "./StationSelect";
 
 interface Props {
   maps: MapRecord[];
@@ -61,6 +63,7 @@ export function ActiveMapsTable({ maps, role, onRefresh }: Props) {
       onRefresh();
     } catch (e) {
       setError((e as Error).message);
+      onRefresh();
     } finally {
       setLoadingId(null);
     }
@@ -106,6 +109,7 @@ export function ActiveMapsTable({ maps, role, onRefresh }: Props) {
               <th className="px-3 py-2.5 font-semibold whitespace-nowrap">Map</th>
               <th className="px-3 py-2.5 font-semibold whitespace-nowrap">Customer</th>
               <th className="px-3 py-2.5 font-semibold whitespace-nowrap">Task</th>
+              <th className="px-3 py-2.5 font-semibold whitespace-nowrap min-w-[120px]">Station</th>
               <th className="px-3 py-2.5 font-semibold whitespace-nowrap">Due</th>
               <th className="px-3 py-2.5 font-semibold whitespace-nowrap min-w-[130px]">Status</th>
               <th className="px-3 py-2.5 font-semibold min-w-[220px]">General notes</th>
@@ -117,8 +121,11 @@ export function ActiveMapsTable({ maps, role, onRefresh }: Props) {
               const displayState = getMapDisplayState(map);
               const options = statusOptionsFor(map);
               const currentValue = getCurrentStatusValue(map, role);
+              const roleLabel = getRoleStatusLabel(map, role);
               const taskType = getTaskType(map);
               const isExpanded = expandedNote === map.id;
+              const readOnlyStatus =
+                options.length === 0 ? (roleLabel !== "—" ? roleLabel : displayState) : null;
 
               return (
                 <tr
@@ -144,6 +151,14 @@ export function ActiveMapsTable({ maps, role, onRefresh }: Props) {
                       "—"
                     )}
                   </td>
+                  <td className="px-3 py-2.5">
+                    <StationSelect
+                      map={map}
+                      disabled={loadingId === map.id}
+                      onUpdated={onRefresh}
+                      onError={setError}
+                    />
+                  </td>
                   <td className="px-3 py-2.5 text-muted text-xs whitespace-nowrap">
                     {map.dueDate ? formatDate(map.dueDate) : "—"}
                   </td>
@@ -165,23 +180,33 @@ export function ActiveMapsTable({ maps, role, onRefresh }: Props) {
                                 ? "bg-sky-100 border-sky-200 text-sky-800"
                                 : displayState === "Accepted"
                                   ? "bg-amber-100 border-amber-200 text-amber-800"
-                                  : "bg-white border-border"
+                                  : displayState === "FixDone"
+                                    ? "bg-violet-100 border-violet-200 text-violet-800"
+                                    : "bg-white border-border"
                         }`}
                       >
-                        <option value="" disabled>
-                          {displayState === "—" ? "Select..." : displayState}
-                        </option>
+                        {!currentValue && (
+                          <option value="" disabled>
+                            Select status...
+                          </option>
+                        )}
                         {options.map((o) => (
                           <option key={o.value} value={o.value}>
                             {o.label}
                           </option>
                         ))}
                       </select>
-                    ) : (
+                    ) : readOnlyStatus && readOnlyStatus !== "—" ? (
                       <Badge
-                        label={displayState === "—" ? "—" : displayState}
-                        tone={workflowStateTone(displayState)}
+                        label={readOnlyStatus}
+                        tone={workflowStateTone(
+                          readOnlyStatus === "Done" && displayState === "In QA"
+                            ? "In QA"
+                            : (readOnlyStatus as typeof displayState)
+                        )}
                       />
+                    ) : (
+                      <span className="text-xs text-muted">—</span>
                     )}
                   </td>
                   <td className="px-3 py-2.5">

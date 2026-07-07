@@ -1,4 +1,4 @@
-import { MapPhase, InspectorStatus, QaStatus, TaskStatus, RoleName } from "@prisma/client";
+import { MapPhase, InspectorStatus, QaStatus, TaskStatus, RoleName, WorkflowPhaseTarget } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import type { AuthUser } from "../lib/types.js";
 import { hasRole, isLeaderOrAdmin } from "../lib/types.js";
@@ -38,6 +38,29 @@ async function logPhaseEntry(
   await prisma.mapPhaseHistory.create({
     data: { mapId, phase, userId, note },
   });
+}
+
+/** When both inspector and QA accept on INTAKE, advance to pre-upload (PREP). */
+async function maybeAdvanceFromIntake(mapId: string, userId: string) {
+  const map = await prisma.map.findUnique({ where: { id: mapId } });
+  if (!map || map.phase !== MapPhase.INTAKE) return;
+  if (!map.assignedInspectorId || !map.assignedQaId) return;
+  if (!map.inspectorAssignAccepted || !map.qaAssignAccepted) return;
+
+  await prisma.map.update({
+    where: { id: mapId },
+    data: {
+      phase: MapPhase.PREP,
+      inspectorStatus: InspectorStatus.ACCEPTED,
+    },
+  });
+  await logPhaseEntry(
+    mapId,
+    MapPhase.PREP,
+    userId,
+    "Inspector and QA accepted assignment — pre-upload started"
+  );
+  await logEvent(mapId, userId, "phase_advanced", "INTAKE → PREP after team acceptance");
 }
 
 async function saveAttachment(
@@ -101,7 +124,10 @@ export async function listMapsForUser(user: AuthUser) {
       where: {
         phase: { notIn: ARCHIVED_PHASES },
         OR: [
-          { assignedInspectorId: user.id },
+          {
+            assignedInspectorId: user.id,
+            OR: [{ phase: { not: MapPhase.INTAKE } }, { releasedToPipeline: true }],
+          },
           { tasks: { some: { assignedToId: user.id } } },
         ],
       },
@@ -116,7 +142,10 @@ export async function listMapsForUser(user: AuthUser) {
         phase: { notIn: ARCHIVED_PHASES },
         OR: [
           { phase: { in: [MapPhase.UPLOAD_REVIEW, MapPhase.QA_REVIEW] } },
-          { assignedQaId: user.id },
+          {
+            assignedQaId: user.id,
+            OR: [{ phase: { not: MapPhase.INTAKE } }, { releasedToPipeline: true }],
+          },
           { qaStatus: { not: null } },
           { tasks: { some: { assignedToId: user.id } } },
         ],
@@ -186,7 +215,8 @@ export async function getMapForUser(mapId: string, user: AuthUser) {
   if (hasRole(user, RoleName.GRAPHIC_QA)) {
     const qaPhases: MapPhase[] = [MapPhase.UPLOAD_REVIEW, MapPhase.QA_REVIEW];
     const qaAccess =
-      map.assignedQaId === user.id ||
+      (map.assignedQaId === user.id &&
+        (map.phase !== MapPhase.INTAKE || map.releasedToPipeline)) ||
       qaPhases.includes(map.phase) ||
       map.qaStatus !== null ||
       map.tasks.some((t) => t.assignedToId === user.id);
@@ -217,23 +247,20 @@ export async function assignInspector(
   });
   if (!inspector) throw new Error("Inspector not found");
 
-  const isNewAssignment = map.phase === MapPhase.INTAKE;
-  const newPhase = isNewAssignment ? MapPhase.PREP : map.phase;
+  const isIntake = map.phase === MapPhase.INTAKE;
+  const isReassign = Boolean(map.assignedInspectorId && map.assignedInspectorId !== inspectorId);
 
   const updated = await prisma.map.update({
     where: { id: mapId },
     data: {
       assignedInspectorId: inspectorId,
-      phase: newPhase,
-      inspectorStatus: isNewAssignment ? null : map.inspectorStatus,
-      qaStatus: isNewAssignment ? null : map.qaStatus,
+      phase: isIntake ? MapPhase.INTAKE : map.phase,
+      inspectorStatus: isIntake ? null : isReassign ? null : map.inspectorStatus,
+      qaStatus: isIntake ? null : map.qaStatus,
+      inspectorAssignAccepted: isIntake ? false : map.inspectorAssignAccepted,
     },
     include: mapIncludes,
   });
-
-  if (isNewAssignment && newPhase !== map.phase) {
-    await logPhaseEntry(mapId, MapPhase.PREP, user.id, `Assigned to ${inspector.name}`);
-  }
 
   const action =
     map.assignedInspectorId && map.assignedInspectorId !== inspectorId
@@ -253,6 +280,7 @@ export async function assignInspector(
     });
   }
 
+  await maybeAutoReleaseNewMap(mapId, user);
   return prisma.map.findUnique({ where: { id: mapId }, include: mapIncludes });
 }
 
@@ -313,35 +341,34 @@ export async function shuffleAssignInspectors(
     assignments.push({ mapId: map.id, inspectorId: pick.id, inspectorName: pick.name });
   }
 
-  await prisma.$transaction(async (tx) => {
-    for (const { mapId, inspectorId, inspectorName } of assignments) {
-      await tx.map.update({
-        where: { id: mapId },
-        data: {
-          assignedInspectorId: inspectorId,
-          phase: MapPhase.PREP,
-          inspectorStatus: null,
-          qaStatus: null,
-        },
-      });
-      await tx.mapPhaseHistory.create({
-        data: {
-          mapId,
-          phase: MapPhase.PREP,
-          userId: user.id,
-          note: `Shuffle assigned to ${inspectorName}`,
-        },
-      });
-      await tx.mapEvent.create({
-        data: {
-          mapId,
-          userId: user.id,
-          action: "assigned_inspector",
-          note: `Shuffle assigned to ${inspectorName}`,
-        },
-      });
-    }
-  });
+  const operations = assignments.map(({ mapId, inspectorId }) =>
+    prisma.map.update({
+      where: { id: mapId },
+      data: {
+        assignedInspectorId: inspectorId,
+        phase: MapPhase.INTAKE,
+        inspectorStatus: null,
+        qaStatus: null,
+        inspectorAssignAccepted: false,
+        qaAssignAccepted: false,
+      },
+    })
+  );
+
+  if (operations.length > 0) {
+    await prisma.$transaction(operations, { timeout: 60_000 });
+  }
+
+  if (assignments.length > 0) {
+    await prisma.mapEvent.createMany({
+      data: assignments.map(({ mapId, inspectorName }) => ({
+        mapId,
+        userId: user.id,
+        action: "assigned_inspector",
+        note: `Shuffle assigned to ${inspectorName}`,
+      })),
+    });
+  }
 
   const distribution = inspectors.map((inspector) => ({
     inspectorId: inspector.id,
@@ -353,6 +380,207 @@ export async function shuffleAssignInspectors(
   }));
 
   return { assigned: assignments.length, distribution };
+}
+
+type ShuffleDistribution = {
+  userId: string;
+  userName: string;
+  assigned: number;
+  totalAfter: number;
+};
+
+function buildBalancedAssignments(
+  maps: { id: string }[],
+  members: { id: string; name: string }[],
+  workload: Map<string, number>
+): { mapId: string; userId: string; userName: string }[] {
+  const assignments: { mapId: string; userId: string; userName: string }[] = [];
+  for (const map of maps) {
+    const pick = [...members].sort((a, b) => {
+      const diff = (workload.get(a.id) ?? 0) - (workload.get(b.id) ?? 0);
+      return diff !== 0 ? diff : a.name.localeCompare(b.name);
+    })[0]!;
+    workload.set(pick.id, (workload.get(pick.id) ?? 0) + 1);
+    assignments.push({ mapId: map.id, userId: pick.id, userName: pick.name });
+  }
+  return assignments;
+}
+
+function toDistribution(
+  members: { id: string; name: string }[],
+  assignments: { userId: string }[],
+  initialWorkload: Map<string, number>
+): ShuffleDistribution[] {
+  return members.map((member) => {
+    const assigned = assignments.filter((a) => a.userId === member.id).length;
+    const current = initialWorkload.get(member.id) ?? 0;
+    return {
+      userId: member.id,
+      userName: member.name,
+      assigned,
+      totalAfter: current + assigned,
+    };
+  });
+}
+
+/** Balanced inspector + QA assignment for unreleased intake maps. */
+export async function shuffleAssignNewMaps(
+  mapIds: string[],
+  inspectorIds: string[],
+  qaIds: string[],
+  user: AuthUser
+) {
+  if (mapIds.length === 0) throw new Error("No maps selected");
+
+  const maps = await prisma.map.findMany({
+    where: { id: { in: mapIds } },
+    orderBy: { mapNumber: "asc" },
+  });
+  if (maps.length !== mapIds.length) throw new Error("Some maps were not found");
+
+  for (const map of maps) {
+    if (map.phase !== MapPhase.INTAKE || map.releasedToPipeline) {
+      throw new Error(`${map.mapNumber} is not a new map`);
+    }
+  }
+
+  const mapsNeedingInspector = maps.filter((m) => !m.assignedInspectorId);
+  const mapsNeedingQa = maps.filter((m) => !m.assignedQaId);
+
+  if (mapsNeedingInspector.length > 0 && inspectorIds.length === 0) {
+    throw new Error("Select at least one inspector");
+  }
+  if (mapsNeedingQa.length > 0 && qaIds.length === 0) {
+    throw new Error("Select at least one QA member");
+  }
+
+  let inspectors: { id: string; name: string }[] = [];
+  let qaMembers: { id: string; name: string }[] = [];
+  const inspectorWorkload = new Map<string, number>();
+  const qaWorkload = new Map<string, number>();
+
+  if (mapsNeedingInspector.length > 0) {
+    inspectors = await prisma.user.findMany({
+      where: {
+        id: { in: inspectorIds },
+        roles: { some: { role: RoleName.MAPPING_INSPECTOR } },
+      },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true },
+    });
+    if (inspectors.length === 0) throw new Error("No valid inspectors found");
+
+    const inspectorCounts = await prisma.map.groupBy({
+      by: ["assignedInspectorId"],
+      where: {
+        assignedInspectorId: { in: inspectorIds },
+        phase: { notIn: ARCHIVED_PHASES },
+      },
+      _count: { _all: true },
+    });
+    for (const id of inspectorIds) inspectorWorkload.set(id, 0);
+    for (const row of inspectorCounts) {
+      if (row.assignedInspectorId) {
+        inspectorWorkload.set(row.assignedInspectorId, row._count._all);
+      }
+    }
+  }
+
+  if (mapsNeedingQa.length > 0) {
+    qaMembers = await prisma.user.findMany({
+      where: {
+        id: { in: qaIds },
+        roles: { some: { role: RoleName.GRAPHIC_QA } },
+      },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true },
+    });
+    if (qaMembers.length === 0) throw new Error("No valid QA members found");
+
+    const qaCounts = await prisma.map.groupBy({
+      by: ["assignedQaId"],
+      where: {
+        assignedQaId: { in: qaIds },
+        phase: { notIn: ARCHIVED_PHASES },
+      },
+      _count: { _all: true },
+    });
+    for (const id of qaIds) qaWorkload.set(id, 0);
+    for (const row of qaCounts) {
+      if (row.assignedQaId) {
+        qaWorkload.set(row.assignedQaId, row._count._all);
+      }
+    }
+  }
+
+  const initialInspectorWorkload = new Map(inspectorWorkload);
+  const initialQaWorkload = new Map(qaWorkload);
+
+  const inspectorAssignments = buildBalancedAssignments(
+    mapsNeedingInspector,
+    inspectors,
+    inspectorWorkload
+  );
+  const qaAssignments = buildBalancedAssignments(mapsNeedingQa, qaMembers, qaWorkload);
+
+  const updateOperations = [
+    ...inspectorAssignments.map(({ mapId, userId }) =>
+      prisma.map.update({
+        where: { id: mapId },
+        data: {
+          assignedInspectorId: userId,
+          inspectorAssignAccepted: false,
+        },
+      })
+    ),
+    ...qaAssignments.map(({ mapId, userId }) =>
+      prisma.map.update({
+        where: { id: mapId },
+        data: {
+          assignedQaId: userId,
+          qaAssignAccepted: false,
+        },
+      })
+    ),
+  ];
+
+  if (updateOperations.length > 0) {
+    await prisma.$transaction(updateOperations, { timeout: 60_000 });
+  }
+
+  const eventRows = [
+    ...inspectorAssignments.map(({ mapId, userName }) => ({
+      mapId,
+      userId: user.id,
+      action: "assigned_inspector",
+      note: `Shuffle assigned to ${userName}`,
+    })),
+    ...qaAssignments.map(({ mapId, userName }) => ({
+      mapId,
+      userId: user.id,
+      action: "assigned_qa",
+      note: `Shuffle assigned to ${userName}`,
+    })),
+  ];
+
+  if (eventRows.length > 0) {
+    await prisma.mapEvent.createMany({ data: eventRows });
+  }
+
+  for (const mapId of mapIds) {
+    await maybeAutoReleaseNewMap(mapId, user);
+  }
+
+  return {
+    inspectorAssigned: inspectorAssignments.length,
+    qaAssigned: qaAssignments.length,
+    inspectorDistribution: toDistribution(
+      inspectors,
+      inspectorAssignments,
+      initialInspectorWorkload
+    ),
+    qaDistribution: toDistribution(qaMembers, qaAssignments, initialQaWorkload),
+  };
 }
 
 export async function assignQa(
@@ -372,12 +600,35 @@ export async function assignQa(
   });
   if (!qa) throw new Error("QA member not found");
 
+  const assignablePhases: MapPhase[] = [
+    MapPhase.INTAKE,
+    MapPhase.PREP,
+    MapPhase.UPLOAD_REVIEW,
+    MapPhase.QA_REVIEW,
+  ];
+  if (!assignablePhases.includes(map.phase)) {
+    throw new Error("Map cannot be assigned to QA in current phase");
+  }
+  if (map.phase === MapPhase.PREP && map.assignedQaId) {
+    throw new Error("QA already assigned for this map");
+  }
+
   await prisma.map.update({
     where: { id: mapId },
-    data: { assignedQaId: qaId },
+    data: {
+      assignedQaId: qaId,
+      qaAssignAccepted: map.phase === MapPhase.INTAKE ? false : map.qaAssignAccepted,
+    },
   });
 
-  await logEvent(mapId, user.id, "assigned_qa", `Assigned to ${qa.name}`);
+  const action =
+    map.assignedQaId && map.assignedQaId !== qaId ? "reassigned_qa" : "assigned_qa";
+  await logEvent(
+    mapId,
+    user.id,
+    action,
+    `${action === "reassigned_qa" ? "Reassigned" : "Assigned"} to ${qa.name}`
+  );
 
   if (attachment) {
     await saveAttachment(mapId, user.id, "assign_qa", attachment);
@@ -385,6 +636,165 @@ export async function assignQa(
       context: "assign_qa",
     });
   }
+
+  await maybeAutoReleaseNewMap(mapId, user);
+  return prisma.map.findUnique({ where: { id: mapId }, include: mapIncludes });
+}
+
+export async function releaseMapToPipeline(mapId: string, user: AuthUser) {
+  const map = await prisma.map.findUnique({ where: { id: mapId } });
+  if (!map) throw new Error("Map not found");
+  if (map.releasedToPipeline) {
+    return prisma.map.findUnique({ where: { id: mapId }, include: mapIncludes });
+  }
+  if (map.phase !== MapPhase.INTAKE) {
+    throw new Error("This map cannot be saved from the new maps box");
+  }
+
+  const target = map.workflowPhaseTarget ?? WorkflowPhaseTarget.PRE_UPLOAD;
+  const releasePhase =
+    target === WorkflowPhaseTarget.UPLOADED
+      ? MapPhase.FIELD
+      : target === WorkflowPhaseTarget.POLISH
+        ? MapPhase.POLISH
+        : target === WorkflowPhaseTarget.POLISHED
+          ? MapPhase.APPROVED
+          : MapPhase.INTAKE;
+
+  const updated = await prisma.map.update({
+    where: { id: mapId },
+    data: { releasedToPipeline: true, phase: releasePhase },
+    include: mapIncludes,
+  });
+
+  if (releasePhase !== MapPhase.INTAKE) {
+    await logPhaseEntry(
+      mapId,
+      releasePhase,
+      user.id,
+      `Released to pipeline as ${target.toLowerCase().replace("_", " ")}`
+    );
+  }
+
+  await logEvent(mapId, user.id, "released_to_pipeline", "Map saved to pipeline by leader");
+  return updated;
+}
+
+/** When an inspector is assigned on an unreleased intake map, move it to the pipeline. */
+async function maybeAutoReleaseNewMap(mapId: string, user: AuthUser) {
+  const map = await prisma.map.findUnique({ where: { id: mapId } });
+  if (!map) return;
+  if (map.phase !== MapPhase.INTAKE || map.releasedToPipeline) return;
+  if (!map.assignedInspectorId) return;
+  await releaseMapToPipeline(mapId, user);
+}
+
+export async function unassignInspector(mapId: string, user: AuthUser) {
+  const map = await prisma.map.findUnique({ where: { id: mapId } });
+  if (!map) throw new Error("Map not found");
+  if (ARCHIVED_PHASES.includes(map.phase)) {
+    throw new Error("Cannot unassign archived map");
+  }
+  const assignablePhases: MapPhase[] = [MapPhase.INTAKE, MapPhase.PREP, MapPhase.POLISH];
+  if (!assignablePhases.includes(map.phase)) {
+    throw new Error("Cannot unassign inspector in current phase");
+  }
+  if (!map.assignedInspectorId) {
+    throw new Error("No inspector assigned");
+  }
+
+  await prisma.map.update({
+    where: { id: mapId },
+    data: {
+      assignedInspectorId: null,
+      inspectorStatus: null,
+      inspectorAssignAccepted: false,
+    },
+  });
+
+  await logEvent(mapId, user.id, "unassigned_inspector", "Inspector removed from map");
+  return prisma.map.findUnique({ where: { id: mapId }, include: mapIncludes });
+}
+
+export async function unassignQa(mapId: string, user: AuthUser) {
+  const map = await prisma.map.findUnique({ where: { id: mapId } });
+  if (!map) throw new Error("Map not found");
+  if (ARCHIVED_PHASES.includes(map.phase)) {
+    throw new Error("Cannot unassign archived map");
+  }
+  const assignablePhases: MapPhase[] = [
+    MapPhase.INTAKE,
+    MapPhase.PREP,
+    MapPhase.UPLOAD_REVIEW,
+    MapPhase.QA_REVIEW,
+  ];
+  if (!assignablePhases.includes(map.phase)) {
+    throw new Error("Cannot unassign QA in current phase");
+  }
+  if (!map.assignedQaId) {
+    throw new Error("No QA assigned");
+  }
+
+  await prisma.map.update({
+    where: { id: mapId },
+    data: {
+      assignedQaId: null,
+      qaAssignAccepted: false,
+    },
+  });
+
+  await logEvent(mapId, user.id, "unassigned_qa", "QA removed from map");
+  return prisma.map.findUnique({ where: { id: mapId }, include: mapIncludes });
+}
+
+export async function acceptInspectorAssignment(mapId: string, user: AuthUser) {
+  const map = await prisma.map.findUnique({ where: { id: mapId } });
+  if (!map) throw new Error("Map not found");
+  if (map.phase !== MapPhase.INTAKE) {
+    throw new Error("Assignment acceptance only applies during intake");
+  }
+  if (!map.releasedToPipeline) {
+    throw new Error("Map has not been released to the pipeline yet");
+  }
+  if (map.assignedInspectorId !== user.id) {
+    throw new Error("Not assigned to this map");
+  }
+  if (map.inspectorAssignAccepted) {
+    throw new Error("Assignment already accepted");
+  }
+
+  await prisma.map.update({
+    where: { id: mapId },
+    data: { inspectorAssignAccepted: true },
+  });
+  await logEvent(mapId, user.id, "inspector_assignment_accepted", "Inspector accepted assignment");
+  await maybeAdvanceFromIntake(mapId, user.id);
+
+  return prisma.map.findUnique({ where: { id: mapId }, include: mapIncludes });
+}
+
+export async function acceptQaAssignment(mapId: string, user: AuthUser) {
+  const map = await prisma.map.findUnique({ where: { id: mapId } });
+  if (!map) throw new Error("Map not found");
+  if (map.phase !== MapPhase.INTAKE) {
+    throw new Error("Assignment acceptance only applies during intake");
+  }
+  if (!map.releasedToPipeline) {
+    throw new Error("Map has not been released to the pipeline yet");
+  }
+  if (map.assignedQaId !== user.id) {
+    throw new Error("Not assigned to this map");
+  }
+  if (map.qaAssignAccepted) {
+    throw new Error("Assignment already accepted");
+  }
+
+  await prisma.map.update({
+    where: { id: mapId },
+    data: { qaAssignAccepted: true },
+  });
+  await logEvent(mapId, user.id, "qa_assignment_accepted", "QA accepted assignment");
+  await maybeAdvanceFromIntake(mapId, user.id);
 
   return prisma.map.findUnique({ where: { id: mapId }, include: mapIncludes });
 }
@@ -407,6 +817,78 @@ export async function cancelMap(mapId: string, user: AuthUser, note?: string) {
   return updated;
 }
 
+export async function deleteMap(mapId: string, _user: AuthUser) {
+  const map = await prisma.map.findUnique({ where: { id: mapId } });
+  if (!map) throw new Error("Map not found");
+  if (map.phase === MapPhase.APPROVED) {
+    throw new Error("Approved maps cannot be deleted");
+  }
+
+  await prisma.map.delete({ where: { id: mapId } });
+  return { ok: true as const };
+}
+
+export async function deleteMaps(mapIds: string[], _user: AuthUser) {
+  if (mapIds.length === 0) throw new Error("No maps selected");
+
+  const maps = await prisma.map.findMany({ where: { id: { in: mapIds } } });
+  if (maps.length !== mapIds.length) throw new Error("Some maps were not found");
+
+  const approved = maps.filter((m) => m.phase === MapPhase.APPROVED);
+  if (approved.length > 0) {
+    throw new Error(
+      `Cannot delete approved maps: ${approved.map((m) => m.mapNumber).join(", ")}`
+    );
+  }
+
+  const result = await prisma.map.deleteMany({ where: { id: { in: mapIds } } });
+  return { ok: true as const, deleted: result.count };
+}
+
+function inspectorCanUpdateStatus(map: {
+  phase: MapPhase;
+  qaStatus: QaStatus | null;
+  workflowPhaseTarget: WorkflowPhaseTarget;
+}): boolean {
+  if (ARCHIVED_PHASES.includes(map.phase)) return false;
+  const station = map.workflowPhaseTarget ?? WorkflowPhaseTarget.PRE_UPLOAD;
+  if (
+    station === WorkflowPhaseTarget.UPLOADED ||
+    station === WorkflowPhaseTarget.POLISHED
+  ) {
+    return false;
+  }
+  if (map.qaStatus === QaStatus.FIX) return true;
+  return (
+    station === WorkflowPhaseTarget.PRE_UPLOAD ||
+    station === WorkflowPhaseTarget.POLISH
+  );
+}
+
+/** Align granular phase with the map's station when they have drifted apart. */
+function normalizeInspectorWorkPhase(map: {
+  phase: MapPhase;
+  workflowPhaseTarget: WorkflowPhaseTarget;
+}): MapPhase {
+  const station = map.workflowPhaseTarget ?? WorkflowPhaseTarget.PRE_UPLOAD;
+
+  if (station === WorkflowPhaseTarget.PRE_UPLOAD) {
+    if ([MapPhase.INTAKE, MapPhase.PREP, MapPhase.UPLOAD_REVIEW].includes(map.phase)) {
+      return map.phase;
+    }
+    return MapPhase.PREP;
+  }
+
+  if (station === WorkflowPhaseTarget.POLISH) {
+    if ([MapPhase.POLISH, MapPhase.QA_REVIEW].includes(map.phase)) {
+      return map.phase;
+    }
+    return MapPhase.POLISH;
+  }
+
+  return map.phase;
+}
+
 export async function updateInspectorStatus(
   mapId: string,
   status: InspectorStatus,
@@ -418,14 +900,25 @@ export async function updateInspectorStatus(
   if (map.assignedInspectorId !== user.id) {
     throw new Error("Not assigned to this map");
   }
-  if (map.phase !== MapPhase.PREP && map.phase !== MapPhase.POLISH) {
-    throw new Error("Inspector status only applies during prep or polish");
+  if (!inspectorCanUpdateStatus(map)) {
+    throw new Error("Inspector cannot update status at this station");
   }
 
-  let phase: MapPhase = map.phase;
-  if (status === InspectorStatus.DONE && map.phase === MapPhase.PREP) {
+  const station = map.workflowPhaseTarget ?? WorkflowPhaseTarget.PRE_UPLOAD;
+  let phase = normalizeInspectorWorkPhase(map);
+
+  if (
+    status === InspectorStatus.DONE &&
+    station === WorkflowPhaseTarget.PRE_UPLOAD &&
+    phase === MapPhase.PREP &&
+    map.qaStatus !== QaStatus.FIX
+  ) {
     phase = MapPhase.UPLOAD_REVIEW;
-  } else if (status === InspectorStatus.DONE && map.phase === MapPhase.POLISH) {
+  } else if (
+    status === InspectorStatus.DONE &&
+    station === WorkflowPhaseTarget.POLISH &&
+    phase === MapPhase.POLISH
+  ) {
     phase = MapPhase.QA_REVIEW;
     await prisma.map.update({
       where: { id: mapId },
@@ -490,14 +983,14 @@ export async function qaUploadDecision(
     const updated = await prisma.map.update({
       where: { id: mapId },
       data: {
-        phase: MapPhase.PREP,
-        inspectorStatus: null,
+        qaStatus: QaStatus.FIX,
+        phase: MapPhase.UPLOAD_REVIEW,
+        inspectorStatus: InspectorStatus.ACCEPTED,
         uploadApproved: false,
       },
       include: mapIncludes,
     });
-    await logPhaseEntry(mapId, MapPhase.PREP, user.id, note ?? "Upload rejected");
-    await logEvent(mapId, user.id, "upload_rejected", note ?? "Upload not approved");
+    await logEvent(mapId, user.id, "upload_rejected", note ?? "QA requested fixes");
     if (note?.trim()) await addMapNote(mapId, user.id, note.trim());
     return prisma.map.findUnique({ where: { id: mapId }, include: mapIncludes });
   }
@@ -511,7 +1004,7 @@ export async function qaUploadDecision(
     },
     include: mapIncludes,
   });
-  await logPhaseEntry(mapId, MapPhase.FIELD, user.id, note ?? "Upload approved");
+  await logPhaseEntry(mapId, MapPhase.FIELD, user.id, note ?? "Uploaded to dashboard");
   await logEvent(mapId, user.id, "upload_approved", note ?? "Approved for dashboard upload");
   if (note?.trim()) await addMapNote(mapId, user.id, note.trim());
   return prisma.map.findUnique({ where: { id: mapId }, include: mapIncludes });
@@ -531,8 +1024,8 @@ export async function completeFieldWork(mapId: string, user: AuthUser) {
     },
     include: mapIncludes,
   });
-  await logPhaseEntry(mapId, MapPhase.POLISH, user.id, "Field work complete");
-  await logEvent(mapId, user.id, "field_complete", "Supervisors finished — polish started");
+  await logPhaseEntry(mapId, MapPhase.POLISH, user.id, "Polish phase started");
+  await logEvent(mapId, user.id, "field_complete", "Uploaded to dashboard — polish started");
   return updated;
 }
 
@@ -568,11 +1061,15 @@ export async function qaPolishDecision(
     if (map.qaStatus !== QaStatus.FIX) {
       throw new Error("No active fix request");
     }
+    const reviewPhase =
+      map.phase === MapPhase.UPLOAD_REVIEW ? MapPhase.UPLOAD_REVIEW : MapPhase.QA_REVIEW;
     await prisma.map.update({
       where: { id: mapId },
-      data: { qaStatus: QaStatus.FIX_DONE, phase: MapPhase.QA_REVIEW },
+      data: { qaStatus: QaStatus.FIX_DONE, phase: reviewPhase },
     });
-    await logPhaseEntry(mapId, MapPhase.QA_REVIEW, user.id, note ?? "Fixes completed");
+    if (reviewPhase !== map.phase) {
+      await logPhaseEntry(mapId, reviewPhase, user.id, note ?? "Fixes completed");
+    }
     await logEvent(mapId, user.id, "fix_done", note ?? "Inspector completed fixes");
     if (note?.trim()) await addMapNote(mapId, user.id, note.trim());
     return prisma.map.findUnique({ where: { id: mapId }, include: mapIncludes });
@@ -678,6 +1175,79 @@ export async function createMapFromJira(
   await logPhaseEntry(map.id, MapPhase.INTAKE, user.id, "Map created from CS");
   await logEvent(map.id, user.id, "map_created", `From Jira ${data.jiraTicketId ?? ""}`);
   return map;
+}
+
+export async function updateMapWorkflowPhaseTarget(
+  mapId: string,
+  target: WorkflowPhaseTarget,
+  user: AuthUser
+) {
+  const map = await prisma.map.findUnique({ where: { id: mapId } });
+  if (!map) throw new Error("Map not found");
+  if (ARCHIVED_PHASES.includes(map.phase)) {
+    throw new Error("Cannot change station on archived maps");
+  }
+
+  const isInspector =
+    hasRole(user, RoleName.MAPPING_INSPECTOR) && map.assignedInspectorId === user.id;
+  const isQa =
+    hasRole(user, RoleName.GRAPHIC_QA) &&
+    (map.assignedQaId === user.id ||
+      [MapPhase.UPLOAD_REVIEW, MapPhase.QA_REVIEW].includes(map.phase));
+  const isLeader = isLeaderOrAdmin(user);
+
+  const isNewMapEdit =
+    map.phase === MapPhase.INTAKE && !map.releasedToPipeline && isLeader;
+
+  if (!isInspector && !isQa && !isLeader) {
+    throw new Error("Not allowed to update station on this map");
+  }
+  if (map.phase === MapPhase.INTAKE && !map.releasedToPipeline && !isNewMapEdit) {
+    throw new Error("Workflow phase can only be set on new maps by the team leader");
+  }
+
+  if (!Object.values(WorkflowPhaseTarget).includes(target)) {
+    throw new Error("Invalid workflow phase");
+  }
+
+  const nextPhase = phaseForStationTarget(target, map.phase, map.releasedToPipeline);
+  const phaseChanged = nextPhase !== map.phase;
+
+  const updated = await prisma.map.update({
+    where: { id: mapId },
+    data: { workflowPhaseTarget: target, phase: nextPhase },
+    include: mapIncludes,
+  });
+
+  if (phaseChanged) {
+    await logPhaseEntry(mapId, nextPhase, user.id, `Station → ${target}`);
+  }
+
+  await logEvent(mapId, user.id, "station_updated", `Station set to ${target}`);
+  return updated;
+}
+
+function phaseForStationTarget(
+  target: WorkflowPhaseTarget,
+  current: MapPhase,
+  released: boolean
+): MapPhase {
+  switch (target) {
+    case WorkflowPhaseTarget.PRE_UPLOAD:
+      if ([MapPhase.INTAKE, MapPhase.PREP, MapPhase.UPLOAD_REVIEW].includes(current)) {
+        return current;
+      }
+      return released ? MapPhase.PREP : MapPhase.INTAKE;
+    case WorkflowPhaseTarget.UPLOADED:
+      return MapPhase.FIELD;
+    case WorkflowPhaseTarget.POLISH:
+      if (current === MapPhase.QA_REVIEW) return MapPhase.QA_REVIEW;
+      return MapPhase.POLISH;
+    case WorkflowPhaseTarget.POLISHED:
+      return MapPhase.APPROVED;
+    default:
+      return current;
+  }
 }
 
 export async function updateMapDueDate(mapId: string, dueDate: string | null, user: AuthUser) {

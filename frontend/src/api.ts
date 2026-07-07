@@ -6,10 +6,16 @@ function getToken() {
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getToken();
+  const method = options.method ?? "GET";
+  const sendsJson = method === "POST" || method === "PUT" || method === "PATCH";
+  const body = options.body ?? (sendsJson ? "{}" : undefined);
+
   const res = await fetch(`${API}${path}`, {
     ...options,
+    method,
+    body,
     headers: {
-      "Content-Type": "application/json",
+      ...(sendsJson ? { "Content-Type": "application/json" } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options.headers,
     },
@@ -72,6 +78,21 @@ export const api = {
       body: JSON.stringify({ dueDate }),
     }),
 
+  updateMapWorkflowPhaseTarget: (
+    mapId: string,
+    workflowPhaseTarget: import("./types").WorkflowPhaseTarget
+  ) =>
+    request<import("./types").MapRecord>(`/maps/${mapId}/workflow-phase-target`, {
+      method: "PATCH",
+      body: JSON.stringify({ workflowPhaseTarget }),
+    }),
+
+  updateMapStation: (mapId: string, station: import("./types").WorkflowPhaseTarget) =>
+    request<import("./types").MapRecord>(`/maps/${mapId}/station`, {
+      method: "PATCH",
+      body: JSON.stringify({ station }),
+    }),
+
   assignInspector: (
     mapId: string,
     inspectorId: string,
@@ -106,10 +127,65 @@ export const api = {
       body: JSON.stringify({ qaId, attachment }),
     }),
 
+  acceptInspectorAssignment: (mapId: string) =>
+    request<import("./types").MapRecord>(`/maps/${mapId}/accept-assignment`, {
+      method: "POST",
+    }),
+
+  acceptQaAssignment: (mapId: string) =>
+    request<import("./types").MapRecord>(`/maps/${mapId}/accept-qa-assignment`, {
+      method: "POST",
+    }),
+
+  unassignInspector: (mapId: string) =>
+    request<import("./types").MapRecord>(`/maps/${mapId}/unassign`, {
+      method: "POST",
+    }),
+
+  releaseMapToPipeline: (mapId: string) =>
+    request<import("./types").MapRecord>(`/maps/${mapId}/release-to-pipeline`, {
+      method: "POST",
+    }),
+
+  unassignQa: (mapId: string) =>
+    request<import("./types").MapRecord>(`/maps/${mapId}/unassign-qa`, {
+      method: "POST",
+    }),
+
   cancelMap: (mapId: string, note?: string) =>
     request<import("./types").MapRecord>(`/maps/${mapId}/cancel`, {
       method: "POST",
       body: JSON.stringify({ note }),
+    }),
+
+  deleteMap: (mapId: string) =>
+    request<{ ok: true }>(`/maps/${mapId}`, { method: "DELETE" }),
+
+  deleteMaps: (mapIds: string[]) =>
+    request<{ ok: true; deleted: number }>("/maps/bulk-delete", {
+      method: "POST",
+      body: JSON.stringify({ mapIds }),
+    }),
+
+  shuffleAssignNewMaps: (mapIds: string[], inspectorIds: string[], qaIds: string[]) =>
+    request<{
+      inspectorAssigned: number;
+      qaAssigned: number;
+      inspectorDistribution: {
+        userId: string;
+        userName: string;
+        assigned: number;
+        totalAfter: number;
+      }[];
+      qaDistribution: {
+        userId: string;
+        userName: string;
+        assigned: number;
+        totalAfter: number;
+      }[];
+    }>("/maps/shuffle-assign-new", {
+      method: "POST",
+      body: JSON.stringify({ mapIds, inspectorIds, qaIds }),
     }),
 
   updateInspectorStatus: (mapId: string, status: string, note?: string) =>
