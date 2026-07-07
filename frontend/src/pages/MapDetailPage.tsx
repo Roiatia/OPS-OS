@@ -6,21 +6,20 @@ import { PhaseStepper } from "../components/PhaseStepper";
 import { Badge } from "../components/Badge";
 import { TaskTable } from "../components/TaskTable";
 import { getMapDisplayState, workflowStateTone } from "../lib/mapDisplay";
-import type { MapRecord, TaskStatus, TeamMember } from "../types";
+import type { MapRecord } from "../types";
 import { PHASE_LABELS } from "../types";
 
 export function MapDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { user } = useAuth();
   const [map, setMap] = useState<MapRecord | null>(null);
-  const [team, setTeam] = useState<TeamMember[]>([]);
   const [error, setError] = useState("");
   const [taskForm, setTaskForm] = useState({ title: "", description: "" });
-  const [selectedInspector, setSelectedInspector] = useState("");
 
   const isLeader = hasRole(user!, "GRAPHIC_TEAM_LEADER", "OPS_ADMIN");
   const isInspector = hasRole(user!, "MAPPING_INSPECTOR");
   const isQa = hasRole(user!, "GRAPHIC_QA");
+  const isArchived = map?.phase === "APPROVED" || map?.phase === "CANCELLED";
 
   function load() {
     if (!id) return;
@@ -29,8 +28,7 @@ export function MapDetailPage() {
 
   useEffect(() => {
     load();
-    if (isLeader) api.getTeam().then(setTeam);
-  }, [id, isLeader]);
+  }, [id]);
 
   async function act(fn: () => Promise<MapRecord>) {
     setError("");
@@ -44,289 +42,358 @@ export function MapDetailPage() {
 
   if (!map) {
     return (
-      <div>
-        <Link to="/app" className="text-sm text-brand-600 hover:underline">← Back</Link>
-        <p className="mt-4 text-muted">{error || "Loading..."}</p>
+      <div className="min-h-[60vh] flex items-center justify-center">
+        <div className="text-center">
+          <Link to="/app" className="text-sm text-brand-600 hover:underline">
+            ← Back to maps
+          </Link>
+          <p className="mt-4 text-muted">{error || "Loading..."}</p>
+        </div>
       </div>
     );
   }
 
-  const inspectors = team.filter((t) => t.roles.some((r) => r.role === "MAPPING_INSPECTOR"));
   const displayState = getMapDisplayState(map);
   const isAssignedInspector = map.assignedInspector?.id === user!.id;
 
   return (
-    <div className={isLeader ? "px-6 py-6 max-w-5xl" : undefined}>
-      <Link to="/app" className="text-sm text-brand-600 hover:underline">← All maps</Link>
+    <div className="min-h-[calc(100vh-4rem)] bg-gradient-to-b from-slate-50 to-white py-8 px-4">
+      <div className="max-w-xl mx-auto">
+        <Link
+          to="/app"
+          className="inline-flex items-center gap-1 text-sm text-brand-600 hover:text-brand-700 font-medium mb-6"
+        >
+          ← Back to maps
+        </Link>
 
-      <div className="mt-4 bg-card border border-border rounded-2xl p-6">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold">{map.mapNumber}</h1>
-            <p className="text-muted mt-1">
-              {map.client}
-              {map.area ? ` · ${map.area}` : ""}
-              {map.jiraTicketId ? ` · ${map.jiraTicketId}` : ""}
-            </p>
-            {map.description && <p className="text-sm mt-2">{map.description}</p>}
-          </div>
-          <Badge label={PHASE_LABELS[map.phase]} tone={map.phase} />
-        </div>
-
-        <div className="mt-6">
-          <PhaseStepper current={map.phase} />
-        </div>
-
-        <div className="flex flex-wrap gap-2 mt-4">
-          {displayState !== "—" && (
-            <Badge label={displayState} tone={workflowStateTone(displayState)} />
-          )}
-          {map.uploadApproved && <Badge label="Upload approved" tone="APPROVED" />}
-          {map.assignedInspector && (
-            <span className="text-xs text-muted self-center">
-              Inspector: {map.assignedInspector.name}
-            </span>
-          )}
-          {map.assignedQa && (
-            <span className="text-xs text-muted self-center">QA: {map.assignedQa.name}</span>
-          )}
-        </div>
-      </div>
-
-      {error && <p className="mt-4 text-sm text-red-600 bg-red-50 rounded-lg p-3">{error}</p>}
-
-      {/* Leader: assign inspector */}
-      {isLeader && map.phase === "INTAKE" && (
-        <section className="mt-6 bg-card border border-border rounded-xl p-5">
-          <h2 className="font-semibold mb-3">Assign to Mapping Inspector</h2>
-          <div className="flex gap-2 flex-wrap">
-            <select
-              value={selectedInspector}
-              onChange={(e) => setSelectedInspector(e.target.value)}
-              className="border border-border rounded-lg px-3 py-2 text-sm flex-1 min-w-[200px]"
-            >
-              <option value="">Select inspector...</option>
-              {inspectors.map((i) => (
-                <option key={i.id} value={i.id}>
-                  {i.name}
-                </option>
-              ))}
-            </select>
-            <button
-              disabled={!selectedInspector}
-              onClick={() => act(() => api.assignInspector(map.id, selectedInspector))}
-              className="px-4 py-2 bg-brand-600 text-white text-sm rounded-lg disabled:opacity-50"
-            >
-              Assign
-            </button>
-          </div>
-        </section>
-      )}
-
-      {/* Inspector: workflow states (Accepted / Processing / Done / FixDone) */}
-      {isInspector && isAssignedInspector && map.qaStatus === "FIX" && map.phase === "POLISH" && (
-        <section className="mt-6 bg-card border border-amber-300 bg-amber-50 rounded-xl p-5">
-          <h2 className="font-semibold mb-3">Fix requested by QA</h2>
-          <p className="text-sm text-muted mb-4">
-            Complete the fixes and mark as FixDone for QA to review again.
+        {/* Header */}
+        <div className="text-center mb-8">
+          <p className="text-xs font-semibold uppercase tracking-widest text-brand-500 mb-2">
+            {PHASE_LABELS[map.phase]}
           </p>
-          <button
-            onClick={() => act(() => api.qaReview(map.id, "fix_done"))}
-            className="px-4 py-2 bg-brand-600 text-white text-sm rounded-lg"
-          >
-            FixDone
-          </button>
-        </section>
-      )}
+          <h1 className="text-3xl font-bold text-slate-900">{map.mapNumber}</h1>
+          <p className="text-muted mt-2">
+            {map.client}
+            {map.area ? ` · ${map.area}` : ""}
+          </p>
+          {map.jiraTicketId && (
+            <p className="text-xs text-muted mt-1 font-mono">{map.jiraTicketId}</p>
+          )}
+          {map.description && (
+            <p className="text-sm text-slate-600 mt-3 max-w-md mx-auto">{map.description}</p>
+          )}
+        </div>
 
-      {isInspector &&
-        isAssignedInspector &&
-        map.qaStatus !== "FIX" &&
-        (map.phase === "PREP" || map.phase === "POLISH") && (
-          <section className="mt-6 bg-card border border-border rounded-xl p-5">
-            <h2 className="font-semibold mb-3">
-              {map.phase === "PREP" ? "Upload prep" : "Polish"} — update state
+        {/* Main card */}
+        <div className="bg-white rounded-3xl border border-border shadow-sm overflow-hidden">
+          {/* Status strip */}
+          <div className="flex flex-wrap items-center justify-center gap-2 px-6 py-4 bg-slate-50 border-b border-border">
+            {displayState !== "—" && (
+              <Badge label={displayState} tone={workflowStateTone(displayState)} />
+            )}
+            {map.uploadApproved && <Badge label="Upload approved" tone="APPROVED" />}
+            {map.phase === "APPROVED" && (
+              <Badge label="Complete" tone="APPROVED" />
+            )}
+            {map.phase === "CANCELLED" && (
+              <Badge label="Cancelled" tone="CANCELLED" />
+            )}
+          </div>
+
+          {/* Team */}
+          <div className="grid grid-cols-2 divide-x divide-border border-b border-border">
+            <div className="px-6 py-4 text-center">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted mb-1">
+                Inspector
+              </p>
+              <p className="text-sm font-medium text-slate-800">
+                {map.assignedInspector?.name ?? "—"}
+              </p>
+            </div>
+            <div className="px-6 py-4 text-center">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted mb-1">
+                QA
+              </p>
+              <p className="text-sm font-medium text-slate-800">
+                {map.assignedQa?.name ?? "—"}
+              </p>
+            </div>
+          </div>
+
+          {/* Phase timeline */}
+          <div className="px-6 py-8">
+            <h2 className="text-xs font-semibold uppercase tracking-widest text-muted text-center mb-6">
+              Workflow timeline
             </h2>
-            <div className="flex flex-wrap gap-2">
-              {(
-                [
-                  { value: "ACCEPTED", label: "Accepted" },
-                  { value: "PROCESSING", label: "Processing" },
-                  { value: "DONE", label: "Done" },
-                ] as const
-              ).map(({ value, label }) => (
-                <button
-                  key={value}
-                  onClick={() => act(() => api.updateInspectorStatus(map.id, value))}
-                  className={`px-4 py-2 text-sm rounded-lg border ${
-                    map.inspectorStatus === value
-                      ? "bg-brand-600 text-white border-brand-600"
-                      : "border-border hover:bg-slate-50"
-                  }`}
+            <PhaseStepper
+              current={map.phase}
+              phaseHistory={map.phaseHistory ?? []}
+              variant="vertical"
+            />
+          </div>
+
+          {/* Attachments */}
+          {(map.attachments?.length ?? 0) > 0 && (
+            <div className="px-6 py-6 border-t border-border bg-slate-50/50">
+              <h2 className="text-xs font-semibold uppercase tracking-widest text-muted mb-4">
+                Attachments
+              </h2>
+              <div className="space-y-3">
+                {map.attachments!.map((att) => (
+                  <div
+                    key={att.id}
+                    className="flex items-center gap-3 bg-white rounded-xl border border-border p-3"
+                  >
+                    {att.mimeType.startsWith("image/") ? (
+                      <img
+                        src={`data:${att.mimeType};base64,${att.data}`}
+                        alt={att.fileName}
+                        className="w-14 h-14 object-cover rounded-lg border border-border shrink-0"
+                      />
+                    ) : (
+                      <div className="w-14 h-14 rounded-lg bg-brand-50 flex items-center justify-center shrink-0 text-brand-600 text-xs font-bold">
+                        FILE
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{att.fileName}</p>
+                      <p className="text-xs text-muted">
+                        {att.uploadedBy.name} · {new Date(att.createdAt).toLocaleDateString()}
+                      </p>
+                    </div>
+                    {!att.mimeType.startsWith("image/") && (
+                      <a
+                        href={`data:${att.mimeType};base64,${att.data}`}
+                        download={att.fileName}
+                        className="text-xs text-brand-600 font-medium shrink-0"
+                      >
+                        Download
+                      </a>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Role actions */}
+          {!isArchived && (
+            <div className="px-6 py-6 border-t border-border space-y-4">
+              {error && (
+                <p className="text-sm text-red-600 bg-red-50 rounded-xl p-3 text-center">{error}</p>
+              )}
+
+              {isInspector && isAssignedInspector && map.qaStatus === "FIX" && map.phase === "POLISH" && (
+                <ActionBlock title="Fix requested by QA" hint="Complete fixes and mark FixDone.">
+                  <button
+                    onClick={() => act(() => api.qaReview(map.id, "fix_done"))}
+                    className="w-full py-2.5 bg-brand-600 text-white text-sm font-medium rounded-xl hover:bg-brand-700"
+                  >
+                    Mark FixDone
+                  </button>
+                </ActionBlock>
+              )}
+
+              {isInspector &&
+                isAssignedInspector &&
+                map.qaStatus !== "FIX" &&
+                (map.phase === "PREP" || map.phase === "POLISH") && (
+                  <ActionBlock
+                    title={map.phase === "PREP" ? "Upload prep" : "Polish work"}
+                    hint="Update your workflow state."
+                  >
+                    <div className="grid grid-cols-3 gap-2">
+                      {(
+                        [
+                          { value: "ACCEPTED", label: "Accepted" },
+                          { value: "PROCESSING", label: "Processing" },
+                          { value: "DONE", label: "Done" },
+                        ] as const
+                      ).map(({ value, label }) => (
+                        <button
+                          key={value}
+                          onClick={() => act(() => api.updateInspectorStatus(map.id, value))}
+                          className={`py-2.5 text-sm font-medium rounded-xl border transition-colors ${
+                            map.inspectorStatus === value
+                              ? "bg-brand-600 text-white border-brand-600"
+                              : "border-border hover:bg-slate-50 text-slate-700"
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </ActionBlock>
+                )}
+
+              {isQa && map.phase === "UPLOAD_REVIEW" && (
+                <ActionBlock
+                  title="Upload approval"
+                  hint="Inspector finished prep. Approve before field work."
                 >
-                  {label}
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => act(() => api.uploadReview(map.id, true))}
+                      className="py-2.5 bg-emerald-600 text-white text-sm font-medium rounded-xl hover:bg-emerald-700"
+                    >
+                      Approve
+                    </button>
+                    <button
+                      onClick={() => act(() => api.uploadReview(map.id, false, "Needs revision"))}
+                      className="py-2.5 bg-red-50 text-red-700 text-sm font-medium rounded-xl border border-red-200 hover:bg-red-100"
+                    >
+                      Reject
+                    </button>
+                  </div>
+                </ActionBlock>
+              )}
+
+              {isLeader && map.phase === "FIELD" && (
+                <ActionBlock title="Field work" hint="Mark complete to start polish.">
+                  <button
+                    onClick={() => act(() => api.fieldComplete(map.id))}
+                    className="w-full py-2.5 bg-brand-600 text-white text-sm font-medium rounded-xl hover:bg-brand-700"
+                  >
+                    Field complete → start polish
+                  </button>
+                </ActionBlock>
+              )}
+
+              {isQa && map.phase === "QA_REVIEW" && !map.qaStatus && (
+                <ActionBlock title="Polish QA review" hint="Approve or request fixes.">
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => act(() => api.qaReview(map.id, "approved"))}
+                      className="py-2.5 bg-emerald-600 text-white text-sm font-medium rounded-xl hover:bg-emerald-700"
+                    >
+                      Approved
+                    </button>
+                    <button
+                      onClick={() => act(() => api.qaReview(map.id, "fix", "Corrections needed"))}
+                      className="py-2.5 bg-red-50 text-red-700 text-sm font-medium rounded-xl border border-red-200 hover:bg-red-100"
+                    >
+                      Fix
+                    </button>
+                  </div>
+                </ActionBlock>
+              )}
+
+              {isQa && map.qaStatus === "FIX_DONE" && (
+                <ActionBlock title="Fixes completed" hint="Inspector marked FixDone.">
+                  <button
+                    onClick={() => act(() => api.qaReview(map.id, "approved"))}
+                    className="w-full py-2.5 bg-emerald-600 text-white text-sm font-medium rounded-xl hover:bg-emerald-700"
+                  >
+                    Approved
+                  </button>
+                </ActionBlock>
+              )}
+
+              {isLeader && (
+                <button
+                  onClick={() => {
+                    if (confirm(`Cancel ${map.mapNumber}? It will move to History.`)) {
+                      act(() => api.cancelMap(map.id));
+                    }
+                  }}
+                  className="w-full py-2 text-xs text-red-500 hover:text-red-700"
+                >
+                  Cancel this map
                 </button>
-              ))}
+              )}
             </div>
-            {map.phase === "PREP" && map.inspectorStatus === "DONE" && (
-              <p className="text-sm text-muted mt-3">Submitted to QA for upload review.</p>
-            )}
-            {map.phase === "POLISH" && map.inspectorStatus === "DONE" && (
-              <p className="text-sm text-muted mt-3">Submitted to QA for polish review.</p>
-            )}
-          </section>
-        )}
+          )}
 
-      {/* QA: upload approval */}
-      {isQa && map.phase === "UPLOAD_REVIEW" && (
-        <section className="mt-6 bg-card border border-border rounded-xl p-5">
-          <h2 className="font-semibold mb-3">Approve dashboard upload?</h2>
-          <p className="text-sm text-muted mb-4">
-            Inspector finished initial prep. Approve before supervisors can work on this map in the field.
-          </p>
-          <div className="flex gap-2">
-            <button
-              onClick={() => act(() => api.uploadReview(map.id, true))}
-              className="px-4 py-2 bg-emerald-600 text-white text-sm rounded-lg"
-            >
-              Approve upload
-            </button>
-            <button
-              onClick={() => act(() => api.uploadReview(map.id, false, "Needs revision"))}
-              className="px-4 py-2 bg-red-100 text-red-700 text-sm rounded-lg"
-            >
-              Reject — send back
-            </button>
-          </div>
-        </section>
-      )}
-
-      {/* Leader: stub field complete */}
-      {isLeader && map.phase === "FIELD" && (
-        <section className="mt-6 bg-card border border-border rounded-xl p-5">
-          <h2 className="font-semibold mb-3">Field work (supervisors)</h2>
-          <p className="text-sm text-muted mb-4">
-            Supervisors are working on this map in the field. For the demo, mark field work as complete to
-            start the polish phase.
-          </p>
-          <button
-            onClick={() => act(() => api.fieldComplete(map.id))}
-            className="px-4 py-2 bg-brand-600 text-white text-sm rounded-lg"
-          >
-            Mark field complete → start polish
-          </button>
-        </section>
-      )}
-
-      {/* QA: polish review — Fix / Approved */}
-      {isQa && map.phase === "QA_REVIEW" && !map.qaStatus && (
-        <section className="mt-6 bg-card border border-border rounded-xl p-5">
-          <h2 className="font-semibold mb-3">Polish QA review</h2>
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={() => act(() => api.qaReview(map.id, "approved"))}
-              className="px-4 py-2 bg-emerald-600 text-white text-sm rounded-lg"
-            >
-              Approved
-            </button>
-            <button
-              onClick={() => act(() => api.qaReview(map.id, "fix", "Corrections needed"))}
-              className="px-4 py-2 bg-red-100 text-red-700 text-sm rounded-lg"
-            >
-              Fix
-            </button>
-          </div>
-        </section>
-      )}
-
-      {isQa && map.qaStatus === "FIX_DONE" && (
-        <section className="mt-6 bg-card border border-border rounded-xl p-5">
-          <h2 className="font-semibold mb-3">Inspector marked FixDone</h2>
-          <button
-            onClick={() => act(() => api.qaReview(map.id, "approved"))}
-            className="px-4 py-2 bg-emerald-600 text-white text-sm rounded-lg"
-          >
-            Approved
-          </button>
-        </section>
-      )}
-
-      {map.phase === "APPROVED" && (
-        <div className="mt-6 p-5 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 font-medium">
-          Map approved and workflow complete.
-        </div>
-      )}
-
-      {/* Tasks spreadsheet */}
-      <section className="mt-8">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="font-semibold">Tasks (spreadsheet view)</h2>
-        </div>
-
-        {(isLeader || isQa) && (
-          <form
-            onSubmit={async (e) => {
-              e.preventDefault();
-              await act(async () => {
-                await api.createTask(map.id, {
-                  title: taskForm.title,
-                  description: taskForm.description || undefined,
-                  phase: map.phase === "POLISH" || map.phase === "QA_REVIEW" ? "POLISH" : "PREP",
-                });
-                const refreshed = await api.getMap(map.id);
-                setMap(refreshed);
-                return refreshed;
-              });
-              setTaskForm({ title: "", description: "" });
-            }}
-            className="flex flex-wrap gap-2 mb-4"
-          >
-            <input
-              required
-              placeholder="Task for inspector..."
-              value={taskForm.title}
-              onChange={(e) => setTaskForm({ ...taskForm, title: e.target.value })}
-              className="border border-border rounded-lg px-3 py-2 text-sm flex-1 min-w-[200px]"
-            />
-            <input
-              placeholder="Details (optional)"
-              value={taskForm.description}
-              onChange={(e) => setTaskForm({ ...taskForm, description: e.target.value })}
-              className="border border-border rounded-lg px-3 py-2 text-sm flex-1 min-w-[200px]"
-            />
-            <button type="submit" className="px-4 py-2 bg-slate-800 text-white text-sm rounded-lg">
-              Add task
-            </button>
-          </form>
-        )}
-
-        <TaskTable
-          tasks={map.tasks}
-          mapNumber={map.mapNumber}
-          canEdit={isInspector && map.assignedInspector?.id === user!.id}
-          onStatusChange={async (taskId, status) => {
-            await api.updateTaskStatus(taskId, status);
-            load();
-          }}
-        />
-      </section>
-
-      {/* Event log */}
-      <section className="mt-8">
-        <h2 className="font-semibold mb-3">Activity log</h2>
-        <div className="space-y-2">
-          {map.events.map((ev) => (
-            <div key={ev.id} className="text-sm flex gap-3 py-2 border-b border-border last:border-0">
-              <span className="text-muted shrink-0 w-36">
-                {new Date(ev.createdAt).toLocaleString()}
-              </span>
-              <span className="font-medium shrink-0">{ev.user.name}</span>
-              <span className="text-muted">{ev.action}</span>
-              {ev.note && <span>— {ev.note}</span>}
+          {map.phase === "APPROVED" && (
+            <div className="px-6 py-5 bg-emerald-50 border-t border-emerald-100 text-center text-sm text-emerald-800 font-medium">
+              Map approved — workflow complete
             </div>
-          ))}
+          )}
+
+          {map.phase === "CANCELLED" && (
+            <div className="px-6 py-5 bg-red-50 border-t border-red-100 text-center text-sm text-red-800 font-medium">
+              This map was cancelled
+            </div>
+          )}
         </div>
-      </section>
+
+        {/* Tasks */}
+        {!isArchived && (isLeader || isQa || (isInspector && isAssignedInspector)) && (
+          <div className="mt-6 bg-white rounded-3xl border border-border shadow-sm p-6">
+            <h2 className="text-xs font-semibold uppercase tracking-widest text-muted mb-4">
+              Tasks
+            </h2>
+
+            {(isLeader || isQa) && (
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  await act(async () => {
+                    await api.createTask(map.id, {
+                      title: taskForm.title,
+                      description: taskForm.description || undefined,
+                      phase: map.phase === "POLISH" || map.phase === "QA_REVIEW" ? "POLISH" : "PREP",
+                    });
+                    const refreshed = await api.getMap(map.id);
+                    setMap(refreshed);
+                    return refreshed;
+                  });
+                  setTaskForm({ title: "", description: "" });
+                }}
+                className="space-y-2 mb-4"
+              >
+                <input
+                  required
+                  placeholder="Task title..."
+                  value={taskForm.title}
+                  onChange={(e) => setTaskForm({ ...taskForm, title: e.target.value })}
+                  className="w-full border border-border rounded-xl px-3 py-2.5 text-sm"
+                />
+                <input
+                  placeholder="Details (optional)"
+                  value={taskForm.description}
+                  onChange={(e) => setTaskForm({ ...taskForm, description: e.target.value })}
+                  className="w-full border border-border rounded-xl px-3 py-2.5 text-sm"
+                />
+                <button
+                  type="submit"
+                  className="w-full py-2.5 bg-slate-800 text-white text-sm font-medium rounded-xl"
+                >
+                  Add task
+                </button>
+              </form>
+            )}
+
+            <TaskTable
+              tasks={map.tasks}
+              mapNumber={map.mapNumber}
+              canEdit={isInspector && isAssignedInspector}
+              onStatusChange={async (taskId, status) => {
+                await api.updateTaskStatus(taskId, status);
+                load();
+              }}
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ActionBlock({
+  title,
+  hint,
+  children,
+}: {
+  title: string;
+  hint: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-2xl border border-border p-4">
+      <h3 className="text-sm font-semibold text-slate-800">{title}</h3>
+      <p className="text-xs text-muted mt-0.5 mb-3">{hint}</p>
+      {children}
     </div>
   );
 }

@@ -11,7 +11,8 @@ export type MapPhase =
   | "FIELD"
   | "POLISH"
   | "QA_REVIEW"
-  | "APPROVED";
+  | "APPROVED"
+  | "CANCELLED";
 
 export type InspectorStatus = "ACCEPTED" | "PROCESSING" | "DONE";
 export type QaStatus = "FIX" | "FIX_DONE" | "APPROVED";
@@ -43,6 +44,31 @@ export interface MapEvent {
   user: { id: string; name: string };
 }
 
+export interface PhaseHistoryEntry {
+  id: string;
+  phase: MapPhase;
+  enteredAt: string;
+  note: string | null;
+  user: { id: string; name: string };
+}
+
+export interface MapAttachment {
+  id: string;
+  fileName: string;
+  mimeType: string;
+  data: string;
+  context: string;
+  createdAt: string;
+  uploadedBy: { id: string; name: string };
+}
+
+export interface MapNote {
+  id: string;
+  body: string;
+  createdAt: string;
+  user: { id: string; name: string };
+}
+
 export interface MapRecord {
   id: string;
   mapNumber: string;
@@ -50,6 +76,7 @@ export interface MapRecord {
   client: string;
   area: string | null;
   description: string | null;
+  dueDate: string | null;
   phase: MapPhase;
   inspectorStatus: InspectorStatus | null;
   qaStatus: QaStatus | null;
@@ -58,6 +85,9 @@ export interface MapRecord {
   assignedQa: { id: string; name: string; email: string } | null;
   tasks: Task[];
   events: MapEvent[];
+  phaseHistory: PhaseHistoryEntry[];
+  attachments: MapAttachment[];
+  notes: MapNote[];
   createdAt: string;
   updatedAt: string;
 }
@@ -84,6 +114,7 @@ export const PHASE_LABELS: Record<MapPhase, string> = {
   POLISH: "Polish",
   QA_REVIEW: "QA Review",
   APPROVED: "Approved",
+  CANCELLED: "Cancelled",
 };
 
 export const PHASE_ORDER: MapPhase[] = [

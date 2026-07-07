@@ -3,12 +3,11 @@ import { Link } from "react-router-dom";
 import { api } from "../../api";
 import type { MapRecord, TeamMember } from "../../types";
 import { Badge } from "../Badge";
-import { Modal } from "./Modal";
+import { AssignMapModal } from "./AssignMapModal";
 import {
   canAssignInspector,
   canAssignQa,
   countInspectorWorkload,
-  countQaWorkload,
   EMPTY_COLUMN_FILTERS,
   getInspectorLabel,
   getMapDisplayState,
@@ -24,6 +23,7 @@ import {
   type AssignmentQueue,
   type MapColumnFilters,
 } from "../../lib/mapDisplay";
+import { SHIFTS, getShiftInspectors, type ShiftId } from "../../lib/shifts";
 
 interface Props {
   maps: MapRecord[];
@@ -49,14 +49,9 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
   const [bulkInspectorId, setBulkInspectorId] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [assignModal, setAssignModal] = useState<{
-    mapId: string;
-    type: "inspector" | "qa";
-  } | null>(null);
-  const [assignTargetId, setAssignTargetId] = useState("");
+  const [assignMap, setAssignMap] = useState<MapRecord | null>(null);
 
   const inspectors = team.filter((m) => m.roles.some((r) => r.role === "MAPPING_INSPECTOR"));
-  const qaMembers = team.filter((m) => m.roles.some((r) => r.role === "GRAPHIC_QA"));
 
   const filterOptions = useMemo(() => {
     const clients = new Set<string>();
@@ -147,14 +142,41 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
     }
   }
 
-  async function runAssign(mapId: string, type: "inspector" | "qa", memberId: string) {
+  async function handleAssign(opts: {
+    mode: "individual" | "shift";
+    memberId?: string;
+    shiftId?: ShiftId;
+    attachment?: { fileName: string; mimeType: string; data: string };
+  }) {
+    if (!assignMap) return;
     setError("");
     setLoading(true);
     try {
-      if (type === "inspector") await api.assignInspector(mapId, memberId);
-      else await api.assignQa(mapId, memberId);
-      setAssignModal(null);
-      setAssignTargetId("");
+      const map = assignMap;
+
+      if (opts.mode === "individual" && opts.memberId) {
+        await api.assignInspector(map.id, opts.memberId, opts.attachment);
+      } else if (opts.mode === "shift" && opts.shiftId) {
+        const shift = SHIFTS.find((s) => s.id === opts.shiftId)!;
+        const shiftInspectors = getShiftInspectors(team, opts.shiftId);
+        const leadInspector = shiftInspectors[0];
+        if (!leadInspector) throw new Error("No inspectors on this shift");
+
+        await api.assignInspector(map.id, leadInspector.id, opts.attachment);
+
+        const taskPhase =
+          map.phase === "POLISH" || map.phase === "QA_REVIEW" ? "POLISH" : "PREP";
+        for (const inspector of shiftInspectors) {
+          await api.createTask(map.id, {
+            title: `${shift.label} shift — ${map.mapNumber}`,
+            description: `Assigned to ${shift.label} shift (${shift.hours})`,
+            assignedToId: inspector.id,
+            phase: taskPhase,
+          });
+        }
+      }
+
+      setAssignMap(null);
       setSelected(new Set());
       onRefresh();
     } catch (err) {
@@ -187,6 +209,10 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
   );
   const allAssignableSelected =
     assignableInView.length > 0 && assignableInView.every((m) => selected.has(m.id));
+
+  function canShowAssign(map: MapRecord) {
+    return canAssignInspector(map);
+  }
 
   return (
     <section className="space-y-4">
@@ -294,7 +320,7 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
                 <th className="px-3 py-2 font-medium min-w-[120px]">State</th>
                 <th className="px-3 py-2 font-medium min-w-[110px]">Inspector</th>
                 <th className="px-3 py-2 font-medium min-w-[100px]">QA</th>
-                <th className="px-3 py-2 font-medium">Actions</th>
+                <th className="px-3 py-2 font-medium w-[90px]">Assign</th>
               </tr>
               <tr className="bg-white border-b border-border">
                 <th className="px-3 py-2" />
@@ -466,34 +492,20 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
                       )}
                     </td>
                     <td className="px-3 py-3">
-                      <div className="flex flex-wrap gap-1.5">
-                        {canAssignInspector(map) && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setError("");
-                              setAssignTargetId(map.assignedInspector?.id ?? "");
-                              setAssignModal({ mapId: map.id, type: "inspector" });
-                            }}
-                            className="px-2.5 py-1 text-xs border border-border rounded-md hover:bg-slate-50"
-                          >
-                            {map.assignedInspector ? "Reassign" : "Assign"}
-                          </button>
-                        )}
-                        {canAssignQa(map) && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setError("");
-                              setAssignTargetId(map.assignedQa?.id ?? "");
-                              setAssignModal({ mapId: map.id, type: "qa" });
-                            }}
-                            className="px-2.5 py-1 text-xs border border-violet-200 text-violet-700 rounded-md hover:bg-violet-50"
-                          >
-                            {map.assignedQa ? "Reassign QA" : "Assign QA"}
-                          </button>
-                        )}
-                      </div>
+                      {canShowAssign(map) ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setError("");
+                            setAssignMap(map);
+                          }}
+                          className="px-3 py-1.5 text-xs font-medium bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors"
+                        >
+                          Assign
+                        </button>
+                      ) : (
+                        <span className="text-xs text-slate-300">—</span>
+                      )}
                     </td>
                   </tr>
                 );
@@ -503,67 +515,15 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
         </div>
       )}
 
-      {assignModal && (
-        <Modal
-          title={
-            assignModal.type === "inspector"
-              ? "Assign mapping inspector"
-              : "Assign QA reviewer"
-          }
-          onClose={() => {
-            setAssignModal(null);
-            setAssignTargetId("");
-          }}
-        >
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (assignTargetId) runAssign(assignModal.mapId, assignModal.type, assignTargetId);
-            }}
-            className="space-y-4"
-          >
-            <label className="block">
-              <span className="text-sm text-muted">
-                {assignModal.type === "inspector" ? "Mapping Inspector" : "Graphic QA"}
-              </span>
-              <select
-                required
-                value={assignTargetId}
-                onChange={(e) => setAssignTargetId(e.target.value)}
-                className="mt-1 w-full border border-border rounded-lg px-3 py-2 text-sm"
-              >
-                <option value="">Select...</option>
-                {(assignModal.type === "inspector" ? inspectors : qaMembers).map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name}
-                    {assignModal.type === "inspector"
-                      ? ` (${countInspectorWorkload(maps, m.id)} active)`
-                      : ` (${countQaWorkload(maps, m.id)} active)`}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="flex gap-2 justify-end">
-              <button
-                type="button"
-                onClick={() => {
-                  setAssignModal(null);
-                  setAssignTargetId("");
-                }}
-                className="px-4 py-2 text-sm text-muted"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={loading || !assignTargetId}
-                className="px-4 py-2 text-sm bg-brand-600 text-white rounded-lg disabled:opacity-50"
-              >
-                Confirm
-              </button>
-            </div>
-          </form>
-        </Modal>
+      {assignMap && (
+        <AssignMapModal
+          map={assignMap}
+          team={team}
+          maps={maps}
+          loading={loading}
+          onClose={() => setAssignMap(null)}
+          onAssign={handleAssign}
+        />
       )}
     </section>
   );

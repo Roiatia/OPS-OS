@@ -1,18 +1,21 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "DM Sans", system-ui, sans-serif;
-  --color-brand-50: #eef6ff;
-  --color-brand-100: #d9ebff;
-  --color-brand-500: #2563eb;
-  --color-brand-600: #1d4ed8;
-  --color-brand-700: #1e40af;
-  --color-surface: #f8fafc;
+  --font-sans: "Inter", system-ui, sans-serif;
+  /* Oriient brand orange — matches official logo */
+  --color-brand-50: #fff5f0;
+  --color-brand-100: #ffe8dc;
+  --color-brand-200: #ffd0b8;
+  --color-brand-500: #f26522;
+  --color-brand-600: #e5521a;
+  --color-brand-700: #c44316;
+  --color-surface: #fafafa;
   --color-card: #ffffff;
-  --color-border: #e2e8f0;
-  --color-muted: #64748b;
+  --color-border: #e8e8e8;
+  --color-muted: #6b6b6b;
+  --color-charcoal: #333333;
 }
 
 body {
-  @apply bg-surface text-slate-900 font-sans antialiased;
+  @apply bg-surface text-charcoal font-sans antialiased;
 }

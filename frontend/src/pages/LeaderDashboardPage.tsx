@@ -2,10 +2,10 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import { AssignmentBoard } from "../components/leader/AssignmentBoard";
 import { CompanyDashboardPanel } from "../components/leader/CompanyDashboardPanel";
+import { HistoryPanel } from "../components/leader/HistoryPanel";
 import { LeaderSidebar, type LeaderSection } from "../components/leader/LeaderSidebar";
 import { SettingsPanel } from "../components/leader/SettingsPanel";
-import { TeamSection } from "../components/leader/TeamSection";
-import { TeamWorkPanel } from "../components/leader/TeamWorkPanel";
+import { TeamPanel } from "../components/leader/TeamPanel";
 import type { MapRecord, TeamMember } from "../types";
 
 const SECTION_TITLES: Record<LeaderSection, { title: string; subtitle: string }> = {
@@ -16,6 +16,10 @@ const SECTION_TITLES: Record<LeaderSection, { title: string; subtitle: string }>
   team: {
     title: "Team",
     subtitle: "Monitor workload and what each member is working on",
+  },
+  history: {
+    title: "History",
+    subtitle: "Approved and cancelled maps — full archive with phase timeline",
   },
   "company-dashboard": {
     title: "Company Dashboard",
@@ -29,6 +33,7 @@ const SECTION_TITLES: Record<LeaderSection, { title: string; subtitle: string }>
 
 export function LeaderDashboardPage() {
   const [maps, setMaps] = useState<MapRecord[]>([]);
+  const [historyMaps, setHistoryMaps] = useState<MapRecord[]>([]);
   const [team, setTeam] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddMap, setShowAddMap] = useState(false);
@@ -44,10 +49,17 @@ export function LeaderDashboardPage() {
 
   function load() {
     setLoading(true);
-    Promise.all([api.getMaps(), api.getTeam()])
-      .then(([m, t]) => {
+    Promise.all([api.getMaps(), api.getHistoryMaps(), api.getTeam()])
+      .then(([m, h, t]) => {
         setMaps(m);
+        setHistoryMaps(h);
         setTeam(t);
+      })
+      .catch(() => {
+        Promise.all([api.getMaps(), api.getTeam()]).then(([m, t]) => {
+          setMaps(m);
+          setTeam(t);
+        });
       })
       .finally(() => setLoading(false));
   }
@@ -99,7 +111,7 @@ export function LeaderDashboardPage() {
               <button
                 type="button"
                 onClick={() => setShowAddMap(!showAddMap)}
-                className="px-4 py-2 bg-brand-600 text-white text-sm font-medium rounded-lg hover:bg-brand-700"
+                className="px-4 py-2.5 bg-brand-600 text-white text-sm font-medium rounded-xl hover:bg-brand-700 shadow-sm shadow-brand-600/20 transition-colors"
               >
                 + Add map from CS
               </button>
@@ -119,8 +131,8 @@ export function LeaderDashboardPage() {
                       { label: "In progress", value: stats.inProgress },
                       { label: "In QA", value: stats.qa },
                     ].map((s) => (
-                      <div key={s.label} className="bg-card border border-border rounded-xl p-4">
-                        <div className="text-2xl font-bold text-brand-700">{s.value}</div>
+                      <div key={s.label} className="bg-card border border-border rounded-2xl p-4 shadow-sm">
+                        <div className="text-2xl font-bold text-brand-600">{s.value}</div>
                         <div className="text-sm text-muted">{s.label}</div>
                       </div>
                     ))}
@@ -188,11 +200,10 @@ export function LeaderDashboardPage() {
               )}
 
               {activeSection === "team" && (
-                <>
-                  <TeamWorkPanel team={team} maps={maps} />
-                  <TeamSection team={team} maps={maps} onRefresh={load} />
-                </>
+                <TeamPanel team={team} maps={maps} onRefresh={load} />
               )}
+
+              {activeSection === "history" && <HistoryPanel maps={historyMaps} />}
 
               {activeSection === "company-dashboard" && <CompanyDashboardPanel />}
 

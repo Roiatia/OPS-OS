@@ -1,5 +1,6 @@
 import { Outlet, Link, useNavigate } from "react-router-dom";
 import { useAuth, hasRole } from "../context/AuthContext";
+import { OriientLogo } from "./OriientLogo";
 import { ROLE_LABELS } from "../types";
 
 export function Layout() {
@@ -12,21 +13,20 @@ export function Layout() {
   const isLeader = hasRole(user, "GRAPHIC_TEAM_LEADER", "OPS_ADMIN");
 
   return (
-    <div className="min-h-screen flex flex-col">
-      <header className="bg-white border-b border-border sticky top-0 z-10">
-        <div className={`${isLeader ? "w-full" : "max-w-6xl mx-auto"} px-4 h-14 flex items-center justify-between`}>
-          <Link to="/app" className="flex items-center gap-2 font-bold text-brand-700">
-            <span className="w-8 h-8 rounded-lg bg-brand-600 text-white flex items-center justify-center text-sm">
-              O
-            </span>
-            OPS-OS
+    <div className="min-h-screen flex flex-col bg-surface">
+      <header className="bg-white border-b border-border sticky top-0 z-10 shadow-sm">
+        <div
+          className={`${isLeader ? "w-full" : "max-w-6xl mx-auto"} px-5 h-16 flex items-center justify-between`}
+        >
+          <Link to="/app" className="hover:opacity-90 transition-opacity">
+            <OriientLogo size="md" />
           </Link>
           <div className="flex items-center gap-4">
-            <span className="text-sm text-muted hidden sm:inline">
+            <span className="text-sm text-muted hidden sm:inline px-3 py-1 rounded-full bg-slate-50">
               {ROLE_LABELS[primaryRole]}
             </span>
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-sm font-semibold">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-sm font-semibold ring-2 ring-brand-50">
                 {user.name.charAt(0)}
               </div>
               <span className="text-sm font-medium hidden sm:inline">{user.name}</span>
@@ -36,7 +36,7 @@ export function Layout() {
                 logout();
                 navigate("/");
               }}
-              className="text-sm text-muted hover:text-slate-900"
+              className="text-sm text-muted hover:text-brand-600 transition-colors"
             >
               Sign out
             </button>
@@ -47,7 +47,7 @@ export function Layout() {
         {isLeader ? (
           <Outlet context={{ user, hasRole: (...r: string[]) => hasRole(user, ...r) }} />
         ) : (
-          <div className="max-w-6xl mx-auto px-4 py-6">
+          <div className={`${isLeader ? "w-full" : "max-w-[1400px] mx-auto"} px-5 py-6`}>
             <Outlet context={{ user, hasRole: (...r: string[]) => hasRole(user, ...r) }} />
           </div>
         )}

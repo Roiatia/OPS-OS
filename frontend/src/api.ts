@@ -47,6 +47,8 @@ export const api = {
 
   getMaps: () => request<import("./types").MapRecord[]>("/maps"),
 
+  getHistoryMaps: () => request<import("./types").MapRecord[]>("/maps/history"),
+
   getMap: (id: string) => request<import("./types").MapRecord>(`/maps/${id}`),
 
   getTeam: () => request<import("./types").TeamMember[]>("/maps/team"),
@@ -63,22 +65,42 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
-  assignInspector: (mapId: string, inspectorId: string) =>
+  assignInspector: (
+    mapId: string,
+    inspectorId: string,
+    attachment?: { fileName: string; mimeType: string; data: string }
+  ) =>
     request<import("./types").MapRecord>(`/maps/${mapId}/assign`, {
       method: "POST",
-      body: JSON.stringify({ inspectorId }),
+      body: JSON.stringify({ inspectorId, attachment }),
     }),
 
-  assignQa: (mapId: string, qaId: string) =>
+  assignQa: (
+    mapId: string,
+    qaId: string,
+    attachment?: { fileName: string; mimeType: string; data: string }
+  ) =>
     request<import("./types").MapRecord>(`/maps/${mapId}/assign-qa`, {
       method: "POST",
-      body: JSON.stringify({ qaId }),
+      body: JSON.stringify({ qaId, attachment }),
     }),
 
-  updateInspectorStatus: (mapId: string, status: string) =>
+  cancelMap: (mapId: string, note?: string) =>
+    request<import("./types").MapRecord>(`/maps/${mapId}/cancel`, {
+      method: "POST",
+      body: JSON.stringify({ note }),
+    }),
+
+  updateInspectorStatus: (mapId: string, status: string, note?: string) =>
     request<import("./types").MapRecord>(`/maps/${mapId}/inspector-status`, {
       method: "PATCH",
-      body: JSON.stringify({ status }),
+      body: JSON.stringify({ status, note }),
+    }),
+
+  addMapNote: (mapId: string, body: string) =>
+    request<import("./types").MapRecord>(`/maps/${mapId}/notes`, {
+      method: "POST",
+      body: JSON.stringify({ body }),
     }),
 
   uploadReview: (mapId: string, approved: boolean, note?: string) =>

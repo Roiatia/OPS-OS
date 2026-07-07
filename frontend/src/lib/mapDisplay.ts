@@ -9,6 +9,7 @@ export const STATION_LABELS: Record<MapPhase, string> = {
   POLISH: "Polish",
   QA_REVIEW: "QA",
   APPROVED: "Done",
+  CANCELLED: "Cancelled",
 };
 
 /** Canonical workflow states — inspector & QA only may change these */
@@ -16,9 +17,11 @@ export const WORKFLOW_STATES = [
   "Accepted",
   "Processing",
   "Done",
+  "In QA",
   "Fix",
   "FixDone",
   "Approved",
+  "Cancelled",
 ] as const;
 
 export type WorkflowDisplayState = (typeof WORKFLOW_STATES)[number] | "—";
@@ -37,9 +40,18 @@ export function getMapStation(map: MapRecord): string {
 export function getMapDisplayState(map: MapRecord): WorkflowDisplayState {
   const { qaStatus, inspectorStatus, phase } = map;
 
+  if (phase === "CANCELLED") return "Cancelled";
   if (qaStatus === "FIX") return "Fix";
   if (qaStatus === "FIX_DONE") return "FixDone";
   if (qaStatus === "APPROVED" || phase === "APPROVED") return "Approved";
+
+  if (
+    (phase === "UPLOAD_REVIEW" || phase === "QA_REVIEW") &&
+    inspectorStatus === "DONE" &&
+    !qaStatus
+  ) {
+    return "In QA";
+  }
 
   if (inspectorStatus === "ACCEPTED") return "Accepted";
   if (inspectorStatus === "PROCESSING") return "Processing";
@@ -148,6 +160,7 @@ export function getActiveWorkForMember(maps: MapRecord[], userId: string): MapRe
   return maps.filter(
     (m) =>
       m.phase !== "APPROVED" &&
+      m.phase !== "CANCELLED" &&
       (m.assignedInspector?.id === userId || m.assignedQa?.id === userId)
   );
 }
@@ -200,12 +213,16 @@ export function workflowStateTone(state: WorkflowDisplayState): string {
       return "PROCESSING";
     case "Done":
       return "DONE";
+    case "In QA":
+      return "UPLOAD_REVIEW";
     case "Fix":
       return "FIX";
     case "FixDone":
       return "FIX_DONE";
     case "Approved":
       return "APPROVED";
+    case "Cancelled":
+      return "CANCELLED";
     default:
       return "PENDING";
   }

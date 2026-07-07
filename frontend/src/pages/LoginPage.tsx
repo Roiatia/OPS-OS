@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { GoogleLogin } from "@react-oauth/google";
 import { api } from "../api";
 import { useAuth } from "../context/AuthContext";
+import { OriientLogo } from "../components/OriientLogo";
 
 const KNOWN_DEMO_EMAILS = [
   { email: "leader@ops-demo.local", label: "Graphic Team Leader" },
@@ -51,20 +52,17 @@ export function LoginPage() {
     : KNOWN_DEMO_EMAILS;
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-6 bg-gradient-to-br from-slate-900 via-slate-800 to-brand-700">
+    <div className="min-h-screen flex items-center justify-center p-6 bg-gradient-to-br from-brand-50 via-white to-orange-50">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <Link
-            to="/"
-            className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-white/10 text-white text-2xl font-bold mb-4 hover:bg-white/20 transition"
-          >
-            O
+          <Link to="/" className="inline-block hover:opacity-90 transition-opacity">
+            <OriientLogo size="lg" className="justify-center mx-auto" />
           </Link>
-          <h1 className="text-3xl font-bold text-white">Sign in to OPS-OS</h1>
-          <p className="text-slate-300 mt-2">Graphics Team Workflow Demo</p>
+          <h1 className="text-2xl font-bold text-slate-900 mt-6">Welcome back</h1>
+          <p className="text-muted mt-2">Sign in to your Oriient workspace</p>
         </div>
 
-        <div className="bg-card rounded-2xl shadow-xl p-8 border border-border">
+        <div className="bg-white rounded-2xl shadow-xl shadow-brand-600/5 p-8 border border-border">
           <form onSubmit={handleSignIn} className="space-y-4">
             <label className="block">
               <span className="text-sm font-medium text-slate-700">Email</span>
@@ -75,13 +73,13 @@ export function LoginPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@ops-demo.local"
                 autoFocus
-                className="mt-1 w-full border border-border rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+                className="mt-1 w-full border border-border rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20"
               />
             </label>
             <button
               type="submit"
               disabled={loading || !email.trim()}
-              className="w-full px-4 py-3 bg-brand-600 text-white text-sm font-semibold rounded-xl hover:bg-brand-700 transition disabled:opacity-50"
+              className="w-full px-4 py-3 bg-brand-600 text-white text-sm font-semibold rounded-xl hover:bg-brand-700 transition disabled:opacity-50 shadow-sm shadow-brand-600/20"
             >
               {loading ? "Signing in..." : "Sign in"}
             </button>
@@ -100,7 +98,7 @@ export function LoginPage() {
                     key={h.email}
                     type="button"
                     onClick={() => setEmail(h.email)}
-                    className="w-full flex items-center justify-between text-left text-sm px-3 py-2 rounded-lg hover:bg-brand-50 transition"
+                    className="w-full flex items-center justify-between text-left text-sm px-3 py-2.5 rounded-xl hover:bg-brand-50 transition border border-transparent hover:border-brand-100"
                   >
                     <span className="font-medium text-slate-700">{h.email}</span>
                     <span className="text-muted text-xs">{h.label}</span>
@@ -129,10 +127,6 @@ export function LoginPage() {
             </div>
           )}
         </div>
-
-        <p className="text-center text-slate-400 text-xs mt-6">
-          Mapping Inspector → QA → Field → Polish → QA
-        </p>
       </div>
     </div>
   );

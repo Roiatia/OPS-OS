@@ -1,16 +1,19 @@
-export type LeaderSection = "maps" | "team" | "company-dashboard" | "settings";
+import { OriientLogo } from "../OriientLogo";
+
+export type LeaderSection = "maps" | "team" | "history" | "company-dashboard" | "settings";
 
 interface NavItem {
   id: LeaderSection;
   label: string;
-  description: string;
+  icon: string;
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { id: "maps", label: "Maps", description: "Pipeline & assignments" },
-  { id: "team", label: "Team", description: "Members & workload" },
-  { id: "company-dashboard", label: "Company Dashboard", description: "Client dashboards" },
-  { id: "settings", label: "Settings", description: "Preferences" },
+  { id: "maps", label: "Maps", icon: "M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" },
+  { id: "team", label: "Team", icon: "M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" },
+  { id: "history", label: "History", icon: "M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" },
+  { id: "company-dashboard", label: "Dashboard", icon: "M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" },
+  { id: "settings", label: "Settings", icon: "M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z" },
 ];
 
 interface Props {
@@ -20,33 +23,41 @@ interface Props {
 
 export function LeaderSidebar({ activeSection, onSectionChange }: Props) {
   return (
-    <aside className="w-56 shrink-0 border-r border-border bg-white flex flex-col h-[calc(100vh-3.5rem)] sticky top-14">
-      <div className="px-4 py-4 border-b border-border">
-        <p className="text-xs font-semibold uppercase tracking-wide text-muted">Workspace</p>
+    <aside className="w-60 shrink-0 border-r border-border bg-white flex flex-col h-[calc(100vh-4rem)] sticky top-16 shadow-sm">
+      <div className="px-4 py-5 border-b border-border">
+        <OriientLogo size="sm" />
+        <p className="text-[11px] font-semibold uppercase tracking-widest text-muted mt-4">
+          Navigation
+        </p>
       </div>
 
-      <nav className="flex-1 p-3 space-y-0.5">
-        {NAV_ITEMS.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            onClick={() => onSectionChange(item.id)}
-            className={`w-full text-left px-3 py-2.5 rounded-lg transition-colors ${
-              activeSection === item.id
-                ? "bg-brand-50 text-brand-700"
-                : "text-slate-700 hover:bg-slate-50"
-            }`}
-          >
-            <div className="text-sm font-medium">{item.label}</div>
-            <div
-              className={`text-xs mt-0.5 ${
-                activeSection === item.id ? "text-brand-600/70" : "text-muted"
+      <nav className="flex-1 p-3 space-y-1">
+        {NAV_ITEMS.map((item) => {
+          const active = activeSection === item.id;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => onSectionChange(item.id)}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-all ${
+                active
+                  ? "bg-brand-600 text-white shadow-md shadow-brand-600/20"
+                  : "text-slate-600 hover:bg-brand-50 hover:text-brand-700"
               }`}
             >
-              {item.description}
-            </div>
-          </button>
-        ))}
+              <svg
+                className={`w-5 h-5 shrink-0 ${active ? "text-white" : "text-brand-500"}`}
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={1.75}
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d={item.icon} />
+              </svg>
+              <span className="text-sm font-medium">{item.label}</span>
+            </button>
+          );
+        })}
       </nav>
     </aside>
   );

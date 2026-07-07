@@ -23,6 +23,7 @@ enum MapPhase {
   POLISH
   QA_REVIEW
   APPROVED
+  CANCELLED
 }
 
 enum InspectorStatus {
@@ -58,6 +59,9 @@ model User {
   assignedTasks           Task[]
   createdTasks            Task[] @relation("TaskCreator")
   events                  MapEvent[]
+  phaseHistory            MapPhaseHistory[]
+  attachments             MapAttachment[]
+  notes                   MapNote[]
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
 }
@@ -78,6 +82,7 @@ model Map {
   client          String
   area            String?
   description     String?
+  dueDate         DateTime?
   phase           MapPhase         @default(INTAKE)
   inspectorStatus InspectorStatus?
   qaStatus        QaStatus?
@@ -88,8 +93,37 @@ model Map {
   assignedQa          User?        @relation("QaMaps", fields: [assignedQaId], references: [id])
   tasks           Task[]
   events          MapEvent[]
+  phaseHistory    MapPhaseHistory[]
+  attachments     MapAttachment[]
+  notes           MapNote[]
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
+}
+
+model MapPhaseHistory {
+  id        String   @id @default(cuid())
+  mapId     String
+  map       Map      @relation(fields: [mapId], references: [id], onDelete: Cascade)
+  phase     MapPhase
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  enteredAt DateTime @default(now())
+  note      String?
+
+  @@index([mapId, phase])
+}
+
+model MapAttachment {
+  id           String   @id @default(cuid())
+  mapId        String
+  map          Map      @relation(fields: [mapId], references: [id], onDelete: Cascade)
+  fileName     String
+  mimeType     String
+  data         String   @db.Text
+  context      String
+  uploadedById String
+  uploadedBy   User     @relation(fields: [uploadedById], references: [id])
+  createdAt    DateTime @default(now())
 }
 
 model Task {
@@ -106,6 +140,18 @@ model Task {
   assignedTo   User?     @relation(fields: [assignedToId], references: [id])
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
+}
+
+model MapNote {
+  id        String   @id @default(cuid())
+  mapId     String
+  map       Map      @relation(fields: [mapId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  body      String
+  createdAt DateTime @default(now())
+
+  @@index([mapId, createdAt])
 }
 
 model MapEvent {
