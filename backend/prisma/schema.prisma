@@ -12,6 +12,8 @@ enum RoleName {
   GRAPHIC_TEAM_LEADER
   MAPPING_INSPECTOR
   GRAPHIC_QA
+  SUPERVISOR
+  SUPERVISOR_SHIFT_LEADER
   OPS_ADMIN
 }
 
@@ -30,6 +32,18 @@ enum InspectorStatus {
   ACCEPTED
   PROCESSING
   DONE
+}
+
+enum SupervisorStatus {
+  ACCEPTED
+  PROCESSING
+  DONE
+}
+
+enum FieldWorkStatus {
+  UNCOMPLETED
+  COMPLETED
+  CANCELLED
 }
 
 enum QaStatus {
@@ -53,9 +67,11 @@ model User {
   name      String
   avatarUrl String?
   googleId  String?    @unique
+  shiftStartedAt DateTime?
   roles     UserRole[]
   assignedMapsAsInspector Map[]  @relation("InspectorMaps")
   assignedMapsAsQa      Map[]  @relation("QaMaps")
+  assignedMapsAsSupervisor Map[] @relation("SupervisorMaps")
   assignedTasks           Task[]
   createdTasks            Task[] @relation("TaskCreator")
   events                  MapEvent[]
@@ -83,14 +99,26 @@ model Map {
   area            String?
   description     String?
   dueDate         DateTime?
+  fieldDate       DateTime?
+  loomDone        Boolean          @default(false)
+  positioning     Boolean          @default(false)
+  mapperName      String?
+  opsManagerComment String?
+  fieldWorkStatus FieldWorkStatus  @default(UNCOMPLETED)
+  fieldProgressPercent Int          @default(0)
+  onHubStatusBoard  Boolean          @default(false)
   phase           MapPhase         @default(INTAKE)
   inspectorStatus InspectorStatus?
+  supervisorStatus SupervisorStatus?
   qaStatus        QaStatus?
   uploadApproved  Boolean          @default(false)
+  releasedToGraphics Boolean       @default(false)
   assignedInspectorId String?
   assignedInspector   User?        @relation("InspectorMaps", fields: [assignedInspectorId], references: [id])
   assignedQaId        String?
   assignedQa          User?        @relation("QaMaps", fields: [assignedQaId], references: [id])
+  assignedSupervisorId String?
+  assignedSupervisor   User?       @relation("SupervisorMaps", fields: [assignedSupervisorId], references: [id])
   tasks           Task[]
   events          MapEvent[]
   phaseHistory    MapPhaseHistory[]

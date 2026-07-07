@@ -2,6 +2,8 @@ export type RoleName =
   | "GRAPHIC_TEAM_LEADER"
   | "MAPPING_INSPECTOR"
   | "GRAPHIC_QA"
+  | "SUPERVISOR"
+  | "SUPERVISOR_SHIFT_LEADER"
   | "OPS_ADMIN";
 
 export type MapPhase =
@@ -15,6 +17,8 @@ export type MapPhase =
   | "CANCELLED";
 
 export type InspectorStatus = "ACCEPTED" | "PROCESSING" | "DONE";
+export type SupervisorStatus = "ACCEPTED" | "PROCESSING" | "DONE";
+export type FieldWorkStatus = "UNCOMPLETED" | "COMPLETED" | "CANCELLED";
 export type QaStatus = "FIX" | "FIX_DONE" | "APPROVED";
 export type TaskStatus = "PENDING" | "ACCEPTED" | "PROCESSING" | "DONE" | "FIX" | "FIX_DONE";
 
@@ -77,12 +81,23 @@ export interface MapRecord {
   area: string | null;
   description: string | null;
   dueDate: string | null;
+  fieldDate: string | null;
+  loomDone: boolean;
+  positioning: boolean;
+  mapperName: string | null;
+  opsManagerComment: string | null;
+  fieldWorkStatus: FieldWorkStatus;
+  fieldProgressPercent: number;
+  onHubStatusBoard: boolean;
   phase: MapPhase;
   inspectorStatus: InspectorStatus | null;
+  supervisorStatus: SupervisorStatus | null;
   qaStatus: QaStatus | null;
   uploadApproved: boolean;
+  releasedToGraphics: boolean;
   assignedInspector: { id: string; name: string; email: string } | null;
   assignedQa: { id: string; name: string; email: string } | null;
+  assignedSupervisor: { id: string; name: string; email: string } | null;
   tasks: Task[];
   events: MapEvent[];
   phaseHistory: PhaseHistoryEntry[];
@@ -92,10 +107,28 @@ export interface MapRecord {
   updatedAt: string;
 }
 
+export interface HubNotification {
+  id: string;
+  action: string;
+  note: string | null;
+  createdAt: string;
+  user: { id: string; name: string };
+  map: { id: string; mapNumber: string; client: string };
+}
+
+export interface HubSupervisor {
+  id: string;
+  name: string;
+  email: string;
+  shiftStartedAt: string | null;
+  roles: { role: RoleName }[];
+}
+
 export interface TeamMember {
   id: string;
   name: string;
   email: string;
+  shiftStartedAt?: string | null;
   roles: { role: RoleName }[];
 }
 
@@ -103,7 +136,9 @@ export const ROLE_LABELS: Record<RoleName, string> = {
   GRAPHIC_TEAM_LEADER: "Graphic Team Leader",
   MAPPING_INSPECTOR: "Mapping Inspector",
   GRAPHIC_QA: "Graphic QA",
-  OPS_ADMIN: "OPS Admin",
+  SUPERVISOR: "Supervisor",
+  SUPERVISOR_SHIFT_LEADER: "Supervisor Shift Leader",
+  OPS_ADMIN: "OPS Manager",
 };
 
 export const PHASE_LABELS: Record<MapPhase, string> = {

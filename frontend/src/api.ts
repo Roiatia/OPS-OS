@@ -53,6 +53,58 @@ export const api = {
 
   getTeam: () => request<import("./types").TeamMember[]>("/maps/team"),
 
+  getTeamFieldMaps: () => request<import("./types").MapRecord[]>("/maps/team-field"),
+
+  getHub: () =>
+    request<{
+      maps: import("./types").MapRecord[];
+      supervisors: import("./types").HubSupervisor[];
+    }>("/maps/hub"),
+
+  getHubNotifications: (since?: string) =>
+    request<import("./types").HubNotification[]>(
+      `/maps/hub/notifications${since ? `?since=${encodeURIComponent(since)}` : ""}`
+    ),
+
+  updateHubMap: (
+    mapId: string,
+    data: {
+      fieldWorkStatus?: import("./types").FieldWorkStatus;
+      fieldProgressPercent?: number;
+      assignedSupervisorId?: string | null;
+      onHubStatusBoard?: boolean;
+    }
+  ) =>
+    request<import("./types").MapRecord>(`/maps/${mapId}/hub`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  swapSupervisorMaps: (mapIds: string[], toSupervisorId: string) =>
+    request<{ swapped: number }>("/maps/swap-supervisor", {
+      method: "POST",
+      body: JSON.stringify({ mapIds, toSupervisorId }),
+    }),
+
+  shuffleAssignSupervisors: (mapIds: string[], supervisorIds: string[]) =>
+    request<{
+      assigned: number;
+      distribution: {
+        supervisorId: string;
+        supervisorName: string;
+        assigned: number;
+        totalAfter: number;
+      }[];
+    }>("/maps/shuffle-supervisors", {
+      method: "POST",
+      body: JSON.stringify({ mapIds, supervisorIds }),
+    }),
+
+  releaseToGraphics: (mapId: string) =>
+    request<import("./types").MapRecord>(`/maps/${mapId}/release-to-graphics`, {
+      method: "POST",
+    }),
+
   createMap: (data: {
     mapNumber: string;
     jiraTicketId?: string;
@@ -116,6 +168,38 @@ export const api = {
     request<import("./types").MapRecord>(`/maps/${mapId}/inspector-status`, {
       method: "PATCH",
       body: JSON.stringify({ status, note }),
+    }),
+
+  updateSupervisorStatus: (mapId: string, status: string, note?: string) =>
+    request<import("./types").MapRecord>(`/maps/${mapId}/supervisor-status`, {
+      method: "PATCH",
+      body: JSON.stringify({ status, note }),
+    }),
+
+  updateSupervisorField: (
+    mapId: string,
+    data: {
+      loomDone?: boolean;
+      positioning?: boolean;
+      mapperName?: string | null;
+      fieldDate?: string | null;
+      opsManagerComment?: string | null;
+      fieldWorkStatus?: import("./types").FieldWorkStatus;
+    }
+  ) =>
+    request<import("./types").MapRecord>(`/maps/${mapId}/supervisor-field`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  assignSupervisor: (
+    mapId: string,
+    supervisorId: string,
+    attachment?: { fileName: string; mimeType: string; data: string }
+  ) =>
+    request<import("./types").MapRecord>(`/maps/${mapId}/assign-supervisor`, {
+      method: "POST",
+      body: JSON.stringify({ supervisorId, attachment }),
     }),
 
   addMapNote: (mapId: string, body: string) =>

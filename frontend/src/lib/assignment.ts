@@ -153,3 +153,79 @@ export function getIdleQaMembers(team: TeamMember[], maps: MapRecord[]): IdleTea
     .filter(({ activeCount }) => activeCount <= IDLE_THRESHOLD)
     .sort((a, b) => a.activeCount - b.activeCount);
 }
+
+export interface SupervisorAssignment {
+  mapId: string;
+  supervisorId: string;
+}
+
+export interface SupervisorShufflePreviewRow {
+  supervisorId: string;
+  supervisorName: string;
+  currentActive: number;
+  receiving: number;
+  totalAfter: number;
+}
+
+/** Active FIELD maps assigned to a supervisor (not yet completed). */
+export function countSupervisorActiveMaps(maps: MapRecord[], userId: string): number {
+  return maps.filter(
+    (m) =>
+      m.phase === "FIELD" &&
+      m.assignedSupervisor?.id === userId &&
+      m.fieldWorkStatus === "UNCOMPLETED"
+  ).length;
+}
+
+export function buildBalancedSupervisorAssignments(
+  mapsToAssign: MapRecord[],
+  supervisors: Pick<TeamMember, "id" | "name">[],
+  allMaps: MapRecord[]
+): SupervisorAssignment[] {
+  if (supervisors.length === 0 || mapsToAssign.length === 0) return [];
+
+  const workload = new Map<string, number>();
+  for (const supervisor of supervisors) {
+    workload.set(supervisor.id, countSupervisorActiveMaps(allMaps, supervisor.id));
+  }
+
+  const assignments: SupervisorAssignment[] = [];
+  for (const map of mapsToAssign) {
+    const sorted = [...supervisors].sort((a, b) => {
+      const diff = (workload.get(a.id) ?? 0) - (workload.get(b.id) ?? 0);
+      return diff !== 0 ? diff : a.name.localeCompare(b.name);
+    });
+    const pick = sorted[0]!;
+    workload.set(pick.id, (workload.get(pick.id) ?? 0) + 1);
+    assignments.push({ mapId: map.id, supervisorId: pick.id });
+  }
+
+  return assignments;
+}
+
+export function summarizeSupervisorShufflePlan(
+  plan: SupervisorAssignment[],
+  supervisors: Pick<TeamMember, "id" | "name">[],
+  allMaps: MapRecord[]
+): SupervisorShufflePreviewRow[] {
+  const receiving = new Map<string, number>();
+  for (const { supervisorId } of plan) {
+    receiving.set(supervisorId, (receiving.get(supervisorId) ?? 0) + 1);
+  }
+
+  return supervisors
+    .map((supervisor) => {
+      const currentActive = countSupervisorActiveMaps(allMaps, supervisor.id);
+      const add = receiving.get(supervisor.id) ?? 0;
+      return {
+        supervisorId: supervisor.id,
+        supervisorName: supervisor.name,
+        currentActive,
+        receiving: add,
+        totalAfter: currentActive + add,
+      };
+    })
+    .sort(
+      (a, b) => a.totalAfter - b.totalAfter || a.supervisorName.localeCompare(b.supervisorName)
+    );
+}

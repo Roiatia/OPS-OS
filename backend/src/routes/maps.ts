@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { InspectorStatus, MapPhase, QaStatus, RoleName, TaskStatus } from "@prisma/client";
+import { InspectorStatus, MapPhase, QaStatus, RoleName, SupervisorStatus, FieldWorkStatus, TaskStatus } from "@prisma/client";
 import { authMiddleware, requireRoles, type AuthedRequest } from "../middleware/auth.js";
 import * as workflow from "../services/workflow.js";
 
@@ -53,7 +53,114 @@ router.post(
   }
 );
 
-router.get("/team", requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN), async (_req, res) => {
+router.post(
+  "/shuffle-supervisors",
+  requireRoles(RoleName.OPS_ADMIN),
+  async (req, res) => {
+    try {
+      const { mapIds, supervisorIds } = req.body as {
+        mapIds?: string[];
+        supervisorIds?: string[];
+      };
+      if (!mapIds?.length) {
+        res.status(400).json({ error: "mapIds required" });
+        return;
+      }
+      if (!supervisorIds?.length) {
+        res.status(400).json({ error: "supervisorIds required" });
+        return;
+      }
+      const result = await workflow.shuffleAssignSupervisors(
+        mapIds,
+        supervisorIds,
+        (req as AuthedRequest).user
+      );
+      res.json(result);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+router.get("/hub", requireRoles(RoleName.OPS_ADMIN, RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (req, res) => {
+  try {
+    const user = (req as AuthedRequest).user;
+    const [maps, supervisors] = await Promise.all([
+      workflow.listHubMaps(user),
+      workflow.listHubSupervisors(),
+    ]);
+    res.json({ maps, supervisors });
+  } catch (e) {
+    res.status(403).json({ error: (e as Error).message });
+  }
+});
+
+router.get("/hub/notifications", requireRoles(RoleName.OPS_ADMIN), async (req, res) => {
+  try {
+    const sinceParam = req.query.since as string | undefined;
+    const since = sinceParam ? new Date(sinceParam) : new Date(Date.now() - 60 * 60 * 1000);
+    const notifications = await workflow.listOpsHubNotifications(since);
+    res.json(notifications);
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
+router.patch("/:id/hub", requireRoles(RoleName.OPS_ADMIN, RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (req, res) => {
+  try {
+    const { fieldWorkStatus, fieldProgressPercent, assignedSupervisorId, onHubStatusBoard } =
+      req.body as {
+        fieldWorkStatus?: FieldWorkStatus;
+        fieldProgressPercent?: number;
+        assignedSupervisorId?: string | null;
+        onHubStatusBoard?: boolean;
+      };
+    const map = await workflow.updateHubMap(
+      req.params.id,
+      { fieldWorkStatus, fieldProgressPercent, assignedSupervisorId, onHubStatusBoard },
+      (req as AuthedRequest).user
+    );
+    res.json(map);
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+router.get("/team-field", requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (req, res) => {
+  try {
+    const maps = await workflow.listTeamFieldMaps((req as AuthedRequest).user);
+    res.json(maps);
+  } catch (e) {
+    res.status(403).json({ error: (e as Error).message });
+  }
+});
+
+router.post("/swap-supervisor", requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (req, res) => {
+  try {
+    const { mapIds, toSupervisorId } = req.body as {
+      mapIds?: string[];
+      toSupervisorId?: string;
+    };
+    if (!mapIds?.length) {
+      res.status(400).json({ error: "mapIds required" });
+      return;
+    }
+    if (!toSupervisorId) {
+      res.status(400).json({ error: "toSupervisorId required" });
+      return;
+    }
+    const count = await workflow.swapSupervisorMaps(
+      mapIds,
+      toSupervisorId,
+      (req as AuthedRequest).user
+    );
+    res.json({ swapped: count });
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+router.get("/team", requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN, RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (_req, res) => {
   const team = await workflow.listTeamMembers();
   res.json(team);
 });
@@ -222,8 +329,97 @@ router.post("/:id/upload-review", requireRoles(RoleName.GRAPHIC_QA, RoleName.OPS
 });
 
 router.post(
+  "/:id/release-to-graphics",
+  requireRoles(RoleName.OPS_ADMIN),
+  async (req, res) => {
+    try {
+      const map = await workflow.releaseToGraphics(
+        req.params.id,
+        (req as AuthedRequest).user
+      );
+      res.json(map);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+router.post(
+  "/:id/assign-supervisor",
+  requireRoles(RoleName.OPS_ADMIN),
+  async (req, res) => {
+    try {
+      const { supervisorId, attachment } = req.body as {
+        supervisorId?: string;
+        attachment?: { fileName: string; mimeType: string; data: string };
+      };
+      if (!supervisorId) {
+        res.status(400).json({ error: "supervisorId required" });
+        return;
+      }
+      const map = await workflow.assignSupervisor(
+        req.params.id,
+        supervisorId,
+        (req as AuthedRequest).user,
+        attachment
+      );
+      res.json(map);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+router.patch("/:id/supervisor-status", requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (req, res) => {
+  try {
+    const { status, note } = req.body as { status?: SupervisorStatus; note?: string };
+    if (!status || !Object.values(SupervisorStatus).includes(status)) {
+      res.status(400).json({ error: "Valid status required: ACCEPTED, PROCESSING, DONE" });
+      return;
+    }
+    const map = await workflow.updateSupervisorStatus(
+      req.params.id,
+      status,
+      (req as AuthedRequest).user,
+      note
+    );
+    res.json(map);
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+router.patch("/:id/supervisor-field", requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (req, res) => {
+  try {
+    const { loomDone, positioning, mapperName, fieldDate, opsManagerComment, fieldWorkStatus } = req.body as {
+      loomDone?: boolean;
+      positioning?: boolean;
+      mapperName?: string | null;
+      fieldDate?: string | null;
+      opsManagerComment?: string | null;
+      fieldWorkStatus?: FieldWorkStatus;
+    };
+    if (
+      fieldWorkStatus !== undefined &&
+      !Object.values(FieldWorkStatus).includes(fieldWorkStatus)
+    ) {
+      res.status(400).json({ error: "Invalid fieldWorkStatus" });
+      return;
+    }
+    const map = await workflow.updateSupervisorFieldWork(
+      req.params.id,
+      { loomDone, positioning, mapperName, fieldDate, opsManagerComment, fieldWorkStatus },
+      (req as AuthedRequest).user
+    );
+    res.json(map);
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+router.post(
   "/:id/field-complete",
-  requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN),
+  requireRoles(RoleName.OPS_ADMIN),
   async (req, res) => {
     try {
       const map = await workflow.completeFieldWork(req.params.id, (req as AuthedRequest).user);

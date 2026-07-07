@@ -1,0 +1,311 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { api } from "../api";
+import { CompanyDashboardPanel } from "../components/leader/CompanyDashboardPanel";
+import { SettingsPanel } from "../components/leader/SettingsPanel";
+import { MapHubBoard } from "../components/hub/MapHubBoard";
+import { OpsHubAlertsBar } from "../components/ops/OpsHubAlertsBar";
+import { OpsMapsBoard } from "../components/ops/OpsMapsBoard";
+import { OpsManagerSidebar, type OpsSection } from "../components/ops/OpsManagerSidebar";
+import { OpsTeamPanel } from "../components/ops/OpsTeamPanel";
+import {
+  isAtGraphics,
+  isReadyToRelease,
+  matchesOpsQueue,
+} from "../lib/opsDisplay";
+import { getOpsWorkloadAlerts } from "../lib/opsWorkload";
+import { useAuth } from "../context/AuthContext";
+import type { MapRecord, TeamMember } from "../types";
+
+const SECTION_TITLES: Record<OpsSection, { title: string; subtitle: string }> = {
+  hub: {
+    title: "Hub",
+    subtitle: "Supervisors on shift — drag maps to assign and track status",
+  },
+  maps: {
+    title: "Maps",
+    subtitle: "Full pipeline — graphics and field ops in one view",
+  },
+  team: {
+    title: "Team",
+    subtitle: "Graphics and field ops — everyone reports to OPS",
+  },
+  history: {
+    title: "History",
+    subtitle: "All maps — active pipeline, completed, and on-shift wrap-up",
+  },
+  "company-dashboard": {
+    title: "Dashboard",
+    subtitle: "Pipeline overview and coverage",
+  },
+  settings: {
+    title: "Settings",
+    subtitle: "Workspace preferences",
+  },
+};
+
+export function OpsManagerDashboardPage() {
+  const { user } = useAuth();
+  const [maps, setMaps] = useState<MapRecord[]>([]);
+  const [historyMaps, setHistoryMaps] = useState<MapRecord[]>([]);
+  const [team, setTeam] = useState<TeamMember[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showAddMap, setShowAddMap] = useState(false);
+  const [error, setError] = useState("");
+  const [activeSection, setActiveSection] = useState<OpsSection>("hub");
+  const [form, setForm] = useState({
+    mapNumber: "",
+    jiraTicketId: "",
+    client: "",
+    area: "",
+    description: "",
+    dueDate: "",
+  });
+
+  const load = useCallback((silent = false) => {
+    if (!silent) setLoading(true);
+    return Promise.all([api.getMaps(), api.getHistoryMaps(), api.getTeam()])
+      .then(([m, h, t]) => {
+        setMaps(m);
+        setHistoryMaps(h);
+        setTeam(t);
+      })
+      .catch(() => {
+        if (!silent) {
+          return Promise.all([api.getMaps(), api.getTeam()]).then(([m, t]) => {
+            setMaps(m);
+            setTeam(t);
+          });
+        }
+      })
+      .finally(() => {
+        if (!silent) setLoading(false);
+      });
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  useEffect(() => {
+    if (activeSection !== "maps" && activeSection !== "team") return;
+    const interval = setInterval(() => load(true), 30_000);
+    return () => clearInterval(interval);
+  }, [activeSection, load]);
+
+  async function handleAddMap(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    try {
+      await api.createMap({
+        mapNumber: form.mapNumber,
+        jiraTicketId: form.jiraTicketId || undefined,
+        client: form.client,
+        area: form.area || undefined,
+        description: form.description || undefined,
+        dueDate: form.dueDate || undefined,
+      });
+      setShowAddMap(false);
+      setForm({ mapNumber: "", jiraTicketId: "", client: "", area: "", description: "", dueDate: "" });
+      load();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  const stats = useMemo(
+    () => ({
+      total: maps.length,
+      newFromCs: maps.filter((m) => matchesOpsQueue(m, "new_from_cs")).length,
+      atGraphics: maps.filter((m) => isAtGraphics(m)).length,
+      field: maps.filter((m) => matchesOpsQueue(m, "field")).length,
+      ready: maps.filter((m) => isReadyToRelease(m)).length,
+    }),
+    [maps]
+  );
+
+  const allMaps = useMemo(() => {
+    const byId = new Map<string, MapRecord>();
+    for (const m of [...maps, ...historyMaps]) byId.set(m.id, m);
+    return [...byId.values()];
+  }, [maps, historyMaps]);
+
+  const workloadAlerts = useMemo(
+    () => getOpsWorkloadAlerts(team, maps, allMaps),
+    [team, maps, allMaps]
+  );
+
+  const { title, subtitle } = SECTION_TITLES[activeSection];
+
+  return (
+    <div className="flex min-h-[calc(100vh-3.5rem)]">
+      <OpsManagerSidebar
+        activeSection={activeSection}
+        onSectionChange={setActiveSection}
+        fieldCount={stats.field}
+        readyCount={stats.ready}
+        lightLoadCount={workloadAlerts.length}
+      />
+
+      <div className="flex-1 min-w-0 px-6 py-6 overflow-y-auto">
+        <div className="space-y-6">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <h1 className="text-2xl font-bold">{title}</h1>
+              <p className="text-muted mt-1">{subtitle}</p>
+            </div>
+            {activeSection === "maps" && (
+              <button
+                type="button"
+                onClick={() => setShowAddMap(!showAddMap)}
+                className="px-4 py-2.5 bg-brand-600 text-white text-sm font-medium rounded-xl hover:bg-brand-700 shadow-sm shadow-brand-600/20 transition-colors"
+              >
+                + Add map from CS
+              </button>
+            )}
+          </div>
+
+          <OpsHubAlertsBar onActivity={() => load(true)} />
+
+          {activeSection === "maps" && (
+            <p className="text-xs text-muted -mt-4">
+              Table refreshes every 30s when supervisors update field work. CRM sync coming later.
+            </p>
+          )}
+
+          {activeSection === "hub" && user ? (
+            <MapHubBoard
+              mode="ops"
+              currentUserId={user.id}
+              onMutate={(updated) => {
+                if (updated) {
+                  setMaps((prev) =>
+                    prev.map((m) => (m.id === updated.id ? { ...m, ...updated } : m))
+                  );
+                }
+                void load(true);
+              }}
+            />
+          ) : loading ? (
+            <p className="text-muted">Loading...</p>
+          ) : (
+            <>
+              {activeSection === "maps" && (
+                <>
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                    {[
+                      { label: "All maps", value: stats.total },
+                      { label: "New from CS", value: stats.newFromCs },
+                      { label: "At graphics", value: stats.atGraphics },
+                      { label: "Field work", value: stats.field },
+                      {
+                        label: "Ready to accept",
+                        value: stats.ready,
+                        highlight: stats.ready > 0,
+                      },
+                    ].map((s) => (
+                      <div key={s.label} className="bg-card border border-border rounded-2xl p-4 shadow-sm">
+                        <div
+                          className={`text-2xl font-bold ${
+                            s.highlight ? "text-emerald-600" : "text-brand-600"
+                          }`}
+                        >
+                          {s.value}
+                        </div>
+                        <div className="text-sm text-muted">{s.label}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {showAddMap && (
+                    <form
+                      onSubmit={handleAddMap}
+                      className="bg-card border border-border rounded-xl p-5 grid sm:grid-cols-2 gap-4"
+                    >
+                      <input
+                        required
+                        placeholder="Map number (e.g. MAP-2024-0110)"
+                        value={form.mapNumber}
+                        onChange={(e) => setForm({ ...form, mapNumber: e.target.value })}
+                        className="border border-border rounded-lg px-3 py-2 text-sm"
+                      />
+                      <input
+                        placeholder="Jira ticket (e.g. OPS-4610)"
+                        value={form.jiraTicketId}
+                        onChange={(e) => setForm({ ...form, jiraTicketId: e.target.value })}
+                        className="border border-border rounded-lg px-3 py-2 text-sm"
+                      />
+                      <input
+                        required
+                        placeholder="Client"
+                        value={form.client}
+                        onChange={(e) => setForm({ ...form, client: e.target.value })}
+                        className="border border-border rounded-lg px-3 py-2 text-sm"
+                      />
+                      <input
+                        placeholder="Area"
+                        value={form.area}
+                        onChange={(e) => setForm({ ...form, area: e.target.value })}
+                        className="border border-border rounded-lg px-3 py-2 text-sm"
+                      />
+                      <textarea
+                        placeholder="Description"
+                        value={form.description}
+                        onChange={(e) => setForm({ ...form, description: e.target.value })}
+                        className="border border-border rounded-lg px-3 py-2 text-sm sm:col-span-2"
+                        rows={2}
+                      />
+                      <label className="block sm:col-span-2">
+                        <span className="text-sm text-muted">Deadline (optional)</span>
+                        <input
+                          type="date"
+                          value={form.dueDate}
+                          onChange={(e) => setForm({ ...form, dueDate: e.target.value })}
+                          className="mt-1 w-full border border-border rounded-lg px-3 py-2 text-sm"
+                        />
+                      </label>
+                      {error && <p className="sm:col-span-2 text-sm text-red-600">{error}</p>}
+                      <div className="sm:col-span-2 flex gap-2">
+                        <button
+                          type="submit"
+                          className="px-4 py-2 bg-brand-600 text-white text-sm rounded-lg"
+                        >
+                          Save map
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setShowAddMap(false)}
+                          className="px-4 py-2 text-sm text-muted"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </form>
+                  )}
+
+                  <OpsMapsBoard
+                    maps={maps}
+                    team={team}
+                    workloadAlerts={workloadAlerts}
+                    onRefresh={load}
+                  />
+                </>
+              )}
+
+              {activeSection === "team" && (
+                <OpsTeamPanel team={team} maps={maps} lightLoadAlerts={workloadAlerts} />
+              )}
+
+              {activeSection === "history" && (
+                <OpsHistoryPanel activeMaps={maps} historyMaps={historyMaps} team={team} />
+              )}
+
+              {activeSection === "company-dashboard" && <CompanyDashboardPanel />}
+
+              {activeSection === "settings" && <SettingsPanel />}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

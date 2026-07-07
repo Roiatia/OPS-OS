@@ -44,6 +44,21 @@ const DEMO_USERS = [
     name: "Tomer Avivi",
     roles: [RoleName.GRAPHIC_QA] as RoleName[],
   },
+  {
+    email: "supervisor@ops-demo.local",
+    name: "Alex Ben-Ami",
+    roles: [RoleName.SUPERVISOR] as RoleName[],
+  },
+  {
+    email: "supervisor2@ops-demo.local",
+    name: "Dana Weiss",
+    roles: [RoleName.SUPERVISOR_SHIFT_LEADER] as RoleName[],
+  },
+  {
+    email: "ops@ops-demo.local",
+    name: "Rachel Ops",
+    roles: [RoleName.OPS_ADMIN] as RoleName[],
+  },
 ];
 
 async function seedUsers() {
@@ -60,6 +75,22 @@ async function seedUsers() {
         where: { userId_role: { userId: user.id, role } },
         update: {},
         create: { userId: user.id, role },
+      });
+    }
+
+    if (demo.email === "supervisor@ops-demo.local") {
+      const shiftStart = new Date();
+      shiftStart.setHours(8, 0, 0, 0);
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { shiftStartedAt: shiftStart },
+      });
+    }
+
+    if (demo.email === "supervisor2@ops-demo.local") {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { shiftStartedAt: null },
       });
     }
 

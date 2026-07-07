@@ -15,13 +15,17 @@ export const SHIFTS: ShiftDefinition[] = [
     id: "morning",
     label: "Morning",
     hours: "06:00 – 14:00",
-    memberEmails: ["inspector@ops-demo.local", "inspector2@ops-demo.local"],
+    memberEmails: [
+      "inspector@ops-demo.local",
+      "inspector2@ops-demo.local",
+      "supervisor@ops-demo.local",
+    ],
   },
   {
     id: "afternoon",
     label: "Afternoon",
     hours: "14:00 – 22:00",
-    memberEmails: ["inspector3@ops-demo.local"],
+    memberEmails: ["inspector3@ops-demo.local", "supervisor2@ops-demo.local"],
   },
   {
     id: "night",
@@ -47,4 +51,14 @@ export function getShiftQaMembers(team: TeamMember[], shiftId: ShiftId) {
   return getShiftMembers(team, shiftId).filter((m) =>
     m.roles.some((r) => r.role === "GRAPHIC_QA")
   );
+}
+
+export function getShiftSupervisors(team: TeamMember[], shiftId: ShiftId) {
+  return getShiftMembers(team, shiftId).filter((m) =>
+    m.roles.some((r) => r.role === "SUPERVISOR")
+  );
+}
+
+export function getSupervisorShiftForEmail(email: string): ShiftDefinition | undefined {
+  return SHIFTS.find((s) => s.memberEmails.includes(email));
 }

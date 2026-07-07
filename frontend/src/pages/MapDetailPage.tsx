@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { api } from "../api";
+import { hasSupervisorRole } from "../lib/roles";
 import { useAuth, hasRole } from "../context/AuthContext";
 import { PhaseStepper } from "../components/PhaseStepper";
 import { Badge } from "../components/Badge";
@@ -27,8 +28,10 @@ export function MapDetailPage() {
   const [dueDateSaving, setDueDateSaving] = useState(false);
 
   const isLeader = hasRole(user!, "GRAPHIC_TEAM_LEADER", "OPS_ADMIN");
+  const isOpsAdmin = hasRole(user!, "OPS_ADMIN");
   const isInspector = hasRole(user!, "MAPPING_INSPECTOR");
   const isQa = hasRole(user!, "GRAPHIC_QA");
+  const isSupervisor = hasSupervisorRole(user);
   const isArchived = map?.phase === "APPROVED" || map?.phase === "CANCELLED";
 
   function load() {
@@ -73,6 +76,7 @@ export function MapDetailPage() {
 
   const displayState = getMapDisplayState(map);
   const isAssignedInspector = map.assignedInspector?.id === user!.id;
+  const isAssignedSupervisor = map.assignedSupervisor?.id === user!.id;
 
   return (
     <div className="min-h-[calc(100vh-4rem)] bg-gradient-to-b from-slate-50 to-white py-8 px-4">
@@ -266,14 +270,68 @@ export function MapDetailPage() {
                 </ActionBlock>
               )}
 
-              {isLeader && map.phase === "FIELD" && (
-                <ActionBlock title="Field work" hint="Mark complete to start polish.">
+              {isSupervisor && isAssignedSupervisor && map.phase === "FIELD" && map.supervisorStatus !== "DONE" && (
+                <ActionBlock
+                  title="Field mapping"
+                  hint="Work with your mapper on-site. Mark Done when the store map is complete."
+                >
+                  <div className="grid grid-cols-3 gap-2">
+                    {(
+                      [
+                        { value: "ACCEPTED", label: "Accepted" },
+                        { value: "PROCESSING", label: "Mapping" },
+                        { value: "DONE", label: "Done" },
+                      ] as const
+                    ).map(({ value, label }) => (
+                      <button
+                        key={value}
+                        onClick={() => act(() => api.updateSupervisorStatus(map.id, value))}
+                        className={`py-2.5 text-sm font-medium rounded-xl border transition-colors ${
+                          map.supervisorStatus === value
+                            ? "bg-brand-600 text-white border-brand-600"
+                            : "border-border hover:bg-slate-50 text-slate-700"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </ActionBlock>
+              )}
+
+              {isSupervisor && isAssignedSupervisor && map.phase === "FIELD" && map.supervisorStatus === "DONE" && (
+                <ActionBlock title="Field mapping complete" hint="Waiting for OPS manager to release to graphics polish.">
+                  <p className="text-sm text-emerald-700 bg-emerald-50 rounded-xl px-3 py-2 text-center">
+                    Submitted to OPS for review
+                  </p>
+                </ActionBlock>
+              )}
+
+              {isOpsAdmin && map.phase === "FIELD" && (
+                <ActionBlock
+                  title="OPS field review"
+                  hint={
+                    map.supervisorStatus === "DONE"
+                      ? "Supervisor marked done. Release to graphics for polish."
+                      : "Waiting for supervisor to complete field mapping."
+                  }
+                >
                   <button
                     onClick={() => act(() => api.fieldComplete(map.id))}
-                    className="w-full py-2.5 bg-brand-600 text-white text-sm font-medium rounded-xl hover:bg-brand-700"
+                    disabled={map.supervisorStatus !== "DONE"}
+                    className="w-full py-2.5 bg-brand-600 text-white text-sm font-medium rounded-xl hover:bg-brand-700 disabled:opacity-40 disabled:cursor-not-allowed"
                   >
-                    Field complete → start polish
+                    Release to graphics polish
                   </button>
+                </ActionBlock>
+              )}
+
+              {isLeader && !isOpsAdmin && map.phase === "FIELD" && (
+                <ActionBlock title="Field work" hint="Supervisors are mapping on-site. OPS manager releases to polish when done.">
+                  <p className="text-sm text-muted text-center py-2">
+                    {map.assignedSupervisor?.name ?? "Supervisor"} ·{" "}
+                    {map.supervisorStatus?.toLowerCase() ?? "not started"}
+                  </p>
                 </ActionBlock>
               )}
 

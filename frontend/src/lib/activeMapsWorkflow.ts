@@ -28,8 +28,63 @@ export function isQaActive(map: MapRecord): boolean {
   return false;
 }
 
+/** Maps awaiting supervisor acceptance */
+export function isSupervisorInbox(map: MapRecord, userId: string): boolean {
+  if (map.phase !== "FIELD") return false;
+  if (map.assignedSupervisor?.id !== userId) return false;
+  return map.supervisorStatus === null;
+}
+
+/** Maps the supervisor is actively mapping in the field */
+export function isSupervisorActive(map: MapRecord, userId: string): boolean {
+  if (map.phase !== "FIELD") return false;
+  if (map.assignedSupervisor?.id !== userId) return false;
+  return map.supervisorStatus !== null && map.supervisorStatus !== "DONE";
+}
+
+/** Supervisor finished — waiting for OPS manager to release to graphics */
+export function isSupervisorAwaitingOps(map: MapRecord, userId: string): boolean {
+  if (map.phase !== "FIELD") return false;
+  if (map.assignedSupervisor?.id !== userId) return false;
+  return map.supervisorStatus === "DONE";
+}
+
+export function getSupervisorStatusOptions(map: MapRecord): StatusOption[] {
+  if (map.phase !== "FIELD") return [];
+  if (map.supervisorStatus === "DONE") return [];
+
+  const options: StatusOption[] = [];
+  if (!map.supervisorStatus) {
+    options.push({
+      value: "ACCEPTED",
+      label: "Accepted",
+      action: { kind: "supervisor", status: "ACCEPTED" },
+    });
+    return options;
+  }
+  options.push(
+    {
+      value: "ACCEPTED",
+      label: "Accepted",
+      action: { kind: "supervisor", status: "ACCEPTED" },
+    },
+    {
+      value: "PROCESSING",
+      label: "Mapping",
+      action: { kind: "supervisor", status: "PROCESSING" },
+    },
+    {
+      value: "DONE",
+      label: "Done",
+      action: { kind: "supervisor", status: "DONE" },
+    }
+  );
+  return options;
+}
+
 export type StatusAction =
   | { kind: "inspector"; status: "ACCEPTED" | "PROCESSING" | "DONE" }
+  | { kind: "supervisor"; status: "ACCEPTED" | "PROCESSING" | "DONE" }
   | { kind: "qa_review"; status: "fix" | "fix_done" | "approved" }
   | { kind: "upload_review"; approved: boolean };
 

@@ -1,9 +1,12 @@
 import { RoleName } from "@prisma/client";
+import { SUPERVISOR_ROLE_NAMES } from "./roles.js";
 
 export const ROLE_LABELS: Record<RoleName, string> = {
   GRAPHIC_TEAM_LEADER: "Field Ops Graphic Team Leader",
   MAPPING_INSPECTOR: "Mapping Inspector",
   GRAPHIC_QA: "Graphic QA",
+  SUPERVISOR: "Supervisor",
+  SUPERVISOR_SHIFT_LEADER: "Supervisor Shift Leader",
   OPS_ADMIN: "OPS Admin",
 };
 
