@@ -27,8 +27,8 @@ export function MapDetailPage() {
   const [assignLoading, setAssignLoading] = useState(false);
   const [dueDateSaving, setDueDateSaving] = useState(false);
 
-  const isLeader = hasRole(user!, "GRAPHIC_TEAM_LEADER", "OPS_ADMIN");
-  const isOpsAdmin = hasRole(user!, "OPS_ADMIN");
+  const isLeader = hasRole(user!, "GRAPHIC_TEAM_LEADER", "OPS_ADMIN", "OPS_MANAGER_2");
+  const isOpsAdmin = hasRole(user!, "OPS_ADMIN", "OPS_MANAGER_2");
   const isInspector = hasRole(user!, "MAPPING_INSPECTOR");
   const isQa = hasRole(user!, "GRAPHIC_QA");
   const isSupervisor = hasSupervisorRole(user);
@@ -44,7 +44,7 @@ export function MapDetailPage() {
   }, [id]);
 
   useEffect(() => {
-    if (!user || !hasRole(user, "GRAPHIC_TEAM_LEADER", "OPS_ADMIN")) return;
+    if (!user || !hasRole(user, "GRAPHIC_TEAM_LEADER", "OPS_ADMIN", "OPS_MANAGER_2")) return;
     Promise.all([api.getMaps(), api.getTeam()]).then(([m, t]) => {
       setAllMaps(m);
       setTeam(t);

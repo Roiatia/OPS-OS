@@ -3,23 +3,32 @@ import { api } from "../api";
 import { CompanyDashboardPanel } from "../components/leader/CompanyDashboardPanel";
 import { SettingsPanel } from "../components/leader/SettingsPanel";
 import { MapHubBoard } from "../components/hub/MapHubBoard";
-import { OpsHubAlertsBar } from "../components/ops/OpsHubAlertsBar";
+import { OpsHistoryPanel } from "../components/ops/OpsHistoryPanel";
 import { OpsMapsBoard } from "../components/ops/OpsMapsBoard";
+import { OpsReportsPanel } from "../components/ops/OpsReportsPanel";
+import { OpsUpdatesPanel } from "../components/ops/OpsUpdatesPanel";
 import { OpsManagerSidebar, type OpsSection } from "../components/ops/OpsManagerSidebar";
 import { OpsTeamPanel } from "../components/ops/OpsTeamPanel";
+import { ConfluencePanel } from "../components/shared/ConfluencePanel";
+import { AvailabilityPanel } from "../components/shared/AvailabilityPanel";
 import {
   isAtGraphics,
   isReadyToRelease,
   matchesOpsQueue,
 } from "../lib/opsDisplay";
 import { getOpsWorkloadAlerts } from "../lib/opsWorkload";
+import { useOpsUpdates } from "../lib/useOpsUpdates";
 import { useAuth } from "../context/AuthContext";
 import type { MapRecord, TeamMember } from "../types";
 
 const SECTION_TITLES: Record<OpsSection, { title: string; subtitle: string }> = {
   hub: {
     title: "Hub",
-    subtitle: "Supervisors on shift — drag maps to assign and track status",
+    subtitle: "Only supervisors & shift leaders on shift today — assign maps and track status",
+  },
+  updates: {
+    title: "Updates",
+    subtitle: "Map milestones from graphics and ops — stage done, complete, or incomplete",
   },
   maps: {
     title: "Maps",
@@ -27,15 +36,27 @@ const SECTION_TITLES: Record<OpsSection, { title: string; subtitle: string }> = 
   },
   team: {
     title: "Team",
-    subtitle: "Graphics and field ops — everyone reports to OPS",
+    subtitle: "Who is working today — field shift + graphics under OPS",
   },
   history: {
     title: "History",
     subtitle: "All maps — active pipeline, completed, and on-shift wrap-up",
   },
+  reports: {
+    title: "Reports",
+    subtitle: "End-of-day summaries — generated daily at 23:00",
+  },
   "company-dashboard": {
     title: "Dashboard",
     subtitle: "Pipeline overview and coverage",
+  },
+  availability: {
+    title: "Availability",
+    subtitle: "",
+  },
+  confluence: {
+    title: "Confluence",
+    subtitle: "",
   },
   settings: {
     title: "Settings",
@@ -134,6 +155,8 @@ export function OpsManagerDashboardPage() {
     [team, maps, allMaps]
   );
 
+  const opsUpdates = useOpsUpdates(() => load(true));
+
   const { title, subtitle } = SECTION_TITLES[activeSection];
 
   return (
@@ -144,6 +167,7 @@ export function OpsManagerDashboardPage() {
         fieldCount={stats.field}
         readyCount={stats.ready}
         lightLoadCount={workloadAlerts.length}
+        updateCount={opsUpdates.unreadCount}
       />
 
       <div className="flex-1 min-w-0 px-6 py-6 overflow-y-auto">
@@ -164,8 +188,6 @@ export function OpsManagerDashboardPage() {
             )}
           </div>
 
-          <OpsHubAlertsBar onActivity={() => load(true)} />
-
           {activeSection === "maps" && (
             <p className="text-xs text-muted -mt-4">
               Table refreshes every 30s when supervisors update field work. CRM sync coming later.
@@ -183,8 +205,21 @@ export function OpsManagerDashboardPage() {
                   );
                 }
                 void load(true);
+                // Pull hub_completed / hub_uncompleted into Updates immediately
+                void opsUpdates.refresh();
               }}
             />
+          ) : activeSection === "updates" ? (
+            <OpsUpdatesPanel
+              updates={opsUpdates.updates}
+              shiftAlerts={opsUpdates.shiftAlerts}
+              isDemoPreview={opsUpdates.isDemoPreview}
+              onDismiss={opsUpdates.dismiss}
+              onDismissAll={opsUpdates.dismissAll}
+              onRefresh={opsUpdates.refresh}
+            />
+          ) : activeSection === "reports" ? (
+            <OpsReportsPanel />
           ) : loading ? (
             <p className="text-muted">Loading...</p>
           ) : (
@@ -292,7 +327,7 @@ export function OpsManagerDashboardPage() {
               )}
 
               {activeSection === "team" && (
-                <OpsTeamPanel team={team} maps={maps} lightLoadAlerts={workloadAlerts} />
+                <OpsTeamPanel team={team} maps={maps} />
               )}
 
               {activeSection === "history" && (
@@ -300,6 +335,10 @@ export function OpsManagerDashboardPage() {
               )}
 
               {activeSection === "company-dashboard" && <CompanyDashboardPanel />}
+
+              {activeSection === "availability" && <AvailabilityPanel />}
+
+              {activeSection === "confluence" && <ConfluencePanel />}
 
               {activeSection === "settings" && <SettingsPanel />}
             </>

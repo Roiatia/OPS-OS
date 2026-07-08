@@ -1,8 +1,22 @@
 import { MapPhase, InspectorStatus, SupervisorStatus, FieldWorkStatus, QaStatus, TaskStatus, RoleName } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
-import { SUPERVISOR_ROLE_NAMES, supervisorRolesWhere, userHasSupervisorRole } from "../lib/roles.js";
+import { assertUploadCompleteForMapping } from "../lib/pipeline.js";
+import {
+  getActivityLabel,
+  getActivityTeam,
+  isMilestoneEvent,
+  MILESTONE_ACTIONS,
+  normalizeMilestoneAction,
+} from "../lib/activityFeed.js";
+import {
+  SUPERVISOR_ROLE_NAMES,
+  supervisorRolesWhere,
+  userHasShiftLeaderRole,
+  userHasSupervisorRole,
+  userIsShiftLeader,
+} from "../lib/roles.js";
 import type { AuthUser } from "../lib/types.js";
-import { hasRole, isLeaderOrAdmin } from "../lib/types.js";
+import { hasRole, isLeaderOrAdmin, isOpsManager } from "../lib/types.js";
 
 export interface AttachmentInput {
   fileName: string;
@@ -27,6 +41,8 @@ function endOfToday(): Date {
 function hubMapsWhereClause() {
   return {
     phase: MapPhase.FIELD,
+    uploadApproved: true,
+    uploadCompletedAt: { not: null },
     fieldWorkStatus: { not: FieldWorkStatus.CANCELLED },
   };
 }
@@ -116,7 +132,7 @@ const mapIncludes = {
 };
 
 export async function listMapsForUser(user: AuthUser) {
-  if (isLeaderOrAdmin(user) || hasRole(user, RoleName.OPS_ADMIN)) {
+  if (isLeaderOrAdmin(user)) {
     return prisma.map.findMany({
       where: { phase: { notIn: ARCHIVED_PHASES } },
       include: mapIncludes,
@@ -232,7 +248,7 @@ export async function swapSupervisorMaps(
 }
 
 export async function releaseToGraphics(mapId: string, user: AuthUser) {
-  if (!hasRole(user, RoleName.OPS_ADMIN)) {
+  if (!isOpsManager(user)) {
     throw new Error("Only OPS manager can release maps to graphics");
   }
 
@@ -258,7 +274,7 @@ export async function shuffleAssignSupervisors(
   supervisorIds: string[],
   user: AuthUser
 ) {
-  if (!hasRole(user, RoleName.OPS_ADMIN)) {
+  if (!isOpsManager(user)) {
     throw new Error("Only OPS manager can shuffle supervisor assignments");
   }
   if (mapIds.length === 0) throw new Error("No maps to assign");
@@ -274,6 +290,7 @@ export async function shuffleAssignSupervisors(
     if (map.phase !== MapPhase.FIELD) {
       throw new Error(`${map.mapNumber} is not in field work`);
     }
+    assertUploadCompleteForMapping(map);
     if (map.fieldWorkStatus === FieldWorkStatus.COMPLETED) {
       throw new Error(`${map.mapNumber} is already completed`);
     }
@@ -354,7 +371,7 @@ export async function shuffleAssignSupervisors(
 }
 
 export async function listHistoryMaps(user: AuthUser) {
-  if (!isLeaderOrAdmin(user) && !hasRole(user, RoleName.OPS_ADMIN)) {
+  if (!isLeaderOrAdmin(user)) {
     throw new Error("Not allowed to view history");
   }
 
@@ -394,7 +411,7 @@ export async function getMapForUser(mapId: string, user: AuthUser) {
 
   if (!map) return null;
 
-  if (isLeaderOrAdmin(user) || hasRole(user, RoleName.OPS_ADMIN)) {
+  if (isLeaderOrAdmin(user)) {
     return map;
   }
 
@@ -724,6 +741,7 @@ export async function qaUploadDecision(
         phase: MapPhase.PREP,
         inspectorStatus: null,
         uploadApproved: false,
+        uploadCompletedAt: null,
       },
       include: mapIncludes,
     });
@@ -738,6 +756,7 @@ export async function qaUploadDecision(
     data: {
       phase: MapPhase.FIELD,
       uploadApproved: true,
+      uploadCompletedAt: new Date(),
       qaStatus: null,
       supervisorStatus: null,
     },
@@ -760,6 +779,7 @@ export async function assignSupervisor(
   if (map.phase !== MapPhase.FIELD) {
     throw new Error("Supervisor can only be assigned during field work");
   }
+  assertUploadCompleteForMapping(map);
   if (ARCHIVED_PHASES.includes(map.phase)) {
     throw new Error("Cannot assign archived map");
   }
@@ -906,6 +926,7 @@ export async function completeFieldWork(mapId: string, user: AuthUser) {
   const map = await prisma.map.findUnique({ where: { id: mapId } });
   if (!map) throw new Error("Map not found");
   if (map.phase !== MapPhase.FIELD) throw new Error("Map is not in field phase");
+  assertUploadCompleteForMapping(map);
   if (map.assignedSupervisorId && map.supervisorStatus !== SupervisorStatus.DONE) {
     throw new Error("Supervisor must mark field work as Done before releasing to graphics");
   }
@@ -1108,34 +1129,37 @@ export async function listTeamMembers() {
         },
       },
     },
-    include: { roles: true },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      shiftStartedAt: true,
+      roles: true,
+    },
     orderBy: { name: "asc" },
   });
 }
 
 export async function listHubMaps(user: AuthUser) {
-  const isOps = hasRole(user, RoleName.OPS_ADMIN);
+  const isOps = isOpsManager(user);
   const isSupervisor = userHasSupervisorRole(user);
 
   if (!isOps && !isSupervisor) {
     throw new Error("Not allowed to view hub");
   }
 
-  const where = isOps
-    ? hubMapsWhereClause()
-    : {
-        ...hubMapsWhereClause(),
-        assignedSupervisorId: user.id,
-      };
-
+  // Full board for everyone with hub access (managers, shift leaders, supervisors).
+  // Drag/update is enforced in updateHubMap + frontend canDrag — supervisors
+  // may only move maps assigned to them.
   return prisma.map.findMany({
-    where,
+    where: hubMapsWhereClause(),
     include: mapIncludes,
     orderBy: [{ fieldDate: "asc" }, { updatedAt: "desc" }],
   });
 }
 
 export async function listHubSupervisors() {
+  /** Hub columns = only supervisors & shift leaders clocked in for today */
   const onShift = await prisma.user.findMany({
     where: onShiftTodayWhereClause(),
     select: {
@@ -1145,50 +1169,140 @@ export async function listHubSupervisors() {
       shiftStartedAt: true,
       roles: true,
     },
+    orderBy: [{ shiftStartedAt: "asc" }, { name: "asc" }],
   });
 
-  const withActiveMaps = await prisma.user.findMany({
-    where: {
-      ...supervisorRolesWhere(),
-      assignedMapsAsSupervisor: {
-        some: {
-          phase: MapPhase.FIELD,
-          fieldWorkStatus: { not: FieldWorkStatus.CANCELLED },
-        },
-      },
-    },
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      shiftStartedAt: true,
-      roles: true,
-    },
-  });
-
-  const byId = new Map<string, (typeof onShift)[0]>();
-  for (const s of [...onShift, ...withActiveMaps]) byId.set(s.id, s);
-  return [...byId.values()].sort(
-    (a, b) =>
-      (a.shiftStartedAt?.getTime() ?? 0) - (b.shiftStartedAt?.getTime() ?? 0) ||
-      a.name.localeCompare(b.name)
-  );
+  return onShift;
 }
 
-export async function listOpsHubNotifications(since: Date) {
+export interface OpsShiftAlert {
+  id: string;
+  type: "no_shift_leader";
+  message: string;
+  detail: string;
+  createdAt: string;
+  supervisorNames: string[];
+}
+
+export async function listOpsShiftAlerts(): Promise<OpsShiftAlert[]> {
+  const onShift = await prisma.user.findMany({
+    where: onShiftTodayWhereClause(),
+    select: {
+      name: true,
+      roles: { select: { role: true } },
+    },
+    orderBy: { name: "asc" },
+  });
+
+  if (onShift.length === 0) return [];
+
+  const shiftLeaders = onShift.filter(userIsShiftLeader);
+  if (shiftLeaders.length > 0) return [];
+
+  const today = new Date().toISOString().slice(0, 10);
+  const names = onShift.map((u) => u.name);
+
+  return [
+    {
+      id: `alert:no-shift-leader:${today}`,
+      type: "no_shift_leader",
+      message: "No shift leader on today's shift",
+      detail: `${names.length} supervisor${names.length === 1 ? "" : "s"} on shift (${names.join(", ")}) but no shift leader is clocked in. Assign a shift leader to review supervisor work.`,
+      createdAt: new Date().toISOString(),
+      supervisorNames: names,
+    },
+  ];
+}
+
+export async function listOpsActivityFeed(options: {
+  since?: Date;
+  query?: string;
+  limit?: number;
+}) {
+  const { since, query, limit = 120 } = options;
+  const sinceDate =
+    since ?? new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
   const events = await prisma.mapEvent.findMany({
     where: {
-      createdAt: { gt: since },
-      action: { startsWith: "hub_" },
+      createdAt: { gt: sinceDate },
+      OR: [
+        { action: { in: [...MILESTONE_ACTIONS] } },
+        { action: "inspector_status" },
+      ],
     },
     include: {
       user: { select: { id: true, name: true } },
-      map: { select: { id: true, mapNumber: true, client: true } },
+      map: {
+        select: {
+          id: true,
+          mapNumber: true,
+          client: true,
+          mapperName: true,
+          opsManagerComment: true,
+          assignedInspector: { select: { name: true } },
+          assignedQa: { select: { name: true } },
+          assignedSupervisor: { select: { name: true } },
+        },
+      },
     },
     orderBy: { createdAt: "desc" },
-    take: 50,
+    take: limit * 2,
   });
-  return events;
+
+  const milestones = events
+    .filter((e) => isMilestoneEvent(e.action, e.metadata))
+    .map((e) => ({
+      ...e,
+      action: normalizeMilestoneAction(e.action, e.metadata),
+      team: getActivityTeam(normalizeMilestoneAction(e.action, e.metadata)),
+    }))
+    .slice(0, limit);
+
+  const q = query?.trim().toLowerCase();
+  if (!q) {
+    return milestones;
+  }
+
+  return milestones.filter((e) => activityMatchesQuery(e, q));
+}
+
+function activityMatchesQuery(
+  event: {
+    action: string;
+    note: string | null;
+    user: { name: string };
+    map: {
+      mapNumber: string;
+      client: string;
+      mapperName: string | null;
+      opsManagerComment: string | null;
+      assignedInspector: { name: string } | null;
+      assignedQa: { name: string } | null;
+      assignedSupervisor: { name: string } | null;
+    };
+  },
+  q: string
+): boolean {
+  const haystack = [
+    event.map.mapNumber,
+    event.map.client,
+    event.map.mapperName,
+    event.map.opsManagerComment,
+    event.map.assignedSupervisor?.name,
+    event.user.name,
+    event.note,
+    getActivityLabel(event.action),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return haystack.includes(q);
+}
+
+/** @deprecated use listOpsActivityFeed */
+export async function listOpsHubNotifications(since: Date) {
+  return listOpsActivityFeed({ since, limit: 50 });
 }
 
 export async function updateHubMap(
@@ -1198,6 +1312,7 @@ export async function updateHubMap(
     fieldProgressPercent?: number;
     assignedSupervisorId?: string | null;
     onHubStatusBoard?: boolean;
+    opsManagerComment?: string | null;
   },
   user: AuthUser
 ) {
@@ -1206,12 +1321,17 @@ export async function updateHubMap(
   if (map.phase !== MapPhase.FIELD) {
     throw new Error("Hub only applies to field maps");
   }
+  assertUploadCompleteForMapping(map);
 
-  const isOps = hasRole(user, RoleName.OPS_ADMIN);
+  const isOps = isOpsManager(user);
+  const isShiftLeader = userHasShiftLeaderRole(user);
   const isAssignedSupervisor = map.assignedSupervisorId === user.id;
 
-  if (!isOps && !isAssignedSupervisor) {
-    throw new Error("Not allowed to update this map in the hub");
+  // OPS managers + shift leaders can update any hub map; supervisors ONLY their assigned maps
+  if (!isOps && !isShiftLeader && !isAssignedSupervisor) {
+    throw new Error(
+      "Not allowed — only the assigned supervisor, a shift leader, or OPS manager can move this map"
+    );
   }
 
   if (!isOps && data.assignedSupervisorId !== undefined) {
@@ -1232,10 +1352,11 @@ export async function updateHubMap(
     supervisorStatus?: SupervisorStatus | null;
     onHubStatusBoard?: boolean;
     fieldDate?: Date;
+    opsManagerComment?: string | null;
   } = {};
 
-  if (data.onHubStatusBoard !== undefined) {
-    patch.onHubStatusBoard = data.onHubStatusBoard;
+  if (data.opsManagerComment !== undefined) {
+    patch.opsManagerComment = data.opsManagerComment?.trim() || null;
   }
 
   if (data.assignedSupervisorId !== undefined) {
@@ -1258,7 +1379,10 @@ export async function updateHubMap(
 
   if (data.fieldWorkStatus !== undefined) {
     patch.fieldWorkStatus = data.fieldWorkStatus;
-    patch.onHubStatusBoard = true;
+    // Explicit board flag wins (assign sends false; status columns send true)
+    if (data.onHubStatusBoard === undefined && data.assignedSupervisorId === undefined) {
+      patch.onHubStatusBoard = true;
+    }
     if (data.fieldWorkStatus === FieldWorkStatus.COMPLETED) {
       patch.supervisorStatus = SupervisorStatus.DONE;
       patch.fieldProgressPercent = 100;
@@ -1269,9 +1393,16 @@ export async function updateHubMap(
     }
   }
 
+  if (data.onHubStatusBoard !== undefined) {
+    patch.onHubStatusBoard = data.onHubStatusBoard;
+  }
+
   if (data.fieldProgressPercent !== undefined) {
     patch.fieldProgressPercent = data.fieldProgressPercent;
-    if (data.fieldProgressPercent === 100) {
+    // Don't auto-complete when marking uncompleted (may still report 100% then incomplete)
+    const markingIncomplete =
+      data.fieldWorkStatus === FieldWorkStatus.UNCOMPLETED && data.onHubStatusBoard === true;
+    if (data.fieldProgressPercent === 100 && !markingIncomplete) {
       patch.fieldWorkStatus = FieldWorkStatus.COMPLETED;
       patch.supervisorStatus = SupervisorStatus.DONE;
       patch.onHubStatusBoard = true;
@@ -1290,10 +1421,17 @@ export async function updateHubMap(
   });
   const mapLabel = mapRef?.mapNumber ?? mapId;
 
-  const becameCompleted = patch.fieldWorkStatus === FieldWorkStatus.COMPLETED;
-  const becameCancelled = patch.fieldWorkStatus === FieldWorkStatus.CANCELLED;
-  const becameUncompleted =
-    patch.fieldWorkStatus === FieldWorkStatus.UNCOMPLETED && data.fieldWorkStatus === FieldWorkStatus.UNCOMPLETED;
+  const becameCompleted =
+    patch.fieldWorkStatus === FieldWorkStatus.COMPLETED &&
+    map.fieldWorkStatus !== FieldWorkStatus.COMPLETED;
+  const becameCancelled =
+    patch.fieldWorkStatus === FieldWorkStatus.CANCELLED &&
+    map.fieldWorkStatus !== FieldWorkStatus.CANCELLED;
+  // Onto Uncompleted column (from active field or from another status) — not assign/progress-only
+  const movedOntoUncompletedBoard =
+    data.fieldWorkStatus === FieldWorkStatus.UNCOMPLETED &&
+    patch.onHubStatusBoard === true &&
+    (!map.onHubStatusBoard || map.fieldWorkStatus !== FieldWorkStatus.UNCOMPLETED);
 
   if (becameCompleted) {
     await logEvent(
@@ -1304,8 +1442,24 @@ export async function updateHubMap(
     );
   } else if (becameCancelled) {
     await logEvent(mapId, user.id, "hub_cancelled", `${actor} marked ${mapLabel} cancelled in hub`);
-  } else if (becameUncompleted) {
-    await logEvent(mapId, user.id, "hub_uncompleted", `${actor} moved ${mapLabel} to uncompleted in hub`);
+  } else if (movedOntoUncompletedBoard) {
+    const reason =
+      data.opsManagerComment?.trim() ||
+      map.opsManagerComment?.trim() ||
+      null;
+    const pct =
+      data.fieldProgressPercent ??
+      patch.fieldProgressPercent ??
+      map.fieldProgressPercent;
+    const parts = [`${actor} marked ${mapLabel} uncompleted`];
+    if (pct != null) parts.push(`${pct}% done`);
+    if (reason) parts.push(reason);
+    await logEvent(
+      mapId,
+      user.id,
+      "hub_uncompleted",
+      parts.length > 1 ? `${parts[0]} — ${parts.slice(1).join(" · ")}` : parts[0]!
+    );
   } else if (data.fieldProgressPercent !== undefined && !becameCompleted) {
     await logEvent(
       mapId,

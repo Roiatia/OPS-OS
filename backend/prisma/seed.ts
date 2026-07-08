@@ -55,9 +55,24 @@ const DEMO_USERS = [
     roles: [RoleName.SUPERVISOR_SHIFT_LEADER] as RoleName[],
   },
   {
+    email: "supervisor3@ops-demo.local",
+    name: "Noam Katz",
+    roles: [RoleName.SUPERVISOR] as RoleName[],
+  },
+  {
+    email: "supervisor4@ops-demo.local",
+    name: "Lior Hadad",
+    roles: [RoleName.SUPERVISOR] as RoleName[],
+  },
+  {
     email: "ops@ops-demo.local",
     name: "Rachel Ops",
     roles: [RoleName.OPS_ADMIN] as RoleName[],
+  },
+  {
+    email: "ops2@ops-demo.local",
+    name: "Miriam Levy",
+    roles: [RoleName.OPS_MANAGER_2] as RoleName[],
   },
 ];
 
@@ -88,6 +103,15 @@ async function seedUsers() {
     }
 
     if (demo.email === "supervisor2@ops-demo.local") {
+      const shiftStart = new Date();
+      shiftStart.setHours(7, 30, 0, 0);
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { shiftStartedAt: shiftStart },
+      });
+    }
+
+    if (demo.email === "supervisor3@ops-demo.local" || demo.email === "supervisor4@ops-demo.local") {
       await prisma.user.update({
         where: { id: user.id },
         data: { shiftStartedAt: null },
@@ -112,6 +136,15 @@ async function seedSampleMaps() {
 async function main() {
   await seedUsers();
   await seedSampleMaps();
+  try {
+    const { seedDemoReports } = await import("./seed-demo-reports.js");
+    await seedDemoReports(prisma);
+  } catch (err) {
+    console.warn(
+      "Demo reports seed skipped:",
+      err instanceof Error ? err.message : err
+    );
+  }
   console.log("\nSeed complete.");
 }
 

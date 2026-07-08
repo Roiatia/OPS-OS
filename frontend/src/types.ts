@@ -4,7 +4,8 @@ export type RoleName =
   | "GRAPHIC_QA"
   | "SUPERVISOR"
   | "SUPERVISOR_SHIFT_LEADER"
-  | "OPS_ADMIN";
+  | "OPS_ADMIN"
+  | "OPS_MANAGER_2";
 
 export type MapPhase =
   | "INTAKE"
@@ -94,6 +95,7 @@ export interface MapRecord {
   supervisorStatus: SupervisorStatus | null;
   qaStatus: QaStatus | null;
   uploadApproved: boolean;
+  uploadCompletedAt: string | null;
   releasedToGraphics: boolean;
   assignedInspector: { id: string; name: string; email: string } | null;
   assignedQa: { id: string; name: string; email: string } | null;
@@ -107,14 +109,7 @@ export interface MapRecord {
   updatedAt: string;
 }
 
-export interface HubNotification {
-  id: string;
-  action: string;
-  note: string | null;
-  createdAt: string;
-  user: { id: string; name: string };
-  map: { id: string; mapNumber: string; client: string };
-}
+export type { OpsActivityMessage, HubNotification } from "./types/activity";
 
 export interface HubSupervisor {
   id: string;
@@ -139,6 +134,7 @@ export const ROLE_LABELS: Record<RoleName, string> = {
   SUPERVISOR: "Supervisor",
   SUPERVISOR_SHIFT_LEADER: "Supervisor Shift Leader",
   OPS_ADMIN: "OPS Manager",
+  OPS_MANAGER_2: "OPS Manager 2",
 };
 
 export const PHASE_LABELS: Record<MapPhase, string> = {

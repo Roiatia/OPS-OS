@@ -1,0 +1,2 @@
+-- OPS Manager 2 — same access as OPS_ADMIN
+ALTER TYPE "RoleName" ADD VALUE IF NOT EXISTS 'OPS_MANAGER_2';

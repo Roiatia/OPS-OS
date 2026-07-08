@@ -1,13 +1,14 @@
 import { RoleName } from "@prisma/client";
-import { SUPERVISOR_ROLE_NAMES } from "./roles.js";
+import { isOpsManagerRole } from "./roles.js";
 
-export const ROLE_LABELS: Record<RoleName, string> = {
+export const ROLE_LABELS: Record<string, string> = {
   GRAPHIC_TEAM_LEADER: "Field Ops Graphic Team Leader",
   MAPPING_INSPECTOR: "Mapping Inspector",
   GRAPHIC_QA: "Graphic QA",
   SUPERVISOR: "Supervisor",
   SUPERVISOR_SHIFT_LEADER: "Supervisor Shift Leader",
-  OPS_ADMIN: "OPS Admin",
+  OPS_ADMIN: "OPS Manager",
+  OPS_MANAGER_2: "OPS Manager 2",
 };
 
 export const PHASE_LABELS: Record<string, string> = {
@@ -32,6 +33,10 @@ export function hasRole(user: AuthUser, ...roles: RoleName[]) {
   return roles.some((r) => user.roles.includes(r));
 }
 
+export function isOpsManager(user: AuthUser) {
+  return user.roles.some((r) => isOpsManagerRole(r));
+}
+
 export function isLeaderOrAdmin(user: AuthUser) {
-  return hasRole(user, RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN);
+  return hasRole(user, RoleName.GRAPHIC_TEAM_LEADER) || isOpsManager(user);
 }

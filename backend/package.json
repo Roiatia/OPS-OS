@@ -13,7 +13,15 @@
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
     "db:reseed-maps": "tsx prisma/reseed-demo-maps.ts",
+    "db:reseed-updates": "tsx prisma/reseed-demo-updates.ts",
+    "db:reseed-reports": "tsx prisma/seed-demo-reports.ts",
     "db:setup": "prisma migrate deploy && tsx prisma/seed.ts",
+    "db:find-pooler": "node scripts/find-pooler.mjs",
+    "db:check": "node scripts/check-db.mjs",
+    "db:use-local": "node scripts/switch-db.mjs local",
+    "db:use-supabase": "node scripts/switch-db.mjs supabase",
+    "db:local:up": "docker compose -f ../docker-compose.yml up -d postgres",
+    "db:local:setup": "npm run db:local:up && node scripts/switch-db.mjs local && prisma migrate deploy && tsx prisma/seed.ts",
     "postinstall": "prisma generate"
   },
   "prisma": {
@@ -32,6 +40,7 @@
     "@types/express": "^5.0.2",
     "@types/jsonwebtoken": "^9.0.9",
     "@types/node": "^22.15.21",
+    "pg": "^8.22.0",
     "prisma": "^6.9.0",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3"

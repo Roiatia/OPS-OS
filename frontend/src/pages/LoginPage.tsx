@@ -12,6 +12,7 @@ const KNOWN_DEMO_EMAILS = [
   { email: "supervisor@ops-demo.local", label: "Supervisor" },
   { email: "supervisor2@ops-demo.local", label: "Supervisor Shift Leader" },
   { email: "ops@ops-demo.local", label: "OPS Manager" },
+  { email: "ops2@ops-demo.local", label: "OPS Manager 2" },
 ];
 
 export function LoginPage() {

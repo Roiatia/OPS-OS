@@ -3,6 +3,11 @@ import express from "express";
 import cors from "cors";
 import authRoutes from "./routes/auth.js";
 import mapsRoutes from "./routes/maps.js";
+import reportsRoutes from "./routes/reports.js";
+import {
+  catchUpDailyReportIfNeeded,
+  runDailyReportSchedulerTick,
+} from "./services/dailyReport.js";
 
 const app = express();
 const port = Number(process.env.PORT) || 3001;
@@ -26,7 +31,21 @@ app.get("/api/health", (_req, res) => {
 
 app.use("/api/auth", authRoutes);
 app.use("/api/maps", mapsRoutes);
+app.use("/api/reports", reportsRoutes);
+
+const REPORT_SCHEDULER_MS = 60_000;
+
+void catchUpDailyReportIfNeeded().catch((err) => {
+  console.error("Daily report catch-up failed:", err);
+});
+
+setInterval(() => {
+  void runDailyReportSchedulerTick().catch((err) => {
+    console.error("Daily report scheduler failed:", err);
+  });
+}, REPORT_SCHEDULER_MS);
 
 app.listen(port, () => {
   console.log(`OPS-OS API running on http://localhost:${port}`);
+  console.log("Daily reports scheduled for 23:00 local time");
 });

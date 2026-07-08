@@ -11,7 +11,7 @@ export function Layout() {
   if (!user) return null;
 
   const primaryRole = user.roles[0];
-  const isLeader = hasRole(user, "GRAPHIC_TEAM_LEADER", "OPS_ADMIN");
+  const isLeader = hasRole(user, "GRAPHIC_TEAM_LEADER", "OPS_ADMIN", "OPS_MANAGER_2");
   const isSupervisor = hasSupervisorRole(user);
   const useFullWidth = isLeader || isSupervisor;
 

@@ -23,6 +23,15 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return res.json();
 }
 
+function buildQuery(params: Record<string, string | undefined>): string {
+  const qs = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value) qs.set(key, value);
+  }
+  const s = qs.toString();
+  return s ? `?${s}` : "";
+}
+
 export const api = {
   getConfig: () => request<{ demoMode: boolean; googleClientId: string | null }>("/auth/config"),
 
@@ -61,10 +70,11 @@ export const api = {
       supervisors: import("./types").HubSupervisor[];
     }>("/maps/hub"),
 
-  getHubNotifications: (since?: string) =>
-    request<import("./types").HubNotification[]>(
-      `/maps/hub/notifications${since ? `?since=${encodeURIComponent(since)}` : ""}`
-    ),
+  getHubNotifications: (since?: string, q?: string) =>
+    request<{
+      feed: import("./types/activity").OpsActivityMessage[];
+      alerts: import("./types/activity").OpsShiftAlert[];
+    }>(`/maps/hub/notifications${buildQuery({ since, q })}`),
 
   updateHubMap: (
     mapId: string,
@@ -73,6 +83,7 @@ export const api = {
       fieldProgressPercent?: number;
       assignedSupervisorId?: string | null;
       onHubStatusBoard?: boolean;
+      opsManagerComment?: string | null;
     }
   ) =>
     request<import("./types").MapRecord>(`/maps/${mapId}/hub`, {
@@ -239,6 +250,14 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ status }),
     }),
+
+  getReports: (q?: string) =>
+    request<import("./types/report").OpsDailyReportListItem[]>(
+      `/reports${buildQuery({ q })}`
+    ),
+
+  getReport: (id: string) =>
+    request<import("./types/report").OpsDailyReportDetail>(`/reports/${id}`),
 };
 
 export function setAuthToken(token: string | null) {

@@ -1,5 +1,5 @@
 import { useAuth, hasRole } from "../context/AuthContext";
-import { hasSupervisorRole } from "../lib/roles";
+import { hasOpsManagerRole, hasSupervisorRole } from "../lib/roles";
 import { LeaderDashboardPage } from "./LeaderDashboardPage";
 import { OpsManagerDashboardPage } from "./OpsManagerDashboardPage";
 import { InspectorDashboardPage, QaDashboardPage } from "./InspectorDashboardPage";
@@ -8,7 +8,7 @@ import { SupervisorDashboardPage } from "./SupervisorDashboardPage";
 export function DashboardPage() {
   const { user } = useAuth();
 
-  if (hasRole(user!, "OPS_ADMIN")) {
+  if (hasOpsManagerRole(user)) {
     return <OpsManagerDashboardPage />;
   }
   if (hasRole(user!, "GRAPHIC_TEAM_LEADER")) {

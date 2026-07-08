@@ -15,6 +15,7 @@ enum RoleName {
   SUPERVISOR
   SUPERVISOR_SHIFT_LEADER
   OPS_ADMIN
+  OPS_MANAGER_2
 }
 
 enum MapPhase {
@@ -112,6 +113,7 @@ model Map {
   supervisorStatus SupervisorStatus?
   qaStatus        QaStatus?
   uploadApproved  Boolean          @default(false)
+  uploadCompletedAt DateTime?
   releasedToGraphics Boolean       @default(false)
   assignedInspectorId String?
   assignedInspector   User?        @relation("InspectorMaps", fields: [assignedInspectorId], references: [id])
@@ -192,4 +194,16 @@ model MapEvent {
   note      String?
   metadata  String?
   createdAt DateTime @default(now())
+}
+
+model OpsDailyReport {
+  id          String   @id @default(cuid())
+  reportDate  DateTime @db.Date @unique
+  title       String
+  summary     String   @db.Text
+  payload     Json
+  generatedAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  @@index([reportDate(sort: Desc)])
 }

@@ -31,13 +31,16 @@ export function formatMapTime(iso: string | null): string {
   });
 }
 
-export function poolMaps(maps: MapRecord[]): MapRecord[] {
-  return maps.filter(
-    (m) =>
-      !m.assignedSupervisor &&
-      m.fieldWorkStatus === "UNCOMPLETED" &&
-      !m.onHubStatusBoard
-  );
+export function poolMaps(maps: MapRecord[], onShiftSupervisorIds?: Set<string>): MapRecord[] {
+  return maps.filter((m) => {
+    if (m.fieldWorkStatus !== "UNCOMPLETED" || m.onHubStatusBoard) return false;
+    if (!m.assignedSupervisor) return true;
+    // Assigned to someone not on today's Hub → treat as intake so OPS can reassign
+    if (onShiftSupervisorIds && !onShiftSupervisorIds.has(m.assignedSupervisor.id)) {
+      return true;
+    }
+    return false;
+  });
 }
 
 export function supervisorMaps(maps: MapRecord[], supervisorId: string): MapRecord[] {
@@ -63,6 +66,7 @@ export function hubDropPayload(zone: HubDropZone): {
   fieldWorkStatus?: FieldWorkStatus;
   onHubStatusBoard?: boolean;
   fieldProgressPercent?: number;
+  opsManagerComment?: string | null;
 } {
   if (zone === "pool") {
     return { assignedSupervisorId: null, onHubStatusBoard: false, fieldWorkStatus: "UNCOMPLETED" };
@@ -81,13 +85,15 @@ export function hubDropPayload(zone: HubDropZone): {
   if (zone === "status:CANCELLED") {
     return { fieldWorkStatus: "CANCELLED", onHubStatusBoard: true };
   }
+  // Uncompleted — percent is set by the caller when collecting incomplete details
   return { fieldWorkStatus: "UNCOMPLETED", onHubStatusBoard: true };
 }
 
 export function applyHubDropLocally(
   map: MapRecord,
   zone: HubDropZone,
-  supervisors: Array<{ id: string; name: string; email: string }>
+  supervisors: Array<{ id: string; name: string; email: string }>,
+  extras?: { fieldProgressPercent?: number; opsManagerComment?: string | null }
 ): MapRecord {
   const payload = hubDropPayload(zone);
   const next: MapRecord = { ...map };
@@ -106,6 +112,12 @@ export function applyHubDropLocally(
   if (payload.onHubStatusBoard !== undefined) next.onHubStatusBoard = payload.onHubStatusBoard;
   if (payload.fieldProgressPercent !== undefined) {
     next.fieldProgressPercent = payload.fieldProgressPercent;
+  }
+  if (extras?.fieldProgressPercent !== undefined) {
+    next.fieldProgressPercent = extras.fieldProgressPercent;
+  }
+  if (extras?.opsManagerComment !== undefined) {
+    next.opsManagerComment = extras.opsManagerComment;
   }
 
   return next;

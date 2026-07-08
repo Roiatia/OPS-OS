@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { InspectorStatus, MapPhase, QaStatus, RoleName, SupervisorStatus, FieldWorkStatus, TaskStatus } from "@prisma/client";
 import { authMiddleware, requireRoles, type AuthedRequest } from "../middleware/auth.js";
+import { userHasOpsManagerRole } from "../lib/roles.js";
 import * as workflow from "../services/workflow.js";
 
 const router = Router();
@@ -98,9 +99,13 @@ router.get("/hub", requireRoles(RoleName.OPS_ADMIN, RoleName.SUPERVISOR, RoleNam
 router.get("/hub/notifications", requireRoles(RoleName.OPS_ADMIN), async (req, res) => {
   try {
     const sinceParam = req.query.since as string | undefined;
-    const since = sinceParam ? new Date(sinceParam) : new Date(Date.now() - 60 * 60 * 1000);
-    const notifications = await workflow.listOpsHubNotifications(since);
-    res.json(notifications);
+    const query = (req.query.q as string | undefined)?.trim();
+    const since = sinceParam ? new Date(sinceParam) : undefined;
+    const [feed, alerts] = await Promise.all([
+      workflow.listOpsActivityFeed({ since, query }),
+      workflow.listOpsShiftAlerts(),
+    ]);
+    res.json({ feed, alerts });
   } catch (e) {
     res.status(500).json({ error: (e as Error).message });
   }
@@ -108,16 +113,17 @@ router.get("/hub/notifications", requireRoles(RoleName.OPS_ADMIN), async (req, r
 
 router.patch("/:id/hub", requireRoles(RoleName.OPS_ADMIN, RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (req, res) => {
   try {
-    const { fieldWorkStatus, fieldProgressPercent, assignedSupervisorId, onHubStatusBoard } =
+    const { fieldWorkStatus, fieldProgressPercent, assignedSupervisorId, onHubStatusBoard, opsManagerComment } =
       req.body as {
         fieldWorkStatus?: FieldWorkStatus;
         fieldProgressPercent?: number;
         assignedSupervisorId?: string | null;
         onHubStatusBoard?: boolean;
+        opsManagerComment?: string | null;
       };
     const map = await workflow.updateHubMap(
       req.params.id,
-      { fieldWorkStatus, fieldProgressPercent, assignedSupervisorId, onHubStatusBoard },
+      { fieldWorkStatus, fieldProgressPercent, assignedSupervisorId, onHubStatusBoard, opsManagerComment },
       (req as AuthedRequest).user
     );
     res.json(map);
@@ -438,11 +444,19 @@ router.post("/:id/qa-review", requireRoles(RoleName.GRAPHIC_QA, RoleName.OPS_ADM
       return;
     }
     const user = (req as AuthedRequest).user;
-    if (status === "fix_done" && !user.roles.includes(RoleName.MAPPING_INSPECTOR) && !user.roles.includes(RoleName.OPS_ADMIN)) {
+    if (
+      status === "fix_done" &&
+      !user.roles.includes(RoleName.MAPPING_INSPECTOR) &&
+      !userHasOpsManagerRole(user)
+    ) {
       res.status(403).json({ error: "Only inspector can mark fix done" });
       return;
     }
-    if ((status === "fix" || status === "approved") && !user.roles.includes(RoleName.GRAPHIC_QA) && !user.roles.includes(RoleName.OPS_ADMIN)) {
+    if (
+      (status === "fix" || status === "approved") &&
+      !user.roles.includes(RoleName.GRAPHIC_QA) &&
+      !userHasOpsManagerRole(user)
+    ) {
       res.status(403).json({ error: "Only QA can approve or request fix" });
       return;
     }

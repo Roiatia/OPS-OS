@@ -15,22 +15,20 @@ import {
   getSupervisorFieldStatus,
   fieldWorkStatusTone,
 } from "../../lib/supervisorDisplay";
-import type { OpsWorkloadAlert } from "../../lib/opsWorkload";
-import { memberIsSupervisor, isSupervisorRole, SUPERVISOR_ROLES } from "../../lib/roles";
+import {
+  memberIsSupervisor,
+  memberIsShiftLeader,
+  isSupervisorRole,
+  isOnShiftToday,
+} from "../../lib/roles";
+import { formatShiftStart } from "../../lib/hubDisplay";
 
 interface Props {
   team: TeamMember[];
   maps: MapRecord[];
-  lightLoadAlerts?: OpsWorkloadAlert[];
 }
 
-type TeamTab = "all" | "supervisors" | "inspectors" | "qa";
-
-const TAB_ROLES: Record<Exclude<TeamTab, "all">, RoleName> = {
-  supervisors: "SUPERVISOR",
-  inspectors: "MAPPING_INSPECTOR",
-  qa: "GRAPHIC_QA",
-};
+type TeamTab = "on_shift" | "graphics" | "all_ops";
 
 function activeCountForMember(member: TeamMember, maps: MapRecord[]): number {
   if (memberIsSupervisor(member)) {
@@ -55,42 +53,81 @@ function mapsForMember(member: TeamMember, maps: MapRecord[]): MapRecord[] {
   );
 }
 
-export function OpsTeamPanel({ team, maps, lightLoadAlerts = [] }: Props) {
-  const [tab, setTab] = useState<TeamTab>("all");
+function primaryRoleLabel(member: TeamMember): string {
+  if (memberIsShiftLeader(member)) return ROLE_LABELS.SUPERVISOR_SHIFT_LEADER;
+  const primaryRole =
+    member.roles.find((r) =>
+      (["MAPPING_INSPECTOR", "GRAPHIC_QA"] as RoleName[]).includes(r.role) ||
+      isSupervisorRole(r.role)
+    )?.role ?? member.roles[0]?.role;
+  return primaryRole ? ROLE_LABELS[primaryRole] : "Team";
+}
+
+export function OpsTeamPanel({ team, maps }: Props) {
+  const [tab, setTab] = useState<TeamTab>("on_shift");
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  const members = useMemo(() => {
-    const fieldRoles: RoleName[] = [...SUPERVISOR_ROLES, "MAPPING_INSPECTOR", "GRAPHIC_QA"];
-    let list = team.filter((m) => m.roles.some((r) => fieldRoles.includes(r.role)));
-    if (tab !== "all") {
-      if (tab === "supervisors") {
-        list = list.filter(memberIsSupervisor);
-      } else {
-        const role = TAB_ROLES[tab];
-        list = list.filter((m) => m.roles.some((r) => r.role === role));
-      }
-    }
-    return list.sort((a, b) => a.name.localeCompare(b.name));
-  }, [team, tab]);
+  const onShiftToday = useMemo(
+    () =>
+      team
+        .filter((m) => memberIsSupervisor(m) && isOnShiftToday(m.shiftStartedAt))
+        .sort((a, b) => {
+          const aLeader = memberIsShiftLeader(a) ? 0 : 1;
+          const bLeader = memberIsShiftLeader(b) ? 0 : 1;
+          return (
+            aLeader - bLeader ||
+            (a.shiftStartedAt ?? "").localeCompare(b.shiftStartedAt ?? "") ||
+            a.name.localeCompare(b.name)
+          );
+        }),
+    [team]
+  );
+
+  const graphics = useMemo(
+    () =>
+      team
+        .filter((m) =>
+          m.roles.some((r) =>
+            (["MAPPING_INSPECTOR", "GRAPHIC_QA", "GRAPHIC_TEAM_LEADER"] as RoleName[]).includes(
+              r.role
+            )
+          )
+        )
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [team]
+  );
+
+  const allOps = useMemo(
+    () =>
+      team
+        .filter(memberIsSupervisor)
+        .sort((a, b) => {
+          const aOn = isOnShiftToday(a.shiftStartedAt) ? 0 : 1;
+          const bOn = isOnShiftToday(b.shiftStartedAt) ? 0 : 1;
+          return aOn - bOn || a.name.localeCompare(b.name);
+        }),
+    [team]
+  );
+
+  const members =
+    tab === "on_shift" ? onShiftToday : tab === "graphics" ? graphics : allOps;
 
   const selected = members.find((m) => m.id === selectedId) ?? null;
   const selectedMaps = selected ? mapsForMember(selected, maps) : [];
 
-  const tabs: { id: TeamTab; label: string }[] = [
-    { id: "all", label: "Everyone" },
-    { id: "supervisors", label: "Supervisors" },
-    { id: "inspectors", label: "Inspectors" },
-    { id: "qa", label: "QA" },
+  const tabs: { id: TeamTab; label: string; count: number }[] = [
+    { id: "on_shift", label: "On shift today", count: onShiftToday.length },
+    { id: "graphics", label: "Graphics", count: graphics.length },
+    { id: "all_ops", label: "All supervisors", count: allOps.length },
   ];
 
   return (
     <section className="space-y-6">
       <p className="text-sm text-muted">
-        Full team under OPS — graphics and field. Tap a member to see their active maps.
+        Field ops is part-time — see who is working this shift. Shift leaders work maps like
+        supervisors and also check supervisor work. Graphics team is under OPS too.
       </p>
 
-      <div className="flex flex-col xl:flex-row gap-6 items-start">
-        <div className="flex-1 min-w-0 space-y-6 w-full">
       <div className="flex flex-wrap gap-2">
         {tabs.map((t) => (
           <button
@@ -100,61 +137,86 @@ export function OpsTeamPanel({ team, maps, lightLoadAlerts = [] }: Props) {
               setTab(t.id);
               setSelectedId(null);
             }}
-            className={`px-3 py-1.5 rounded-lg text-sm font-medium ${
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium inline-flex items-center gap-2 ${
               tab === t.id
                 ? "bg-brand-600 text-white"
                 : "bg-white border border-border text-slate-600 hover:bg-brand-50"
             }`}
           >
             {t.label}
+            <span
+              className={`text-[10px] font-bold tabular-nums px-1.5 py-0.5 rounded-full ${
+                tab === t.id ? "bg-white/20 text-white" : "bg-slate-100 text-slate-600"
+              }`}
+            >
+              {t.count}
+            </span>
           </button>
         ))}
       </div>
 
-      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {members.map((member) => {
-          const activeCount = activeCountForMember(member, maps);
-          const primaryRole =
-            member.roles.find((r) =>
-              (["MAPPING_INSPECTOR", "GRAPHIC_QA"] as RoleName[]).includes(r.role) ||
-              isSupervisorRole(r.role)
-            )?.role ?? member.roles[0]?.role;
-          const isSelected = selectedId === member.id;
-          const lightLoad = activeCount <= 1;
+      {tab === "on_shift" && members.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-border bg-slate-50/80 px-6 py-12 text-center">
+          <p className="text-sm font-medium text-slate-800">No one on shift today yet</p>
+          <p className="text-xs text-muted mt-1 max-w-md mx-auto">
+            When OPS schedules supervisors for the day and they clock in (or get their first map),
+            they appear here and on the Hub.
+          </p>
+        </div>
+      ) : (
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {members.map((member) => {
+            const activeCount = activeCountForMember(member, maps);
+            const isSelected = selectedId === member.id;
+            const onShift = isOnShiftToday(member.shiftStartedAt);
+            const lightLoad = memberIsSupervisor(member) && onShift && activeCount <= 1;
+            const shiftLeader = memberIsShiftLeader(member);
 
-          return (
-            <button
-              key={member.id}
-              type="button"
-              onClick={() => setSelectedId(isSelected ? null : member.id)}
-              className={`text-left rounded-xl border p-4 transition-all ${
-                isSelected
-                  ? "border-brand-500 bg-brand-50 shadow-sm"
-                  : lightLoad
-                    ? "border-amber-200 bg-amber-50/40 hover:border-amber-300"
-                    : "border-border bg-white hover:border-brand-200"
-              }`}
-            >
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-semibold text-slate-900">{member.name}</span>
-                <span
-                  className={`text-xs font-bold tabular-nums px-2 py-0.5 rounded-full ${
-                    lightLoad ? "bg-amber-200 text-amber-900" : "bg-brand-100 text-brand-800"
-                  }`}
-                >
-                  {activeCount}
-                </span>
-              </div>
-              <p className="text-xs text-muted mt-1">
-                {primaryRole ? ROLE_LABELS[primaryRole] : "Team"}
-              </p>
-              {lightLoad && (
-                <p className="text-[10px] text-amber-700 mt-1 font-medium">Light load on shift</p>
-              )}
-            </button>
-          );
-        })}
-      </div>
+            return (
+              <button
+                key={member.id}
+                type="button"
+                onClick={() => setSelectedId(isSelected ? null : member.id)}
+                className={`text-left rounded-xl border p-4 transition-all ${
+                  isSelected
+                    ? "border-brand-500 bg-brand-50 shadow-sm"
+                    : lightLoad
+                      ? "border-amber-200 bg-amber-50/40 hover:border-amber-300"
+                      : "border-border bg-white hover:border-brand-200"
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold text-slate-900">{member.name}</span>
+                  <span
+                    className={`text-xs font-bold tabular-nums px-2 py-0.5 rounded-full ${
+                      lightLoad ? "bg-amber-200 text-amber-900" : "bg-brand-100 text-brand-800"
+                    }`}
+                  >
+                    {activeCount}
+                  </span>
+                </div>
+                <p className="text-xs text-muted mt-1">{primaryRoleLabel(member)}</p>
+                {shiftLeader && (
+                  <p className="text-[10px] text-brand-700 mt-1 font-medium">
+                    Shift leader · checks supervisor work
+                  </p>
+                )}
+                {memberIsSupervisor(member) && onShift && (
+                  <p className="text-[10px] text-muted mt-1">
+                    On shift · {formatShiftStart(member.shiftStartedAt)}
+                  </p>
+                )}
+                {memberIsSupervisor(member) && !onShift && tab === "all_ops" && (
+                  <p className="text-[10px] text-slate-400 mt-1">Not on shift today</p>
+                )}
+                {lightLoad && (
+                  <p className="text-[10px] text-amber-700 mt-1 font-medium">Light load on shift</p>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {selected && (
         <div className="rounded-xl border border-border bg-white overflow-hidden">
@@ -211,36 +273,6 @@ export function OpsTeamPanel({ team, maps, lightLoadAlerts = [] }: Props) {
           )}
         </div>
       )}
-
-        </div>
-
-        {lightLoadAlerts.length > 0 && (
-          <aside className="w-full xl:w-72 shrink-0 xl:sticky xl:top-20">
-            <div className="rounded-xl border border-amber-200 bg-gradient-to-b from-amber-50 to-white p-4 shadow-sm">
-              <p className="text-[11px] font-bold uppercase tracking-wide text-amber-900 mb-3">
-                Light load on shift
-              </p>
-              <p className="text-xs text-amber-800/90 mb-3 leading-relaxed">
-                These team members have capacity — consider assigning more maps.
-              </p>
-              <ul className="space-y-2.5">
-                {lightLoadAlerts.map((alert) => (
-                  <li
-                    key={alert.member.id}
-                    className="rounded-lg border border-amber-200/80 bg-white px-3 py-2.5"
-                  >
-                    <div className="font-semibold text-sm text-slate-900">{alert.member.name}</div>
-                    <div className="text-xs text-muted mt-0.5">
-                      {ROLE_LABELS[alert.role]} · {alert.activeCount} active map
-                      {alert.activeCount !== 1 ? "s" : ""}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </aside>
-        )}
-      </div>
     </section>
   );
 }

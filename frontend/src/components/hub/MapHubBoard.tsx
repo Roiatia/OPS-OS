@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api";
-import type { HubNotification, HubSupervisor, MapRecord } from "../../types";
+import { useAuth } from "../../context/AuthContext";
+import type { HubSupervisor, MapRecord } from "../../types";
 import {
   applyHubDropLocally,
   formatMapTime,
@@ -16,6 +17,11 @@ import {
   supervisorMaps,
   type HubDropZone,
 } from "../../lib/hubDisplay";
+import {
+  hasOpsManagerRole,
+  hasShiftLeaderRole,
+  memberIsShiftLeader,
+} from "../../lib/roles";
 
 interface Props {
   mode: "ops" | "supervisor";
@@ -48,39 +54,52 @@ const STATUS_COLUMNS = [
   },
 ];
 
-function notificationLabel(action: string): string {
-  switch (action) {
-    case "hub_completed":
-      return "Completed";
-    case "hub_cancelled":
-      return "Cancelled";
-    case "hub_uncompleted":
-      return "Uncompleted";
-    case "hub_progress":
-      return "Progress updated";
-    case "hub_reassigned":
-      return "Reassigned";
-    default:
-      return "Hub update";
+const PROGRESS_OPTIONS = [0, 25, 50, 75, 100];
+
+/**
+ * Who may drag a specific map:
+ * - OPS manager → any map
+ * - Shift leader → any map
+ * - Supervisor → only maps assigned to them (not others', not unassigned intake)
+ */
+export function canUserDragHubMap(
+  map: MapRecord,
+  opts: {
+    currentUserId: string;
+    isOpsManager: boolean;
+    isShiftLeader: boolean;
+    savingMapId?: string | null;
   }
+): boolean {
+  if (opts.savingMapId === map.id) return false;
+  if (opts.isOpsManager || opts.isShiftLeader) return true;
+  return map.assignedSupervisor?.id === opts.currentUserId;
 }
 
 export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
+  const { user } = useAuth();
   const [maps, setMaps] = useState<MapRecord[]>([]);
   const [supervisors, setSupervisors] = useState<HubSupervisor[]>([]);
-  const [notifications, setNotifications] = useState<HubNotification[]>([]);
   const [initialLoading, setInitialLoading] = useState(true);
   const [savingMapId, setSavingMapId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [activeDropZone, setActiveDropZone] = useState<HubDropZone | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [incompleteDialog, setIncompleteDialog] = useState<{
+    mapId: string;
+    zone: HubDropZone;
+    reason: string;
+    percent: number;
+  } | null>(null);
 
   const draggedMapIdRef = useRef<string | null>(null);
-  const lastNotifCheck = useRef(new Date().toISOString());
   const onMutateRef = useRef(onMutate);
   onMutateRef.current = onMutate;
 
-  const isOps = mode === "ops";
+  // UI layout: intake column only for OPS managers (not based on mode alone)
+  const isOpsManager = hasOpsManagerRole(user);
+  const isShiftLeader = hasShiftLeaderRole(user);
+  const showIntake = mode === "ops" && isOpsManager;
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setInitialLoading(true);
@@ -94,24 +113,13 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
         }))
       );
       setSupervisors(hub.supervisors);
-      if (isOps) {
-        const notes = await api.getHubNotifications(lastNotifCheck.current);
-        if (notes.length > 0) {
-          setNotifications((prev) => {
-            const ids = new Set(prev.map((n) => n.id));
-            const merged = [...notes.filter((n) => !ids.has(n.id)), ...prev];
-            return merged.slice(0, 30);
-          });
-        }
-        lastNotifCheck.current = new Date().toISOString();
-      }
       setError("");
     } catch (err) {
       if (!silent) setError((err as Error).message);
     } finally {
       if (!silent) setInitialLoading(false);
     }
-  }, [isOps]);
+  }, []);
 
   useEffect(() => {
     load();
@@ -127,30 +135,51 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
       maps.filter((m) => m.assignedSupervisor).map((m) => m.assignedSupervisor!.id)
     );
     return [...supervisors].sort((a, b) => {
+      const aLeader = memberIsShiftLeader(a) ? 0 : 1;
+      const bLeader = memberIsShiftLeader(b) ? 0 : 1;
       const aHas = withMaps.has(a.id) ? 0 : 1;
       const bHas = withMaps.has(b.id) ? 0 : 1;
-      return aHas - bHas || a.name.localeCompare(b.name);
+      return (
+        aLeader - bLeader ||
+        aHas - bHas ||
+        a.name.localeCompare(b.name)
+      );
     });
   }, [supervisors, maps]);
 
+  const onShiftIds = useMemo(
+    () => new Set(onShiftSupervisors.map((s) => s.id)),
+    [onShiftSupervisors]
+  );
+
   const stats = useMemo(
     () => ({
-      pool: poolMaps(maps).length,
-      active: maps.filter((m) => m.assignedSupervisor && !m.onHubStatusBoard).length,
+      pool: poolMaps(maps, onShiftIds).length,
+      active: maps.filter(
+        (m) =>
+          m.assignedSupervisor &&
+          onShiftIds.has(m.assignedSupervisor.id) &&
+          !m.onHubStatusBoard
+      ).length,
       onShift: onShiftSupervisors.length,
     }),
-    [maps, onShiftSupervisors]
+    [maps, onShiftSupervisors, onShiftIds]
   );
 
   function canDrag(map: MapRecord): boolean {
-    if (savingMapId === map.id) return false;
-    if (isOps) return true;
-    return map.assignedSupervisor?.id === currentUserId;
+    return canUserDragHubMap(map, {
+      currentUserId,
+      isOpsManager,
+      isShiftLeader,
+      savingMapId,
+    });
   }
 
   function canDropOn(zone: HubDropZone): boolean {
-    if (isOps) return true;
+    // Only OPS managers reassign via Intake / supervisor columns
+    if (isOpsManager) return true;
     if (zone === "pool" || zone.startsWith("supervisor:")) return false;
+    // Shift leaders + supervisors: status columns only
     return true;
   }
 
@@ -182,14 +211,20 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
     }, 0);
   }
 
-  async function handleDrop(zone: HubDropZone, mapId: string) {
+  async function commitDrop(
+    zone: HubDropZone,
+    mapId: string,
+    extras?: { opsManagerComment?: string | null; fieldProgressPercent?: number }
+  ) {
     const map = maps.find((m) => m.id === mapId);
     if (!map) return;
-    if (!canDrag(map)) return;
-    if (!canDropOn(zone)) return;
-    if (mapInHubZone(map, zone)) return;
 
-    const optimistic = applyHubDropLocally(map, zone, supervisors);
+    const dropPayload = {
+      ...hubDropPayload(zone),
+      ...extras,
+    };
+
+    const optimistic = applyHubDropLocally(map, zone, supervisors, extras);
     const previousMaps = maps;
     const previousSupervisors = supervisors;
 
@@ -198,9 +233,10 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
     setError("");
     setActiveDropZone(null);
     setDraggingId(null);
+    setIncompleteDialog(null);
 
     try {
-      const updated = await api.updateHubMap(mapId, hubDropPayload(zone));
+      const updated = await api.updateHubMap(mapId, dropPayload);
       const normalized = {
         ...updated,
         fieldProgressPercent: updated.fieldProgressPercent ?? 0,
@@ -217,6 +253,34 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
       setSavingMapId(null);
       draggedMapIdRef.current = null;
     }
+  }
+
+  async function handleDrop(zone: HubDropZone, mapId: string) {
+    const map = maps.find((m) => m.id === mapId);
+    if (!map) return;
+    if (!canDrag(map)) {
+      setError("You can only move maps assigned to you (or if you are a shift leader / OPS manager).");
+      return;
+    }
+    if (!canDropOn(zone)) return;
+    if (mapInHubZone(map, zone)) return;
+
+    const alreadyOnUncompletedBoard =
+      map.onHubStatusBoard && map.fieldWorkStatus === "UNCOMPLETED";
+
+    if (zone === "status:UNCOMPLETED" && !alreadyOnUncompletedBoard) {
+      setIncompleteDialog({
+        mapId,
+        zone,
+        reason: map.opsManagerComment?.trim() ?? "",
+        percent: Math.min(100, Math.max(0, map.fieldProgressPercent ?? 0)),
+      });
+      setActiveDropZone(null);
+      setDraggingId(null);
+      return;
+    }
+
+    await commitDrop(zone, mapId);
   }
 
   async function handleProgressClick(map: MapRecord) {
@@ -259,6 +323,14 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
     const draggable = canDrag(map);
     const isSaving = savingMapId === map.id;
     const isDragging = draggingId === map.id;
+    const assignedToMe = map.assignedSupervisor?.id === currentUserId;
+    const lockHint = !draggable
+      ? map.assignedSupervisor
+        ? assignedToMe
+          ? null
+          : `Only ${map.assignedSupervisor.name.split(" ")[0]}, shift leaders & OPS can move this`
+        : "Assign to a supervisor first (OPS only)"
+      : null;
 
     return (
       <div
@@ -267,13 +339,15 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
         onDragStart={(e) => handleDragStart(e, map)}
         onDragEnd={handleDragEnd}
         className={`group rounded-xl border px-3 py-2.5 text-sm transition-all ${
-          draggable ? "cursor-grab active:cursor-grabbing" : "cursor-default"
+          draggable ? "cursor-grab active:cursor-grabbing" : "cursor-not-allowed opacity-85"
         } ${
           isDragging
             ? "opacity-40 scale-[0.98] border-brand-300 shadow-lg ring-2 ring-brand-200"
             : isSaving
               ? "opacity-70 border-brand-200 bg-brand-50/50"
-              : "bg-white border-slate-200 shadow-sm hover:border-brand-300 hover:shadow-md"
+              : draggable
+                ? "bg-white border-slate-200 shadow-sm hover:border-brand-300 hover:shadow-md"
+                : "bg-slate-50 border-slate-200 shadow-none"
         }`}
       >
         <div className="flex items-start justify-between gap-2">
@@ -299,6 +373,9 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
         {map.mapperName && (
           <p className="text-[11px] text-muted mt-0.5 truncate">Mapper · {map.mapperName}</p>
         )}
+        {lockHint && (
+          <p className="text-[10px] text-amber-800 mt-1.5 leading-snug">{lockHint}</p>
+        )}
         {showProgress && map.fieldWorkStatus === "UNCOMPLETED" && (
           <button
             type="button"
@@ -306,7 +383,7 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
               e.stopPropagation();
               void handleProgressClick(map);
             }}
-            disabled={isSaving}
+            disabled={isSaving || !draggable}
             className="mt-2 w-full text-left text-[11px] font-semibold text-brand-700 bg-brand-50 hover:bg-brand-100 rounded-lg px-2 py-1.5 disabled:opacity-50"
           >
             {isSaving ? "Saving…" : `${map.fieldProgressPercent ?? 0}% complete`}
@@ -365,6 +442,10 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
     );
   }
 
+  const dialogMap = incompleteDialog
+    ? maps.find((m) => m.id === incompleteDialog.mapId)
+    : null;
+
   return (
     <div className="space-y-5">
       {/* Summary strip */}
@@ -390,26 +471,20 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
         </p>
       )}
 
-      {isOps && notifications.length > 0 && (
-        <div className="rounded-xl border border-brand-200 bg-gradient-to-r from-brand-50 to-white px-4 py-3">
-          <p className="text-[11px] font-bold uppercase tracking-wide text-brand-800 mb-1.5">
-            Live updates
-          </p>
-          <ul className="text-xs space-y-1">
-            {notifications.slice(0, 3).map((n) => (
-              <li key={n.id} className="text-slate-700">
-                <span className="font-semibold text-brand-700">{notificationLabel(n.action)}</span>
-                {" · "}
-                {n.map.mapNumber} — {n.user.name}
-              </li>
-            ))}
-          </ul>
-        </div>
+      {!isOpsManager && !isShiftLeader && (
+        <p className="text-xs text-muted bg-slate-50 border border-border rounded-xl px-3 py-2">
+          You can only drag maps assigned to you. Maps on someone else&apos;s column are locked.
+        </p>
+      )}
+      {isShiftLeader && !isOpsManager && (
+        <p className="text-xs text-muted bg-violet-50 border border-violet-200 rounded-xl px-3 py-2">
+          Shift leader — you can drag any map on today&apos;s board to Completed / Uncompleted / Cancelled.
+        </p>
       )}
 
       <div className="rounded-2xl border border-border bg-gradient-to-b from-white to-slate-50/80 p-4 sm:p-5 shadow-sm">
         <div className="flex flex-col lg:flex-row gap-5 min-h-[380px]">
-          {isOps && (
+          {showIntake && (
             <aside className="lg:w-52 shrink-0">
               <div className="rounded-xl border border-brand-200 bg-brand-50/30 p-3 h-full">
                 <div className="flex items-center justify-between mb-3">
@@ -423,7 +498,7 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
                 <p className="text-[11px] text-muted mb-2 leading-snug">
                   Maps ready for supervisor assignment
                 </p>
-                {dropZone("pool", poolMaps(maps), "", false, "Drag maps here to assign")}
+                {dropZone("pool", poolMaps(maps, onShiftIds), "", false, "Drag maps here to assign")}
               </div>
             </aside>
           )}
@@ -433,12 +508,12 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
               <p className="text-xs font-bold uppercase tracking-wide text-muted mb-3">
                 Supervisors on shift today
               </p>
-              {isOps && onShiftSupervisors.length === 0 ? (
+              {showIntake && onShiftSupervisors.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-border bg-white px-4 py-10 text-center">
-                  <p className="text-sm font-medium text-slate-800">No supervisors clocked in yet</p>
+                  <p className="text-sm font-medium text-slate-800">No one on shift today</p>
                   <p className="text-xs text-muted mt-1 max-w-sm mx-auto">
-                    Drag a map from Intake onto a supervisor card when they arrive — or assign from
-                    the Maps table.
+                    Only supervisors and shift leaders clocked in for today appear on the Hub.
+                    Assign a map to clock them in for this shift.
                   </p>
                 </div>
               ) : (
@@ -452,7 +527,13 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
                         className="rounded-xl border border-border bg-white overflow-hidden shadow-sm"
                       >
                         <div className="flex items-center gap-3 px-3 py-2.5 border-b border-border bg-slate-50/80">
-                          <div className="w-9 h-9 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-sm font-bold shrink-0">
+                          <div
+                            className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${
+                              memberIsShiftLeader(sup)
+                                ? "bg-violet-100 text-violet-800"
+                                : "bg-brand-100 text-brand-700"
+                            }`}
+                          >
                             {sup.name.charAt(0)}
                           </div>
                           <div className="min-w-0 flex-1">
@@ -460,7 +541,9 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
                               {shortName(sup.name)}
                             </div>
                             <div className="text-[11px] text-muted">
-                              Shift · {formatShiftStart(sup.shiftStartedAt)}
+                              {memberIsShiftLeader(sup) ? "Shift leader" : "Supervisor"}
+                              {" · "}
+                              {formatShiftStart(sup.shiftStartedAt)}
                             </div>
                           </div>
                           <span className="text-xs font-bold tabular-nums text-muted">
@@ -507,6 +590,91 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
           </div>
         </div>
       </div>
+
+      {incompleteDialog && dialogMap && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="incomplete-dialog-title"
+        >
+          <div className="w-full max-w-md rounded-2xl border border-border bg-white shadow-xl p-5 space-y-4">
+            <div>
+              <h2 id="incomplete-dialog-title" className="text-lg font-bold text-slate-900">
+                Mark map incomplete
+              </h2>
+              <p className="text-sm text-muted mt-1">
+                <span className="font-mono text-brand-700">{dialogMap.mapNumber}</span>
+                {" · "}
+                {dialogMap.client}
+              </p>
+            </div>
+
+            <label className="block space-y-1.5">
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                How much was done?
+              </span>
+              <div className="grid grid-cols-5 gap-2">
+                {PROGRESS_OPTIONS.map((pct) => (
+                  <button
+                    key={pct}
+                    type="button"
+                    onClick={() =>
+                      setIncompleteDialog((d) => (d ? { ...d, percent: pct } : d))
+                    }
+                    className={`rounded-lg border px-2 py-2 text-sm font-semibold tabular-nums transition-colors ${
+                      incompleteDialog.percent === pct
+                        ? "border-amber-500 bg-amber-50 text-amber-950"
+                        : "border-border bg-white text-slate-700 hover:border-amber-300"
+                    }`}
+                  >
+                    {pct}%
+                  </button>
+                ))}
+              </div>
+            </label>
+
+            <label className="block space-y-1.5">
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                Why incomplete?
+              </span>
+              <textarea
+                value={incompleteDialog.reason}
+                onChange={(e) =>
+                  setIncompleteDialog((d) => (d ? { ...d, reason: e.target.value } : d))
+                }
+                rows={3}
+                placeholder="e.g. Store closed early — partial coverage only"
+                className="w-full border border-border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400/40 focus:border-amber-400"
+                autoFocus
+              />
+            </label>
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setIncompleteDialog(null)}
+                className="px-3 py-2 text-sm text-muted hover:text-slate-900 rounded-lg hover:bg-slate-100"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const trimmed = incompleteDialog.reason.trim();
+                  void commitDrop(incompleteDialog.zone, incompleteDialog.mapId, {
+                    fieldProgressPercent: incompleteDialog.percent,
+                    opsManagerComment: trimmed || null,
+                  });
+                }}
+                className="px-4 py-2 text-sm font-medium rounded-xl bg-amber-600 text-white hover:bg-amber-700"
+              >
+                Save incomplete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

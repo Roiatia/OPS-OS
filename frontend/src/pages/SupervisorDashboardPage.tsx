@@ -6,17 +6,18 @@ import { SettingsPanel } from "../components/leader/SettingsPanel";
 import { SupervisorMapsBoard } from "../components/supervisor/SupervisorMapsBoard";
 import { SupervisorSidebar, type SupervisorSection } from "../components/supervisor/SupervisorSidebar";
 import { SupervisorTeamPanel } from "../components/supervisor/SupervisorTeamPanel";
+import { ConfluencePanel } from "../components/shared/ConfluencePanel";
 import { getSupervisorFieldStatus } from "../lib/supervisorDisplay";
 import { useAuth } from "../context/AuthContext";
 import type { MapRecord, TeamMember } from "../types";
 
 const SECTION_TITLES: Record<SupervisorSection, { title: string; subtitle: string }> = {
-  hub: { title: "Hub", subtitle: "Drag your maps to Completed, Uncompleted, or Cancelled" },
+  hub: { title: "Hub", subtitle: "Drag your assigned maps — shift leaders can move any map" },
   maps: { title: "Maps", subtitle: "" },
   team: { title: "Team", subtitle: "All supervisors on the field ops team" },
   "company-dashboard": { title: "Dashboard", subtitle: "Field ops metrics and coverage" },
   availability: { title: "Availability", subtitle: "" },
-  rules: { title: "Rules", subtitle: "" },
+  confluence: { title: "Confluence", subtitle: "" },
   settings: { title: "Settings", subtitle: "Workspace preferences" },
 };
 
@@ -133,7 +134,7 @@ export function SupervisorDashboardPage() {
 
               {activeSection === "availability" && <PlaceholderPanel title="Availability" />}
 
-              {activeSection === "rules" && <PlaceholderPanel title="Rules" />}
+              {activeSection === "confluence" && <ConfluencePanel />}
 
               {activeSection === "settings" && <SettingsPanel />}
             </>

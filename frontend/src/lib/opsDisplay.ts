@@ -1,5 +1,5 @@
 import type { MapPhase, MapRecord } from "../types";
-import { PHASE_LABELS } from "../types";
+import { getPipelineStageLabel, isUploadStageComplete } from "./pipeline";
 import { getMapDisplayState, getInspectorLabel, getQaLabel } from "./mapDisplay";
 import {
   FIELD_WORK_STATUS_LABELS,
@@ -33,11 +33,15 @@ export function isReadyToRelease(map: MapRecord): boolean {
 }
 
 export function needsSupervisorAssignment(map: MapRecord): boolean {
-  return map.phase === "FIELD" && !map.assignedSupervisor;
+  return map.phase === "FIELD" && isUploadStageComplete(map) && !map.assignedSupervisor;
 }
 
 export function canAssignSupervisor(map: MapRecord): boolean {
-  return map.phase === "FIELD" && getSupervisorFieldStatus(map) !== "COMPLETED";
+  return (
+    map.phase === "FIELD" &&
+    isUploadStageComplete(map) &&
+    getSupervisorFieldStatus(map) !== "COMPLETED"
+  );
 }
 
 export function canReleaseToPolish(map: MapRecord): boolean {
@@ -51,6 +55,7 @@ export function canSendToGraphics(map: MapRecord): boolean {
 export function canShuffleSupervisor(map: MapRecord): boolean {
   return (
     map.phase === "FIELD" &&
+    isUploadStageComplete(map) &&
     map.fieldWorkStatus === "UNCOMPLETED" &&
     getSupervisorFieldStatus(map) !== "COMPLETED"
   );
@@ -74,15 +79,7 @@ export function matchesOpsQueue(map: MapRecord, queue: OpsMapQueue): boolean {
 }
 
 export function getOpsPipelineLabel(map: MapRecord): string {
-  if (map.phase === "INTAKE") {
-    return map.releasedToGraphics ? "Sent to graphics" : "New from CS";
-  }
-  if (isAtGraphics(map)) {
-    return `Graphics — ${PHASE_LABELS[map.phase]}`;
-  }
-  if (isReadyToRelease(map)) return "Field complete";
-  if (map.phase === "FIELD") return "Field mapping";
-  return PHASE_LABELS[map.phase];
+  return getPipelineStageLabel(map);
 }
 
 export function getOpsGraphicsWorkLine(map: MapRecord): string | null {
