@@ -55,7 +55,7 @@ export function QaAssignModal({ map, team, maps, loading, onClose, onAssign, onU
 
   return (
     <Modal
-      title={hasQa ? `QA assigned — ${map.mapNumber}` : `Assign QA — ${map.mapNumber}`}
+      title={hasQa ? `Change QA — ${map.mapNumber}` : `Assign QA — ${map.mapNumber}`}
       onClose={onClose}
       wide
     >
@@ -64,6 +64,7 @@ export function QaAssignModal({ map, team, maps, loading, onClose, onAssign, onU
           <div className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-violet-700">Currently assigned</p>
             <p className="text-sm font-medium mt-1">{map.assignedQa!.name}</p>
+            <p className="text-xs text-muted mt-0.5">Auto-assigned by workload balance</p>
             {isIntake && map.qaAssignAccepted !== true && (
               <p className="text-xs text-amber-700 mt-1">Waiting for QA to accept</p>
             )}
@@ -113,7 +114,7 @@ export function QaAssignModal({ map, team, maps, loading, onClose, onAssign, onU
         <form onSubmit={handleAssign} className="space-y-5">
           <p className="text-sm text-muted">
             {isIntake
-              ? "Assign a graphic QA reviewer. They must accept before pre-upload work begins."
+              ? "Override the auto-assigned QA reviewer. They must accept before pre-upload work begins."
               : map.phase === "UPLOAD_REVIEW"
                 ? "Assign QA for upload review."
                 : "Assign QA for polish review."}

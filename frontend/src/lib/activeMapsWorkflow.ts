@@ -1,5 +1,6 @@
-import type { MapRecord } from "../types";
-import { getMapDisplayState, getMapWorkflowPhaseTarget, INSPECTOR_STATES, QA_STATES } from "./mapDisplay";
+import type { MapRecord, MapStatus } from "../types";
+import { getMapDisplayState } from "./mapDisplay";
+import { MAP_STATUS_LABELS, MAP_STATUS_VALUES } from "./mapStatus";
 
 const ARCHIVED = new Set(["APPROVED", "CANCELLED"]);
 
@@ -12,7 +13,7 @@ export function isInspectorInbox(map: MapRecord, userId: string): boolean {
     return map.inspectorAssignAccepted !== true;
   }
 
-  if (map.inspectorStatus !== null) return false;
+  if (map.status !== null) return false;
   return ["PREP", "POLISH"].includes(map.phase);
 }
 
@@ -32,139 +33,77 @@ export function isInspectorActive(map: MapRecord, userId: string): boolean {
   return true;
 }
 
-/** Maps the QA team works on in the shared active table */
-export function isQaActive(map: MapRecord): boolean {
+/**
+ * Maps this QA owns after accepting (or already past intake), plus anything
+ * currently in a review/fix queue. Scoped to assignedQa when userId is set.
+ */
+export function isQaActive(map: MapRecord, userId?: string): boolean {
   if (ARCHIVED.has(map.phase)) return false;
+  if (userId && isQaInbox(map, userId)) return false;
+
+  const assignedToMe = !userId || map.assignedQa?.id === userId;
+
+  if (assignedToMe && map.assignedQa) {
+    if (map.phase === "INTAKE" && map.releasedToPipeline && map.qaAssignAccepted) {
+      return true;
+    }
+    if (["PREP", "UPLOAD_REVIEW", "FIELD", "POLISH", "QA_REVIEW"].includes(map.phase)) {
+      return true;
+    }
+  }
+
   if (["UPLOAD_REVIEW", "QA_REVIEW"].includes(map.phase)) return true;
-  if (map.qaStatus === "FIX" || map.qaStatus === "FIX_DONE") return true;
+  if (map.status === "FIX" || map.status === "FIX_DONE") return true;
   return false;
 }
 
-export type StatusAction =
-  | { kind: "inspector"; status: "ACCEPTED" | "PROCESSING" | "DONE" }
-  | { kind: "qa_review"; status: "fix" | "fix_done" | "approved" }
-  | { kind: "upload_review"; approved: boolean };
+export type StatusAction = { kind: "map_status"; status: MapStatus };
 
 export interface StatusOption {
-  value: string;
+  value: MapStatus;
   label: string;
   action: StatusAction;
 }
 
-const INSPECTOR_STATUS_OPTIONS: StatusOption[] = [
-  { value: "ACCEPTED", label: "Accepted", action: { kind: "inspector", status: "ACCEPTED" } },
-  { value: "PROCESSING", label: "Processing", action: { kind: "inspector", status: "PROCESSING" } },
-  { value: "DONE", label: "Done", action: { kind: "inspector", status: "DONE" } },
-  { value: "fix_done", label: "FixDone", action: { kind: "qa_review", status: "fix_done" } },
-];
+export const MAP_STATUS_OPTIONS: StatusOption[] = MAP_STATUS_VALUES.map((status) => ({
+  value: status,
+  label: MAP_STATUS_LABELS[status],
+  action: { kind: "map_status", status },
+}));
 
-/** Inspector may change status during pre-upload or polish stations, or while fixing */
-export function canInspectorEditStatus(map: MapRecord): boolean {
-  if (ARCHIVED.has(map.phase)) return false;
-  const station = getMapWorkflowPhaseTarget(map);
-  if (station === "UPLOADED" || station === "POLISHED") return false;
-  if (map.qaStatus === "FIX") return true;
-  return station === "PRE_UPLOAD" || station === "POLISH";
+/** Same options for inspector and QA — one shared status everywhere. */
+export function getMapStatusOptions(_map: MapRecord): StatusOption[] {
+  return MAP_STATUS_OPTIONS;
 }
 
-/** QA may change status when the map is ready for their review */
-export function canQaEditStatus(map: MapRecord): boolean {
-  if (ARCHIVED.has(map.phase)) return false;
-  if (map.qaStatus === "FIX") return false;
-
-  if (map.phase === "UPLOAD_REVIEW") {
-    if (map.qaStatus === "FIX_DONE") return true;
-    return map.inspectorStatus === "DONE";
-  }
-
-  if (map.phase === "QA_REVIEW") {
-    if (map.qaStatus === "FIX_DONE") return true;
-    return map.inspectorStatus === "DONE";
-  }
-
-  if (map.qaStatus === "FIX_DONE") return true;
-  return false;
-}
-
+/** @deprecated Use getMapStatusOptions */
 export function getInspectorStatusOptions(map: MapRecord): StatusOption[] {
-  if (!canInspectorEditStatus(map)) return [];
-  return INSPECTOR_STATUS_OPTIONS;
+  return getMapStatusOptions(map);
 }
 
+/** @deprecated Use getMapStatusOptions */
 export function getQaStatusOptions(map: MapRecord): StatusOption[] {
-  if (!canQaEditStatus(map)) return [];
-
-  if (map.phase === "UPLOAD_REVIEW") {
-    if (map.qaStatus === "FIX_DONE") {
-      return [
-        {
-          value: "approved",
-          label: "Approved",
-          action: { kind: "upload_review", approved: true },
-        },
-      ];
-    }
-    return [
-      {
-        value: "approved",
-        label: "Approved",
-        action: { kind: "upload_review", approved: true },
-      },
-      {
-        value: "fix",
-        label: "Fix",
-        action: { kind: "upload_review", approved: false },
-      },
-    ];
-  }
-
-  if (map.qaStatus === "FIX_DONE") {
-    return [
-      { value: "approved", label: "Approved", action: { kind: "qa_review", status: "approved" } },
-    ];
-  }
-
-  return [
-    { value: "approved", label: "Approved", action: { kind: "qa_review", status: "approved" } },
-    { value: "fix", label: "Fix", action: { kind: "qa_review", status: "fix" } },
-  ];
+  return getMapStatusOptions(map);
 }
 
-export function getInspectorStatusLabel(map: MapRecord): string {
-  if (map.qaStatus === "FIX_DONE") return "FixDone";
-  if (map.inspectorStatus === "ACCEPTED") return "Accepted";
-  if (map.inspectorStatus === "PROCESSING") return "Processing";
-  if (map.inspectorStatus === "DONE") return "Done";
-  return "—";
+export function isFixStatusOption(option: StatusOption): boolean {
+  return option.value === "FIX";
 }
 
-export function getQaStatusLabel(map: MapRecord): string {
-  if (map.qaStatus === "FIX") return "Fix";
-  if (map.qaStatus === "APPROVED" || map.phase === "APPROVED") return "Approved";
-  if (map.qaStatus === "FIX_DONE") return "FixDone";
-  const display = getMapDisplayState(map);
-  if (display === "In QA") return "—";
-  return "—";
+export function getCurrentStatusValue(map: MapRecord): MapStatus | "" {
+  return map.status ?? "";
 }
 
-export function getCurrentStatusValue(map: MapRecord, role: "inspector" | "qa"): string {
-  if (role === "inspector") {
-    if (map.qaStatus === "FIX_DONE") return "fix_done";
-    if (map.qaStatus === "FIX") return map.inspectorStatus ?? "";
-    if (map.inspectorStatus === "DONE") return "DONE";
-    if (map.inspectorStatus === "PROCESSING") return "PROCESSING";
-    if (map.inspectorStatus === "ACCEPTED") return "ACCEPTED";
-    return "";
-  }
-
-  if (map.qaStatus === "FIX") return "fix";
-  if (map.qaStatus === "APPROVED" || map.phase === "APPROVED") return "approved";
-  if (map.qaStatus === "FIX_DONE") return "";
-  return "";
+/** @deprecated Use getCurrentStatusValue */
+export function getCurrentStatusValueForRole(
+  map: MapRecord,
+  _role: "inspector" | "qa"
+): MapStatus | "" {
+  return getCurrentStatusValue(map);
 }
 
-export function getRoleStatusLabel(map: MapRecord, role: "inspector" | "qa"): string {
-  return role === "inspector" ? getInspectorStatusLabel(map) : getQaStatusLabel(map);
+export function getRoleStatusLabel(map: MapRecord): string {
+  return getMapDisplayState(map);
 }
 
 export function statusRowClass(map: MapRecord): string {
@@ -174,12 +113,14 @@ export function statusRowClass(map: MapRecord): string {
       return "bg-red-50/80";
     case "Approved":
       return "bg-emerald-50/80";
-    case "In QA":
+    case "Done":
       return "bg-sky-50/80";
     case "Accepted":
       return "bg-amber-50/60";
-    case "FixDone":
+    case "Fix Done":
       return "bg-violet-50/70";
+    case "Processing":
+      return "bg-blue-50/60";
     default:
       return "";
   }
@@ -193,7 +134,6 @@ export function formatNotePreview(notes: MapRecord["notes"]): string {
   return `${roleTag}${last.body}`;
 }
 
-/** All statuses a role may set (for UI hints) */
-export function getRoleStatusList(role: "inspector" | "qa"): readonly string[] {
-  return role === "inspector" ? INSPECTOR_STATES : QA_STATES;
+export function getRoleStatusList(): readonly string[] {
+  return MAP_STATUS_VALUES.map((s) => MAP_STATUS_LABELS[s]);
 }

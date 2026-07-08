@@ -1,8 +1,7 @@
 import {
   PrismaClient,
   MapPhase,
-  InspectorStatus,
-  QaStatus,
+  MapStatus,
   WorkflowPhaseTarget,
   type Prisma,
 } from "@prisma/client";
@@ -15,8 +14,7 @@ export type DemoMapInput = {
   description?: string;
   dueDate?: string;
   phase: MapPhase;
-  inspectorStatus?: InspectorStatus | null;
-  qaStatus?: QaStatus | null;
+  status?: MapStatus | null;
   uploadApproved?: boolean;
   assignInspector?: boolean;
   assignQa?: boolean;
@@ -47,6 +45,11 @@ const NEW_INTAKE_CLIENTS: { client: string; area: string }[] = [
   { client: "Express Mart", area: "Rehovot" },
   { client: "Family Shop", area: "Afula" },
   { client: "QuickStop", area: "Bat Yam" },
+  { client: "Market Plus", area: "Yokneam" },
+  { client: "Shop & Go", area: "Carmiel" },
+  { client: "Elite Retail", area: "Givatayim" },
+  { client: "Metro Foods", area: "Ashkelon" },
+  { client: "Sunrise Mart", area: "Tiberias" },
 ];
 
 const NEW_INTAKE_DESCRIPTIONS = [
@@ -62,9 +65,10 @@ const NEW_INTAKE_DESCRIPTIONS = [
   "End-cap realignment map",
 ];
 
-/** Twenty fresh INTAKE maps for the leader new-maps box (0115–0134). */
+/** Twenty-five fresh INTAKE maps for the leader new-maps box (0115–0139). */
 export const NEW_INTAKE_MAPS: DemoMapInput[] = NEW_INTAKE_CLIENTS.map((entry, i) => {
   const num = String(115 + i).padStart(4, "0");
+  const year = i >= 20 ? "2026" : "2024";
   const workflowPhaseTarget =
     i % 5 === 1
       ? WorkflowPhaseTarget.UPLOADED
@@ -73,8 +77,8 @@ export const NEW_INTAKE_MAPS: DemoMapInput[] = NEW_INTAKE_CLIENTS.map((entry, i)
         : WorkflowPhaseTarget.PRE_UPLOAD;
 
   return {
-    mapNumber: `MAP-2024-${num}`,
-    jiraTicketId: `OPS-46${num}`,
+    mapNumber: `MAP-${year}-${num}`,
+    jiraTicketId: i >= 20 ? `OPS-6${num}` : `OPS-46${num}`,
     client: entry.client,
     area: entry.area,
     description: NEW_INTAKE_DESCRIPTIONS[i % NEW_INTAKE_DESCRIPTIONS.length],
@@ -94,7 +98,7 @@ export const DEMO_MAPS: DemoMapInput[] = [
     area: "Ramat Gan",
     description: "Full floor remap — polish QA review",
     phase: MapPhase.QA_REVIEW,
-    inspectorStatus: InspectorStatus.DONE,
+    status: MapStatus.DONE,
     assignInspector: true,
     assignQa: true,
   },
@@ -160,7 +164,7 @@ export const DEMO_MAPS: DemoMapInput[] = [
     area: "Beer Sheva",
     description: "Initial graphics prep in progress",
     phase: MapPhase.PREP,
-    inspectorStatus: InspectorStatus.PROCESSING,
+    status: MapStatus.PROCESSING,
     assignInspector: true,
   },
   {
@@ -170,7 +174,7 @@ export const DEMO_MAPS: DemoMapInput[] = [
     area: "Tel Aviv",
     description: "Prep complete — QA reviewing dashboard upload",
     phase: MapPhase.UPLOAD_REVIEW,
-    inspectorStatus: InspectorStatus.DONE,
+    status: MapStatus.DONE,
     assignInspector: true,
     assignQa: true,
   },
@@ -181,7 +185,7 @@ export const DEMO_MAPS: DemoMapInput[] = [
     area: "Haifa",
     description: "Upload approved — supervisors in field",
     phase: MapPhase.FIELD,
-    inspectorStatus: InspectorStatus.DONE,
+    status: MapStatus.DONE,
     uploadApproved: true,
     assignInspector: true,
   },
@@ -192,7 +196,7 @@ export const DEMO_MAPS: DemoMapInput[] = [
     area: "Eilat",
     description: "Post-field polish work",
     phase: MapPhase.POLISH,
-    inspectorStatus: InspectorStatus.PROCESSING,
+    status: MapStatus.PROCESSING,
     uploadApproved: true,
     assignInspector: true,
   },
@@ -203,8 +207,7 @@ export const DEMO_MAPS: DemoMapInput[] = [
     area: "Ashdod",
     description: "Inspector submitted fixes — QA re-review",
     phase: MapPhase.QA_REVIEW,
-    inspectorStatus: InspectorStatus.DONE,
-    qaStatus: QaStatus.FIX_DONE,
+    status: MapStatus.FIX_DONE,
     uploadApproved: true,
     assignInspector: true,
     assignQa: true,
@@ -216,8 +219,7 @@ export const DEMO_MAPS: DemoMapInput[] = [
     area: "Modi'in",
     description: "QA returned map for fixes",
     phase: MapPhase.POLISH,
-    inspectorStatus: InspectorStatus.ACCEPTED,
-    qaStatus: QaStatus.FIX,
+    status: MapStatus.FIX,
     uploadApproved: true,
     assignInspector: true,
     assignQa: true,
@@ -229,8 +231,7 @@ export const DEMO_MAPS: DemoMapInput[] = [
     area: "Rishon LeZion",
     description: "Workflow complete",
     phase: MapPhase.APPROVED,
-    inspectorStatus: InspectorStatus.DONE,
-    qaStatus: QaStatus.APPROVED,
+    status: MapStatus.APPROVED,
     uploadApproved: true,
     assignInspector: true,
     assignQa: true,
@@ -242,7 +243,7 @@ export const DEMO_MAPS: DemoMapInput[] = [
     area: "Herzliya",
     description: "Inspector accepted prep assignment",
     phase: MapPhase.PREP,
-    inspectorStatus: InspectorStatus.ACCEPTED,
+    status: MapStatus.ACCEPTED,
     assignInspector: true,
   },
   ...NEW_INTAKE_MAPS,
@@ -272,8 +273,7 @@ export async function seedDemoMaps(prisma: PrismaClient) {
       description: demo.description,
       ...(demo.dueDate ? { dueDate: new Date(demo.dueDate) } : {}),
       phase: demo.phase,
-      inspectorStatus: demo.inspectorStatus ?? null,
-      qaStatus: demo.qaStatus ?? null,
+      status: demo.status ?? null,
       uploadApproved: demo.uploadApproved ?? false,
       inspectorAssignAccepted: demo.inspectorAssignAccepted ?? false,
       qaAssignAccepted: demo.qaAssignAccepted ?? false,

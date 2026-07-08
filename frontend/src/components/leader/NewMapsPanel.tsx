@@ -15,7 +15,6 @@ import {
   buildBalancedInspectorAssignments,
   buildBalancedQaAssignments,
   countInspectorActiveMaps,
-  countQaActiveMaps,
   summarizeQaShufflePlan,
   summarizeShufflePlan,
 } from "../../lib/assignment";
@@ -23,6 +22,7 @@ import { SHIFTS, getShiftInspectors, type ShiftId } from "../../lib/shifts";
 import { AssignCellButton } from "./AssignCellButton";
 import { InspectorAssignModal } from "./InspectorAssignModal";
 import { QaAssignModal } from "./QaAssignModal";
+import { QaOverrideCell } from "./QaOverrideCell";
 import { Modal } from "./Modal";
 
 interface Props {
@@ -43,7 +43,6 @@ export function NewMapsPanel({ maps, team, onRefresh }: Props) {
   const [shuffleOpen, setShuffleOpen] = useState(false);
   const [shuffleStep, setShuffleStep] = useState<"pick" | "preview">("pick");
   const [shuffleInspectorIds, setShuffleInspectorIds] = useState<Set<string>>(new Set());
-  const [shuffleQaIds, setShuffleQaIds] = useState<Set<string>>(new Set());
 
   const inspectors = useMemo(
     () => team.filter((m) => m.roles.some((r) => r.role === "MAPPING_INSPECTOR")),
@@ -64,7 +63,7 @@ export function NewMapsPanel({ maps, team, onRefresh }: Props) {
     [selectedMaps]
   );
 
-  const selectedNeedingQa = useMemo(
+  const selectedNeedingAutoQa = useMemo(
     () => selectedMaps.filter((m) => !m.assignedQa),
     [selectedMaps]
   );
@@ -75,7 +74,6 @@ export function NewMapsPanel({ maps, team, onRefresh }: Props) {
   );
 
   const shuffleInspectors = inspectors.filter((m) => shuffleInspectorIds.has(m.id));
-  const shuffleQa = qaMembers.filter((m) => shuffleQaIds.has(m.id));
 
   const inspectorPreviewRows = useMemo(() => {
     if (selectedNeedingInspector.length === 0 || shuffleInspectors.length === 0) return [];
@@ -88,10 +86,10 @@ export function NewMapsPanel({ maps, team, onRefresh }: Props) {
   }, [selectedNeedingInspector, shuffleInspectors, maps]);
 
   const qaPreviewRows = useMemo(() => {
-    if (selectedNeedingQa.length === 0 || shuffleQa.length === 0) return [];
-    const plan = buildBalancedQaAssignments(selectedNeedingQa, shuffleQa, maps);
-    return summarizeQaShufflePlan(plan, shuffleQa, maps);
-  }, [selectedNeedingQa, shuffleQa, maps]);
+    if (selectedNeedingAutoQa.length === 0 || qaMembers.length === 0) return [];
+    const plan = buildBalancedQaAssignments(selectedNeedingAutoQa, qaMembers, maps);
+    return summarizeQaShufflePlan(plan, qaMembers, maps);
+  }, [selectedNeedingAutoQa, qaMembers, maps]);
 
   const allSelected = newMaps.length > 0 && newMaps.every((m) => selected.has(m.id));
 
@@ -116,24 +114,11 @@ export function NewMapsPanel({ maps, team, onRefresh }: Props) {
     setError("");
     setShuffleStep("pick");
     setShuffleInspectorIds(new Set(inspectors.map((m) => m.id)));
-    setShuffleQaIds(new Set(qaMembers.map((m) => m.id)));
     setShuffleOpen(true);
   }
 
   function toggleShuffleInspector(id: string) {
     setShuffleInspectorIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        if (next.size > 1) next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
-  }
-
-  function toggleShuffleQa(id: string) {
-    setShuffleQaIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) {
         if (next.size > 1) next.delete(id);
@@ -167,8 +152,7 @@ export function NewMapsPanel({ maps, team, onRefresh }: Props) {
     try {
       await api.shuffleAssignNewMaps(
         selectedMaps.map((m) => m.id),
-        shuffleInspectors.map((m) => m.id),
-        shuffleQa.map((m) => m.id)
+        shuffleInspectors.map((m) => m.id)
       );
       setShuffleOpen(false);
       setSelected(new Set());
@@ -290,9 +274,7 @@ export function NewMapsPanel({ maps, team, onRefresh }: Props) {
   }
 
   const canShuffle =
-    selectedMaps.length > 0 &&
-    ((selectedNeedingInspector.length > 0 && inspectors.length > 0) ||
-      (selectedNeedingQa.length > 0 && qaMembers.length > 0));
+    selectedMaps.length > 0 && selectedNeedingInspector.length > 0 && inspectors.length > 0;
 
   return (
     <section className="rounded-2xl border-2 border-amber-200 bg-gradient-to-br from-amber-50/80 to-white shadow-sm overflow-hidden">
@@ -304,10 +286,10 @@ export function NewMapsPanel({ maps, team, onRefresh }: Props) {
           </span>
         </div>
         <p className="text-sm text-amber-900/70 mt-1 max-w-2xl">
-          Maps from CS land here first. Choose the workflow phase and assign inspector and/or QA
-          — assigning an inspector moves the map to the pipeline automatically. Use{" "}
-          <strong>Save</strong> for maps that only have QA assigned. Use <strong>Shuffle</strong> to
-          auto-assign to team members with the fewest active maps.
+          Maps from CS land here first. Assign an inspector — QA is assigned automatically by
+          workload balance. Use <strong>Change</strong> on the QA column to override (e.g. when
+          someone is absent). Assigning an inspector moves the map to the pipeline automatically.
+          Use <strong>Shuffle</strong> to distribute inspectors across selected maps.
         </p>
       </div>
 
@@ -441,11 +423,10 @@ export function NewMapsPanel({ maps, team, onRefresh }: Props) {
                     />
                   </td>
                   <td className="px-4 py-3">
-                    <AssignCellButton
-                      assigned={!!map.assignedQa}
-                      assigneeName={map.assignedQa?.name}
-                      tone="violet"
-                      onClick={() => {
+                    <QaOverrideCell
+                      map={map}
+                      disabled={loading}
+                      onChange={() => {
                         setError("");
                         setAssignQaMap(map);
                       }}
@@ -454,10 +435,10 @@ export function NewMapsPanel({ maps, team, onRefresh }: Props) {
                   <td className="px-4 py-3">
                     <button
                       type="button"
-                      disabled={savingId === map.id || loading}
+                      disabled={savingId === map.id || loading || !map.assignedInspector}
                       onClick={() => handleSave(map.id)}
                       className="w-full px-3 py-1.5 text-xs font-semibold bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50"
-                      title="Move to pipeline table"
+                      title="Move to pipeline table (usually automatic when inspector is assigned)"
                     >
                       {savingId === map.id ? "Saving…" : "Save"}
                     </button>
@@ -507,8 +488,8 @@ export function NewMapsPanel({ maps, team, onRefresh }: Props) {
             {shuffleStep === "pick" ? (
               <>
                 <p className="text-sm text-muted">
-                  Maps go to whoever has the fewest active maps. Only missing inspector or QA
-                  slots are filled — already assigned roles are left unchanged.
+                  Inspectors are distributed by active workload. QA is auto-assigned to the
+                  least-loaded reviewer for each map without QA.
                 </p>
 
                 {selectedNeedingInspector.length > 0 && (
@@ -525,21 +506,6 @@ export function NewMapsPanel({ maps, team, onRefresh }: Props) {
                   </div>
                 )}
 
-                {selectedNeedingQa.length > 0 && (
-                  <div>
-                    <h4 className="text-sm font-semibold mb-2">
-                      QA ({selectedNeedingQa.length} maps need QA)
-                    </h4>
-                    <MemberPickList
-                      members={qaMembers}
-                      selectedIds={shuffleQaIds}
-                      activeCount={(id) => countQaActiveMaps(maps, id)}
-                      onToggle={toggleShuffleQa}
-                      tone="violet"
-                    />
-                  </div>
-                )}
-
                 <div className="flex gap-2 justify-end">
                   <button
                     type="button"
@@ -550,10 +516,7 @@ export function NewMapsPanel({ maps, team, onRefresh }: Props) {
                   </button>
                   <button
                     type="button"
-                    disabled={
-                      (selectedNeedingInspector.length > 0 && shuffleInspectorIds.size === 0) ||
-                      (selectedNeedingQa.length > 0 && shuffleQaIds.size === 0)
-                    }
+                    disabled={selectedNeedingInspector.length > 0 && shuffleInspectorIds.size === 0}
                     onClick={() => setShuffleStep("preview")}
                     className="px-5 py-2 text-sm font-semibold bg-violet-600 text-white rounded-xl hover:bg-violet-700 disabled:opacity-50"
                   >
@@ -567,7 +530,11 @@ export function NewMapsPanel({ maps, team, onRefresh }: Props) {
                   <PreviewTable title="Inspector distribution" rows={inspectorPreviewRows} />
                 )}
                 {qaPreviewRows.length > 0 && (
-                  <PreviewTable title="QA distribution" rows={qaPreviewRows} tone="violet" />
+                  <PreviewTable
+                    title="QA auto-assignment preview"
+                    rows={qaPreviewRows}
+                    tone="violet"
+                  />
                 )}
 
                 <div className="flex gap-2 justify-end">

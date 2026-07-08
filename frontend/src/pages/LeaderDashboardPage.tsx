@@ -8,6 +8,7 @@ import { LeaderSidebar, type LeaderSection } from "../components/leader/LeaderSi
 import { SettingsPanel } from "../components/leader/SettingsPanel";
 import { TeamPanel } from "../components/leader/TeamPanel";
 import { getIdleInspectors } from "../lib/assignment";
+import { useMapsPolling } from "../lib/useMapsPolling";
 import { isNewMapForLeader, isPipelineMapForLeader, needsQaAssignment } from "../lib/mapDisplay";
 import type { MapRecord, TeamMember } from "../types";
 
@@ -39,6 +40,7 @@ export function LeaderDashboardPage() {
   const [historyMaps, setHistoryMaps] = useState<MapRecord[]>([]);
   const [team, setTeam] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [showAddMap, setShowAddMap] = useState(false);
   const [error, setError] = useState("");
   const [activeSection, setActiveSection] = useState<LeaderSection>("maps");
@@ -51,8 +53,9 @@ export function LeaderDashboardPage() {
     dueDate: "",
   });
 
-  function load() {
-    setLoading(true);
+  function load(opts?: { soft?: boolean }) {
+    if (opts?.soft) setRefreshing(true);
+    else setLoading(true);
     Promise.all([api.getMaps(), api.getHistoryMaps(), api.getTeam()])
       .then(([m, h, t]) => {
         setMaps(m);
@@ -65,12 +68,17 @@ export function LeaderDashboardPage() {
           setTeam(t);
         });
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        setLoading(false);
+        setRefreshing(false);
+      });
   }
 
   useEffect(() => {
     load();
   }, []);
+
+  useMapsPolling((opts) => load(opts));
 
   async function handleAddMap(e: React.FormEvent) {
     e.preventDefault();
@@ -86,7 +94,7 @@ export function LeaderDashboardPage() {
       });
       setShowAddMap(false);
       setForm({ mapNumber: "", jiraTicketId: "", client: "", area: "", description: "", dueDate: "" });
-      load();
+      load({ soft: true });
     } catch (err) {
       setError((err as Error).message);
     }
@@ -135,19 +143,34 @@ export function LeaderDashboardPage() {
               <h1 className="text-2xl font-bold">{title}</h1>
               <p className="text-muted mt-1">{subtitle}</p>
             </div>
-            {activeSection === "maps" && (
-              <button
-                type="button"
-                onClick={() => setShowAddMap(!showAddMap)}
-                className="px-4 py-2.5 bg-brand-600 text-white text-sm font-medium rounded-xl hover:bg-brand-700 shadow-sm shadow-brand-600/20 transition-colors"
-              >
-                + Add map from CS
-              </button>
-            )}
+            <div className="flex items-center gap-3">
+              {refreshing && (
+                <span className="text-xs font-medium text-brand-700 bg-brand-100 px-2.5 py-1 rounded-full animate-pulse">
+                  Updating…
+                </span>
+              )}
+              {activeSection === "maps" && (
+                <button
+                  type="button"
+                  onClick={() => setShowAddMap(!showAddMap)}
+                  className="px-4 py-2.5 bg-brand-600 text-white text-sm font-medium rounded-xl hover:bg-brand-700 shadow-sm shadow-brand-600/20 transition-colors"
+                >
+                  + Add map from CS
+                </button>
+              )}
+            </div>
           </div>
 
           {loading ? (
-            <p className="text-muted">Loading...</p>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i} className="h-20 rounded-2xl bg-slate-100 animate-pulse" />
+                ))}
+              </div>
+              <div className="h-40 rounded-xl bg-slate-100 animate-pulse" />
+              <div className="h-64 rounded-xl bg-slate-100 animate-pulse" />
+            </div>
           ) : (
             <>
               {activeSection === "maps" && (
@@ -236,23 +259,23 @@ export function LeaderDashboardPage() {
                     </form>
                   )}
 
-                  <NewMapsPanel maps={maps} team={team} onRefresh={load} />
+                  <NewMapsPanel maps={maps} team={team} onRefresh={() => load({ soft: true })} />
 
                   <AssignmentBoard
                     maps={pipelineMaps}
                     allMaps={maps}
                     team={team}
-                    onRefresh={load}
+                    onRefresh={() => load({ soft: true })}
                   />
                 </>
               )}
 
               {activeSection === "team" && (
-                <TeamPanel team={team} maps={maps} onRefresh={load} />
+                <TeamPanel team={team} maps={maps} onRefresh={() => load({ soft: true })} />
               )}
 
               {activeSection === "history" && (
-                <HistoryPanel maps={historyMaps} onRefresh={load} />
+                <HistoryPanel maps={historyMaps} onRefresh={() => load({ soft: true })} />
               )}
 
               {activeSection === "company-dashboard" && <CompanyDashboardPanel />}

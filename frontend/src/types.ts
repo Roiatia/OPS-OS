@@ -16,8 +16,14 @@ export type MapPhase =
 
 export type WorkflowPhaseTarget = "PRE_UPLOAD" | "UPLOADED" | "POLISH" | "POLISHED";
 
-export type InspectorStatus = "ACCEPTED" | "PROCESSING" | "DONE";
-export type QaStatus = "FIX" | "FIX_DONE" | "APPROVED";
+export type MapStatus =
+  | "ACCEPTED"
+  | "PROCESSING"
+  | "DONE"
+  | "FIX"
+  | "FIX_DONE"
+  | "APPROVED";
+
 export type TaskStatus = "PENDING" | "ACCEPTED" | "PROCESSING" | "DONE" | "FIX" | "FIX_DONE";
 
 export interface User {
@@ -58,7 +64,8 @@ export interface MapAttachment {
   id: string;
   fileName: string;
   mimeType: string;
-  data: string;
+  /** Omitted on list endpoints to keep payloads small. */
+  data?: string;
   context: string;
   createdAt: string;
   uploadedBy: { id: string; name: string };
@@ -80,8 +87,7 @@ export interface MapRecord {
   description: string | null;
   dueDate: string | null;
   phase: MapPhase;
-  inspectorStatus: InspectorStatus | null;
-  qaStatus: QaStatus | null;
+  status: MapStatus | null;
   inspectorAssignAccepted: boolean;
   qaAssignAccepted: boolean;
   releasedToPipeline: boolean;

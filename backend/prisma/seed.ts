@@ -48,6 +48,15 @@ const DEMO_USERS = [
 
 async function seedUsers() {
   console.log("Seeding users...");
+
+  const removed = await prisma.$executeRaw`
+    DELETE FROM "UserRole"
+    WHERE role::text NOT IN ('GRAPHIC_TEAM_LEADER', 'MAPPING_INSPECTOR', 'GRAPHIC_QA', 'OPS_ADMIN')
+  `;
+  if (removed > 0) {
+    console.log(`  Removed ${removed} stale role assignment(s)`);
+  }
+
   for (const demo of DEMO_USERS) {
     const user = await prisma.user.upsert({
       where: { email: demo.email },

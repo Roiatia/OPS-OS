@@ -1,4 +1,5 @@
 import type { MapPhase, MapRecord, WorkflowPhaseTarget } from "../types";
+import { mapStatusLabel } from "./mapStatus";
 
 /** Editable pipeline stations (spreadsheet column) */
 export const MAP_STATIONS: { id: WorkflowPhaseTarget; label: string }[] = [
@@ -166,56 +167,27 @@ export const STATION_LABELS: Record<MapPhase, string> = {
   CANCELLED: "Cancelled",
 };
 
+/** Only statuses on the map — one shared value for every role. */
+export const INSPECTOR_STATES = ["Accepted", "Processing", "Done", "Fix Done"] as const;
+
+export const QA_STATES = ["Fix", "Approved"] as const;
+
 export const WORKFLOW_STATES = [
-  "Awaiting accept",
   "Accepted",
   "Processing",
   "Done",
-  "In QA",
   "Fix",
-  "FixDone",
+  "Fix Done",
   "Approved",
-  "Cancelled",
 ] as const;
 
-export type WorkflowDisplayState = (typeof WORKFLOW_STATES)[number] | "—";
+export type WorkflowDisplayState = (typeof WORKFLOW_STATES)[number] | "—" | "Cancelled";
 
-/** Inspector-owned states */
-export const INSPECTOR_STATES = ["Accepted", "Processing", "Done", "FixDone"] as const;
-
-/** QA-owned states */
-export const QA_STATES = ["Fix", "Approved"] as const;
-
-/** Single display state for the State column — synced from inspector & QA updates only */
+/** Single shared status for every role — reads the one `status` field on the map. */
 export function getMapDisplayState(map: MapRecord): WorkflowDisplayState {
-  const { qaStatus, inspectorStatus, phase } = map;
-
-  if (phase === "CANCELLED") return "Cancelled";
-  if (
-    phase === "INTAKE" &&
-    map.assignedInspector &&
-    map.assignedQa &&
-    (map.inspectorAssignAccepted !== true || map.qaAssignAccepted !== true)
-  ) {
-    return "Awaiting accept";
-  }
-  if (qaStatus === "FIX") return "Fix";
-  if (qaStatus === "FIX_DONE") return "FixDone";
-  if (qaStatus === "APPROVED" || phase === "APPROVED") return "Approved";
-
-  if (
-    (phase === "UPLOAD_REVIEW" || phase === "QA_REVIEW") &&
-    inspectorStatus === "DONE" &&
-    !qaStatus
-  ) {
-    return "In QA";
-  }
-
-  if (inspectorStatus === "ACCEPTED") return "Accepted";
-  if (inspectorStatus === "PROCESSING") return "Processing";
-  if (inspectorStatus === "DONE") return "Done";
-
-  return "—";
+  const label = mapStatusLabel(map.status);
+  if (label === "—") return "—";
+  return label as WorkflowDisplayState;
 }
 
 /** @deprecated Use getMapDisplayState */
@@ -268,8 +240,12 @@ export function showInspectorAssignControl(map: MapRecord): boolean {
 export function showQaAssignControl(map: MapRecord): boolean {
   if (!isPipelineMapForLeader(map)) return false;
   if (map.assignedQa) return canAssignQa(map);
-  if (map.phase === "PREP") return true;
-  return ["INTAKE", "UPLOAD_REVIEW", "QA_REVIEW"].includes(map.phase);
+  return showQaManualAssignFallback(map);
+}
+
+/** Rare fallback when auto-assign did not run (e.g. prep map saved without QA). */
+export function showQaManualAssignFallback(map: MapRecord): boolean {
+  return map.phase === "PREP" && !map.assignedQa;
 }
 
 export function canOpenAssignModal(map: MapRecord): boolean {
@@ -318,8 +294,8 @@ export function countQaWorkload(maps: MapRecord[], userId: string): number {
       m.assignedQa?.id === userId &&
       (m.phase === "INTAKE" ||
         ["UPLOAD_REVIEW", "QA_REVIEW"].includes(m.phase) ||
-        m.qaStatus === "FIX" ||
-        m.qaStatus === "FIX_DONE")
+        m.status === "FIX" ||
+        m.status === "FIX_DONE")
   ).length;
 }
 
@@ -433,19 +409,15 @@ export function getDeleteConfirmMessage(map: MapRecord): string {
 
 export function workflowStateTone(state: WorkflowDisplayState): string {
   switch (state) {
-    case "Awaiting accept":
-      return "INTAKE";
     case "Accepted":
       return "ACCEPTED";
     case "Processing":
       return "PROCESSING";
     case "Done":
       return "DONE";
-    case "In QA":
-      return "UPLOAD_REVIEW";
     case "Fix":
       return "FIX";
-    case "FixDone":
+    case "Fix Done":
       return "FIX_DONE";
     case "Approved":
       return "APPROVED";

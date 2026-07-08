@@ -7,6 +7,7 @@ import { AssignCellButton } from "./AssignCellButton";
 import { DeleteMapButton } from "./DeleteMapButton";
 import { InspectorAssignModal } from "./InspectorAssignModal";
 import { QaAssignModal } from "./QaAssignModal";
+import { QaOverrideCell } from "./QaOverrideCell";
 import { Modal } from "./Modal";
 import {
   buildBalancedInspectorAssignments,
@@ -22,7 +23,6 @@ import {
 } from "../../lib/dates";
 import {
   showInspectorAssignControl,
-  showQaAssignControl,
   canDeleteMap,
   getBulkDeleteConfirmMessage,
   EMPTY_COLUMN_FILTERS,
@@ -769,19 +769,14 @@ export function AssignmentBoard({ maps, allMaps, team, onRefresh }: Props) {
                       )}
                     </td>
                     <td className="px-3 py-3">
-                      {showQaAssignControl(map) ? (
-                        <AssignCellButton
-                          assigned={!!map.assignedQa}
-                          assigneeName={map.assignedQa?.name}
-                          tone="violet"
-                          onClick={() => {
-                            setError("");
-                            setAssignQaMap(map);
-                          }}
-                        />
-                      ) : (
-                        <span className="text-sm text-muted">{map.assignedQa?.name ?? "—"}</span>
-                      )}
+                      <QaOverrideCell
+                        map={map}
+                        disabled={loading}
+                        onChange={() => {
+                          setError("");
+                          setAssignQaMap(map);
+                        }}
+                      />
                     </td>
                     <td className="px-3 py-3">
                       <div className="flex flex-col gap-0.5 min-w-[100px]">

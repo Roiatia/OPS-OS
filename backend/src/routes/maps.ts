@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { InspectorStatus, MapPhase, QaStatus, RoleName, TaskStatus } from "@prisma/client";
+import { MapPhase, MapStatus, RoleName, TaskStatus } from "@prisma/client";
 import { authMiddleware, requireRoles, type AuthedRequest } from "../middleware/auth.js";
 import * as workflow from "../services/workflow.js";
 
@@ -347,11 +347,43 @@ router.post("/:id/accept-qa-assignment", requireRoles(RoleName.GRAPHIC_QA), asyn
   }
 });
 
+router.patch("/:id/status", async (req, res) => {
+  try {
+    const { status, note, attachment } = req.body as {
+      status?: MapStatus;
+      note?: string;
+      attachment?: { fileName: string; mimeType: string; data: string };
+    };
+    if (!status || !Object.values(MapStatus).includes(status)) {
+      res.status(400).json({
+        error: "Valid status required: ACCEPTED, PROCESSING, DONE, FIX, FIX_DONE, APPROVED",
+      });
+      return;
+    }
+    const user = (req as AuthedRequest).user;
+    const existing = await workflow.getMapForUser(req.params.id, user);
+    if (!existing) {
+      res.status(404).json({ error: "Map not found" });
+      return;
+    }
+    const map = await workflow.updateMapStatus(
+      req.params.id,
+      status,
+      user,
+      note,
+      attachment
+    );
+    res.json(map);
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
 router.patch("/:id/inspector-status", requireRoles(RoleName.MAPPING_INSPECTOR), async (req, res) => {
   try {
-    const { status, note } = req.body as { status?: InspectorStatus; note?: string };
-    if (!status || !Object.values(InspectorStatus).includes(status)) {
-      res.status(400).json({ error: "Valid status required: ACCEPTED, PROCESSING, DONE" });
+    const { status, note } = req.body as { status?: MapStatus; note?: string };
+    if (!status || !Object.values(MapStatus).includes(status)) {
+      res.status(400).json({ error: "Valid status required" });
       return;
     }
     const map = await workflow.updateInspectorStatus(
@@ -388,12 +420,22 @@ router.post("/:id/notes", async (req, res) => {
 
 router.post("/:id/upload-review", requireRoles(RoleName.GRAPHIC_QA, RoleName.OPS_ADMIN), async (req, res) => {
   try {
-    const { approved, note } = req.body as { approved?: boolean; note?: string };
+    const { approved, note, attachment } = req.body as {
+      approved?: boolean;
+      note?: string;
+      attachment?: { fileName: string; mimeType: string; data: string };
+    };
     if (typeof approved !== "boolean") {
       res.status(400).json({ error: "approved (boolean) required" });
       return;
     }
-    const map = await workflow.qaUploadDecision(req.params.id, approved, (req as AuthedRequest).user, note);
+    const map = await workflow.qaUploadDecision(
+      req.params.id,
+      approved,
+      (req as AuthedRequest).user,
+      note,
+      attachment
+    );
     res.json(map);
   } catch (e) {
     res.status(400).json({ error: (e as Error).message });
@@ -415,7 +457,11 @@ router.post(
 
 router.post("/:id/qa-review", requireRoles(RoleName.GRAPHIC_QA, RoleName.OPS_ADMIN, RoleName.MAPPING_INSPECTOR), async (req, res) => {
   try {
-    const { status, note } = req.body as { status?: "fix" | "fix_done" | "approved"; note?: string };
+    const { status, note, attachment } = req.body as {
+      status?: "fix" | "fix_done" | "approved";
+      note?: string;
+      attachment?: { fileName: string; mimeType: string; data: string };
+    };
     if (!status) {
       res.status(400).json({ error: "status required: fix, fix_done, or approved" });
       return;
@@ -429,7 +475,7 @@ router.post("/:id/qa-review", requireRoles(RoleName.GRAPHIC_QA, RoleName.OPS_ADM
       res.status(403).json({ error: "Only QA can approve or request fix" });
       return;
     }
-    const map = await workflow.qaPolishDecision(req.params.id, status, user, note);
+    const map = await workflow.qaPolishDecision(req.params.id, status, user, note, attachment);
     res.json(map);
   } catch (e) {
     res.status(400).json({ error: (e as Error).message });

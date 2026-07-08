@@ -11,7 +11,8 @@ import { QaAssignModal } from "../components/leader/QaAssignModal";
 import { getMapDisplayState, getWorkflowTimelineLabel, workflowStateTone, canAssignInspector, canAssignQa } from "../lib/mapDisplay";
 import { toDateInputValue, formatDueDate, getDueDateStatus, DUE_DATE_CLASS } from "../lib/dates";
 import { SHIFTS, getShiftInspectors } from "../lib/shifts";
-import type { MapRecord, TeamMember } from "../types";
+import { MAP_STATUS_OPTIONS } from "../lib/activeMapsWorkflow";
+import type { MapRecord, TeamMember, MapStatus } from "../types";
 
 export function MapDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -74,6 +75,9 @@ export function MapDetailPage() {
 
   const displayState = getMapDisplayState(map);
   const isAssignedInspector = map.assignedInspector?.id === user!.id;
+  const isAssignedQa = map.assignedQa?.id === user!.id;
+  const canEditStatus =
+    (isInspector && isAssignedInspector) || (isQa && isAssignedQa) || isLeader;
 
   return (
     <div className="min-h-[calc(100vh-4rem)] bg-gradient-to-b from-slate-50 to-white py-8 px-4">
@@ -163,7 +167,7 @@ export function MapDetailPage() {
                     key={att.id}
                     className="flex items-center gap-3 bg-white rounded-xl border border-border p-3"
                   >
-                    {att.mimeType.startsWith("image/") ? (
+                    {att.mimeType.startsWith("image/") && att.data ? (
                       <img
                         src={`data:${att.mimeType};base64,${att.data}`}
                         alt={att.fileName}
@@ -180,7 +184,7 @@ export function MapDetailPage() {
                         {att.uploadedBy.name} · {new Date(att.createdAt).toLocaleDateString()}
                       </p>
                     </div>
-                    {!att.mimeType.startsWith("image/") && (
+                    {att.data && !att.mimeType.startsWith("image/") && (
                       <a
                         href={`data:${att.mimeType};base64,${att.data}`}
                         download={att.fileName}
@@ -202,75 +206,34 @@ export function MapDetailPage() {
                 <p className="text-sm text-red-600 bg-red-50 rounded-xl p-3 text-center">{error}</p>
               )}
 
-              {isInspector && isAssignedInspector && map.qaStatus === "FIX" && (
-                <ActionBlock title="Fix requested by QA" hint="Complete fixes and mark FixDone.">
-                  <button
-                    onClick={() => act(() => api.qaReview(map.id, "fix_done"))}
-                    className="w-full py-2.5 bg-brand-600 text-white text-sm font-medium rounded-xl hover:bg-brand-700"
-                  >
-                    Mark FixDone
-                  </button>
-                </ActionBlock>
-              )}
-
-              {isInspector &&
-                isAssignedInspector &&
-                map.qaStatus !== "FIX" &&
-                (map.phase === "PREP" || map.phase === "POLISH") && (
-                  <ActionBlock
-                    title={map.phase === "PREP" ? "Pre-upload · Inspector" : "Polish · Inspector"}
-                    hint="Update your workflow state."
-                  >
-                    <div className="grid grid-cols-3 gap-2">
-                      {(
-                        [
-                          { value: "ACCEPTED", label: "Accepted" },
-                          { value: "PROCESSING", label: "Processing" },
-                          { value: "DONE", label: "Done" },
-                        ] as const
-                      ).map(({ value, label }) => (
-                        <button
-                          key={value}
-                          onClick={() => act(() => api.updateInspectorStatus(map.id, value))}
-                          className={`py-2.5 text-sm font-medium rounded-xl border transition-colors ${
-                            map.inspectorStatus === value
-                              ? "bg-brand-600 text-white border-brand-600"
-                              : "border-border hover:bg-slate-50 text-slate-700"
-                          }`}
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                  </ActionBlock>
-                )}
-
-              {isQa && map.phase === "UPLOAD_REVIEW" && map.qaStatus !== "FIX" && (
+              {canEditStatus && (
                 <ActionBlock
-                  title="Upload QA"
-                  hint={
-                    map.qaStatus === "FIX_DONE"
-                      ? "Inspector completed fixes. Approve to upload to dashboard."
-                      : "Inspector finished prep. Approve or request fixes."
-                  }
+                  title="Map status"
+                  hint="One shared status — inspector and QA always see the same value."
                 >
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      onClick={() => act(() => api.uploadReview(map.id, true))}
-                      className="py-2.5 bg-emerald-600 text-white text-sm font-medium rounded-xl hover:bg-emerald-700"
-                    >
-                      Approved
-                    </button>
-                    {map.qaStatus !== "FIX_DONE" && (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {MAP_STATUS_OPTIONS.map(({ value, label }) => (
                       <button
-                        onClick={() =>
-                          act(() => api.uploadReview(map.id, false, "Corrections needed"))
-                        }
-                        className="py-2.5 bg-red-50 text-red-700 text-sm font-medium rounded-xl border border-red-200 hover:bg-red-100"
+                        key={value}
+                        type="button"
+                        onClick={() => {
+                          if (value === "FIX") {
+                            act(() =>
+                              api.updateMapStatus(map.id, value, "Corrections needed")
+                            );
+                          } else {
+                            act(() => api.updateMapStatus(map.id, value as MapStatus));
+                          }
+                        }}
+                        className={`py-2.5 text-sm font-medium rounded-xl border transition-colors ${
+                          map.status === value
+                            ? "bg-brand-600 text-white border-brand-600"
+                            : "border-border hover:bg-slate-50 text-slate-700"
+                        }`}
                       >
-                        Fix
+                        {label}
                       </button>
-                    )}
+                    ))}
                   </div>
                 </ActionBlock>
               )}
@@ -307,7 +270,7 @@ export function MapDetailPage() {
                         onClick={() => setQaModalOpen(true)}
                         className="w-full py-2.5 bg-violet-600 text-white text-sm font-medium rounded-xl hover:bg-violet-700"
                       >
-                        {map.assignedQa ? "QA · Assigned" : "QA · Assign"}
+                        {map.assignedQa ? "QA · Change" : "QA · Assign"}
                       </button>
                     )}
                     <label className="block">
@@ -342,36 +305,6 @@ export function MapDetailPage() {
                       )}
                     </label>
                   </div>
-                </ActionBlock>
-              )}
-
-              {isQa && map.phase === "QA_REVIEW" && !map.qaStatus && (
-                <ActionBlock title="Polish · QA" hint="Approve or request fixes.">
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      onClick={() => act(() => api.qaReview(map.id, "approved"))}
-                      className="py-2.5 bg-emerald-600 text-white text-sm font-medium rounded-xl hover:bg-emerald-700"
-                    >
-                      Approved
-                    </button>
-                    <button
-                      onClick={() => act(() => api.qaReview(map.id, "fix", "Corrections needed"))}
-                      className="py-2.5 bg-red-50 text-red-700 text-sm font-medium rounded-xl border border-red-200 hover:bg-red-100"
-                    >
-                      Fix
-                    </button>
-                  </div>
-                </ActionBlock>
-              )}
-
-              {isQa && map.qaStatus === "FIX_DONE" && (
-                <ActionBlock title="Fixes completed" hint="Inspector marked FixDone.">
-                  <button
-                    onClick={() => act(() => api.qaReview(map.id, "approved"))}
-                    className="w-full py-2.5 bg-emerald-600 text-white text-sm font-medium rounded-xl hover:bg-emerald-700"
-                  >
-                    Approved
-                  </button>
                 </ActionBlock>
               )}
 

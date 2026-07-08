@@ -1,24 +1,25 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api";
-import type { MapRecord } from "../../types";
-import { getMapDisplayState, getTaskType, workflowStateTone } from "../../lib/mapDisplay";
+import type { MapRecord, MapStatus } from "../../types";
+import { getMapDisplayState, getTaskType } from "../../lib/mapDisplay";
 import {
   formatNotePreview,
   getCurrentStatusValue,
-  getInspectorStatusOptions,
-  getQaStatusOptions,
-  getRoleStatusLabel,
+  getMapStatusOptions,
+  isFixStatusOption,
   statusRowClass,
   type StatusOption,
 } from "../../lib/activeMapsWorkflow";
 import { Badge } from "../Badge";
 import { StationSelect } from "./StationSelect";
+import { QaFixModal } from "./QaFixModal";
+import { LoadingField } from "./LoadingField";
 
 interface Props {
   maps: MapRecord[];
   role: "inspector" | "qa";
-  onRefresh: () => void;
+  onRefresh: () => void | Promise<void>;
 }
 
 function formatDate(iso: string) {
@@ -29,59 +30,90 @@ function formatDate(iso: string) {
   });
 }
 
+function statusSelectClass(displayState: string): string {
+  switch (displayState) {
+    case "Fix":
+      return "bg-red-100 border-red-200 text-red-800";
+    case "Approved":
+      return "bg-emerald-100 border-emerald-200 text-emerald-800";
+    case "Done":
+      return "bg-sky-100 border-sky-200 text-sky-800";
+    case "Accepted":
+      return "bg-amber-100 border-amber-200 text-amber-800";
+    case "Fix Done":
+      return "bg-violet-100 border-violet-200 text-violet-800";
+    case "Processing":
+      return "bg-blue-100 border-blue-200 text-blue-800";
+    default:
+      return "bg-white border-border";
+  }
+}
+
 export function ActiveMapsTable({ maps, role, onRefresh }: Props) {
-  const [loadingId, setLoadingId] = useState<string | null>(null);
+  const [statusLoadingId, setStatusLoadingId] = useState<string | null>(null);
+  const [noteLoadingId, setNoteLoadingId] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState<Record<string, string>>({});
   const [expandedNote, setExpandedNote] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [fixModalMap, setFixModalMap] = useState<MapRecord | null>(null);
+  const [selectReset, setSelectReset] = useState<Record<string, number>>({});
 
-  async function applyStatus(map: MapRecord, option: StatusOption) {
-    const needsNote =
-      option.value === "fix" ||
-      option.value === "upload_fix" ||
-      option.action.kind === "qa_review" && option.action.status === "fix";
+  async function applyStatus(
+    map: MapRecord,
+    option: StatusOption,
+    fixPayload?: { note: string; attachment?: { fileName: string; mimeType: string; data: string } }
+  ) {
+    const note = fixPayload?.note ?? (noteDraft[map.id]?.trim() || undefined);
+    const attachment = fixPayload?.attachment;
 
-    const note = noteDraft[map.id]?.trim() || undefined;
-    if (needsNote && !note) {
-      setExpandedNote(map.id);
-      setError("Add a note in General notes before setting status to Fix.");
+    setError("");
+    setStatusLoadingId(map.id);
+    try {
+      await api.updateMapStatus(map.id, option.action.status, note, attachment);
+      setNoteDraft((prev) => ({ ...prev, [map.id]: "" }));
+      setExpandedNote(null);
+      setFixModalMap(null);
+      await Promise.resolve(onRefresh());
+    } catch (e) {
+      setError((e as Error).message);
+      await Promise.resolve(onRefresh());
+    } finally {
+      setStatusLoadingId(null);
+    }
+  }
+
+  function handleStatusChange(map: MapRecord, options: StatusOption[], value: string) {
+    const currentValue = getCurrentStatusValue(map);
+    if (value === currentValue) return;
+
+    const opt = options.find((o) => o.value === value);
+    if (!opt) {
+      setSelectReset((prev) => ({ ...prev, [map.id]: (prev[map.id] ?? 0) + 1 }));
       return;
     }
 
-    setError("");
-    setLoadingId(map.id);
-    try {
-      const action = option.action;
-      if (action.kind === "inspector") {
-        await api.updateInspectorStatus(map.id, action.status, note);
-      } else if (action.kind === "qa_review") {
-        await api.qaReview(map.id, action.status, note);
-      } else if (action.kind === "upload_review") {
-        await api.uploadReview(map.id, action.approved, note);
-      }
-      setNoteDraft((prev) => ({ ...prev, [map.id]: "" }));
-      onRefresh();
-    } catch (e) {
-      setError((e as Error).message);
-      onRefresh();
-    } finally {
-      setLoadingId(null);
+    if (isFixStatusOption(opt)) {
+      setFixModalMap(map);
+      setSelectReset((prev) => ({ ...prev, [map.id]: (prev[map.id] ?? 0) + 1 }));
+      return;
     }
+
+    applyStatus(map, opt);
   }
 
   async function submitNote(mapId: string) {
     const body = noteDraft[mapId]?.trim();
     if (!body) return;
-    setLoadingId(mapId);
+    setNoteLoadingId(mapId);
     try {
       await api.addMapNote(mapId, body);
       setNoteDraft((prev) => ({ ...prev, [mapId]: "" }));
       setExpandedNote(null);
-      onRefresh();
+      await Promise.resolve(onRefresh());
     } catch (e) {
       setError((e as Error).message);
     } finally {
-      setLoadingId(null);
+      setNoteLoadingId(null);
     }
   }
 
@@ -93,14 +125,24 @@ export function ActiveMapsTable({ maps, role, onRefresh }: Props) {
     );
   }
 
-  const statusOptionsFor = (map: MapRecord) =>
-    role === "inspector" ? getInspectorStatusOptions(map) : getQaStatusOptions(map);
-
   return (
     <div className="space-y-3">
       {error && (
         <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>
       )}
+
+      {fixModalMap && (
+        <QaFixModal
+          map={fixModalMap}
+          loading={statusLoadingId === fixModalMap.id}
+          onClose={() => setFixModalMap(null)}
+          onSubmit={(payload) => {
+            const fixOpt = getMapStatusOptions(fixModalMap).find((o) => isFixStatusOption(o));
+            if (fixOpt) applyStatus(fixModalMap, fixOpt, payload);
+          }}
+        />
+      )}
+
       <div className="overflow-x-auto rounded-xl border border-border bg-white shadow-sm">
         <table className="w-full text-sm border-collapse">
           <thead>
@@ -113,19 +155,21 @@ export function ActiveMapsTable({ maps, role, onRefresh }: Props) {
               <th className="px-3 py-2.5 font-semibold whitespace-nowrap">Due</th>
               <th className="px-3 py-2.5 font-semibold whitespace-nowrap min-w-[130px]">Status</th>
               <th className="px-3 py-2.5 font-semibold min-w-[220px]">General notes</th>
-              <th className="px-3 py-2.5 font-semibold whitespace-nowrap">Assigned QA</th>
+              {role === "qa" ? (
+                <th className="px-3 py-2.5 font-semibold whitespace-nowrap">Inspector</th>
+              ) : (
+                <th className="px-3 py-2.5 font-semibold whitespace-nowrap">Assigned QA</th>
+              )}
             </tr>
           </thead>
           <tbody>
             {maps.map((map) => {
               const displayState = getMapDisplayState(map);
-              const options = statusOptionsFor(map);
-              const currentValue = getCurrentStatusValue(map, role);
-              const roleLabel = getRoleStatusLabel(map, role);
+              const options = getMapStatusOptions(map);
+              const currentValue = getCurrentStatusValue(map);
               const taskType = getTaskType(map);
               const isExpanded = expandedNote === map.id;
-              const readOnlyStatus =
-                options.length === 0 ? (roleLabel !== "—" ? roleLabel : displayState) : null;
+              const selectKey = `${map.id}-${selectReset[map.id] ?? 0}`;
 
               return (
                 <tr
@@ -154,7 +198,6 @@ export function ActiveMapsTable({ maps, role, onRefresh }: Props) {
                   <td className="px-3 py-2.5">
                     <StationSelect
                       map={map}
-                      disabled={loadingId === map.id}
                       onUpdated={onRefresh}
                       onError={setError}
                     />
@@ -163,31 +206,20 @@ export function ActiveMapsTable({ maps, role, onRefresh }: Props) {
                     {map.dueDate ? formatDate(map.dueDate) : "—"}
                   </td>
                   <td className="px-3 py-2.5">
-                    {options.length > 0 ? (
+                    <LoadingField loading={statusLoadingId === map.id}>
                       <select
+                        key={selectKey}
                         value={currentValue}
-                        disabled={loadingId === map.id}
-                        onChange={(e) => {
-                          const opt = options.find((o) => o.value === e.target.value);
-                          if (opt) applyStatus(map, opt);
-                        }}
-                        className={`w-full text-xs font-medium rounded-md border px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500 ${
-                          displayState === "Fix"
-                            ? "bg-red-100 border-red-200 text-red-800"
-                            : displayState === "Approved"
-                              ? "bg-emerald-100 border-emerald-200 text-emerald-800"
-                              : displayState === "In QA"
-                                ? "bg-sky-100 border-sky-200 text-sky-800"
-                                : displayState === "Accepted"
-                                  ? "bg-amber-100 border-amber-200 text-amber-800"
-                                  : displayState === "FixDone"
-                                    ? "bg-violet-100 border-violet-200 text-violet-800"
-                                    : "bg-white border-border"
-                        }`}
+                        disabled={statusLoadingId === map.id}
+                        onChange={(e) =>
+                          handleStatusChange(map, options, e.target.value as MapStatus)
+                        }
+                        aria-busy={statusLoadingId === map.id}
+                        className={`w-full text-xs font-medium rounded-md border px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:opacity-60 ${statusSelectClass(displayState)}`}
                       >
                         {!currentValue && (
                           <option value="" disabled>
-                            Select status...
+                            Select status…
                           </option>
                         )}
                         {options.map((o) => (
@@ -196,18 +228,7 @@ export function ActiveMapsTable({ maps, role, onRefresh }: Props) {
                           </option>
                         ))}
                       </select>
-                    ) : readOnlyStatus && readOnlyStatus !== "—" ? (
-                      <Badge
-                        label={readOnlyStatus}
-                        tone={workflowStateTone(
-                          readOnlyStatus === "Done" && displayState === "In QA"
-                            ? "In QA"
-                            : (readOnlyStatus as typeof displayState)
-                        )}
-                      />
-                    ) : (
-                      <span className="text-xs text-muted">—</span>
-                    )}
+                    </LoadingField>
                   </td>
                   <td className="px-3 py-2.5">
                     <div className="space-y-1.5">
@@ -236,24 +257,32 @@ export function ActiveMapsTable({ maps, role, onRefresh }: Props) {
                             onChange={(e) =>
                               setNoteDraft((prev) => ({ ...prev, [map.id]: e.target.value }))
                             }
-                            placeholder="Note for QA / inspector..."
+                            placeholder="Add a note…"
                             className="flex-1 text-xs border border-border rounded px-2 py-1 min-w-0"
                             onKeyDown={(e) => e.key === "Enter" && submitNote(map.id)}
                           />
                           <button
                             type="button"
                             onClick={() => submitNote(map.id)}
-                            disabled={loadingId === map.id}
-                            className="text-xs px-2 py-1 bg-brand-600 text-white rounded disabled:opacity-50"
+                            disabled={noteLoadingId === map.id || !(noteDraft[map.id]?.trim())}
+                            className="text-xs px-2 py-1 bg-brand-600 text-white rounded disabled:opacity-50 min-w-[44px]"
                           >
-                            Save
+                            {noteLoadingId === map.id ? (
+                              <span className="inline-flex justify-center">
+                                <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                              </span>
+                            ) : (
+                              "Save"
+                            )}
                           </button>
                         </div>
                       )}
                     </div>
                   </td>
                   <td className="px-3 py-2.5 text-slate-700 whitespace-nowrap text-xs">
-                    {map.assignedQa?.name ?? "—"}
+                    {role === "qa"
+                      ? (map.assignedInspector?.name ?? "—")
+                      : (map.assignedQa?.name ?? "—")}
                   </td>
                 </tr>
               );

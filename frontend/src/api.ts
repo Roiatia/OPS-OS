@@ -167,7 +167,7 @@ export const api = {
       body: JSON.stringify({ mapIds }),
     }),
 
-  shuffleAssignNewMaps: (mapIds: string[], inspectorIds: string[], qaIds: string[]) =>
+  shuffleAssignNewMaps: (mapIds: string[], inspectorIds: string[], qaIds?: string[]) =>
     request<{
       inspectorAssigned: number;
       qaAssigned: number;
@@ -185,7 +185,18 @@ export const api = {
       }[];
     }>("/maps/shuffle-assign-new", {
       method: "POST",
-      body: JSON.stringify({ mapIds, inspectorIds, qaIds }),
+      body: JSON.stringify({ mapIds, inspectorIds, qaIds: qaIds ?? [] }),
+    }),
+
+  updateMapStatus: (
+    mapId: string,
+    status: import("./types").MapStatus,
+    note?: string,
+    attachment?: { fileName: string; mimeType: string; data: string }
+  ) =>
+    request<import("./types").MapRecord>(`/maps/${mapId}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ status, note, attachment }),
     }),
 
   updateInspectorStatus: (mapId: string, status: string, note?: string) =>
@@ -200,10 +211,15 @@ export const api = {
       body: JSON.stringify({ body }),
     }),
 
-  uploadReview: (mapId: string, approved: boolean, note?: string) =>
+  uploadReview: (
+    mapId: string,
+    approved: boolean,
+    note?: string,
+    attachment?: { fileName: string; mimeType: string; data: string }
+  ) =>
     request<import("./types").MapRecord>(`/maps/${mapId}/upload-review`, {
       method: "POST",
-      body: JSON.stringify({ approved, note }),
+      body: JSON.stringify({ approved, note, attachment }),
     }),
 
   fieldComplete: (mapId: string) =>
@@ -211,10 +227,15 @@ export const api = {
       method: "POST",
     }),
 
-  qaReview: (mapId: string, status: "fix" | "fix_done" | "approved", note?: string) =>
+  qaReview: (
+    mapId: string,
+    status: "fix" | "fix_done" | "approved",
+    note?: string,
+    attachment?: { fileName: string; mimeType: string; data: string }
+  ) =>
     request<import("./types").MapRecord>(`/maps/${mapId}/qa-review`, {
       method: "POST",
-      body: JSON.stringify({ status, note }),
+      body: JSON.stringify({ status, note, attachment }),
     }),
 
   createTask: (

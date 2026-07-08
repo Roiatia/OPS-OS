@@ -13,6 +13,7 @@
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
     "db:reseed-maps": "tsx prisma/reseed-demo-maps.ts",
+    "db:add-intake-maps": "tsx prisma/add-intake-maps.ts",
     "db:setup": "prisma migrate deploy && tsx prisma/seed.ts",
     "postinstall": "prisma generate"
   },

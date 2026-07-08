@@ -26,13 +26,10 @@ enum MapPhase {
   CANCELLED
 }
 
-enum InspectorStatus {
+enum MapStatus {
   ACCEPTED
   PROCESSING
   DONE
-}
-
-enum QaStatus {
   FIX
   FIX_DONE
   APPROVED
@@ -91,8 +88,7 @@ model Map {
   description     String?
   dueDate         DateTime?
   phase           MapPhase         @default(INTAKE)
-  inspectorStatus InspectorStatus?
-  qaStatus        QaStatus?
+  status          MapStatus?
   inspectorAssignAccepted Boolean @default(false)
   qaAssignAccepted        Boolean @default(false)
   releasedToPipeline      Boolean @default(false)

@@ -29,7 +29,7 @@ export function InspectorInboxTable({ maps, onRefresh }: Props) {
       if (map.phase === "INTAKE") {
         await api.acceptInspectorAssignment(map.id);
       } else {
-        await api.updateInspectorStatus(map.id, "ACCEPTED");
+        await api.updateMapStatus(map.id, "ACCEPTED");
       }
       onRefresh();
     } catch (e) {
@@ -94,9 +94,9 @@ export function InspectorInboxTable({ maps, onRefresh }: Props) {
                       type="button"
                       disabled={loadingId === map.id}
                       onClick={() => accept(map)}
-                      className="px-3 py-1.5 text-xs font-medium bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:opacity-50"
+                      className="px-3 py-1.5 text-xs font-medium bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:opacity-50 min-w-[72px]"
                     >
-                      Accept
+                      {loadingId === map.id ? "Accepting…" : "Accept"}
                     </button>
                   </td>
                 </tr>

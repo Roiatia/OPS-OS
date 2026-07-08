@@ -123,7 +123,9 @@ router.get("/demo-users", async (_req, res) => {
   });
 
   res.json(
-    users.map((u) => ({
+    users
+      .filter((u) => u.roles.length > 0)
+      .map((u) => ({
       email: u.email,
       name: u.name,
       roles: u.roles.map((r) => ({ role: r.role, label: ROLE_LABELS[r.role] })),

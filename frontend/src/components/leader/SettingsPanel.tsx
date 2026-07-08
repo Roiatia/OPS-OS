@@ -15,8 +15,8 @@ export function SettingsPanel() {
           },
           {
             title: "Auto-assign QA",
-            description: "Automatically assign QA when an inspector marks a map as done",
-            enabled: false,
+            description: "Automatically assign QA (least loaded) when you assign an inspector",
+            enabled: true,
           },
           {
             title: "Default view",

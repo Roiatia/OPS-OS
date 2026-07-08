@@ -134,7 +134,7 @@ export function InspectorAssignModal({
         <form onSubmit={handleAssign} className="space-y-5">
           <p className="text-sm text-muted">
             {isIntake
-              ? "Assign a mapping inspector. They must accept before pre-upload work begins."
+              ? "Assign a mapping inspector. QA is assigned automatically — use Change on the QA column to override."
               : "Assign this map to a mapping inspector."}
           </p>
 

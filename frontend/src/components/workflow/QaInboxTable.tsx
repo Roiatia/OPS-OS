@@ -91,9 +91,9 @@ export function QaInboxTable({ maps, onRefresh }: Props) {
                       type="button"
                       disabled={loadingId === map.id}
                       onClick={() => accept(map)}
-                      className="px-3 py-1.5 text-xs font-medium bg-violet-600 text-white rounded-lg hover:bg-violet-700 disabled:opacity-50"
+                      className="px-3 py-1.5 text-xs font-medium bg-violet-600 text-white rounded-lg hover:bg-violet-700 disabled:opacity-50 min-w-[72px]"
                     >
-                      Accept
+                      {loadingId === map.id ? "Accepting…" : "Accept"}
                     </button>
                   </td>
                 </tr>
