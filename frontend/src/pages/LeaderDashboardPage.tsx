@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { AssignmentBoard } from "../components/leader/AssignmentBoard";
 import { NewMapsPanel } from "../components/leader/NewMapsPanel";
+import { CsvImportPanel } from "../components/leader/CsvImportPanel";
 import { CompanyDashboardPanel } from "../components/leader/CompanyDashboardPanel";
 import { HistoryPanel } from "../components/leader/HistoryPanel";
 import { LeaderSidebar, type LeaderSection } from "../components/leader/LeaderSidebar";
@@ -42,6 +43,8 @@ export function LeaderDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [showAddMap, setShowAddMap] = useState(false);
+  const [showCsvImport, setShowCsvImport] = useState(false);
+  const [csvImportBusy, setCsvImportBusy] = useState(false);
   const [error, setError] = useState("");
   const [activeSection, setActiveSection] = useState<LeaderSection>("maps");
   const [form, setForm] = useState({
@@ -56,18 +59,18 @@ export function LeaderDashboardPage() {
   function load(opts?: { soft?: boolean }) {
     if (opts?.soft) setRefreshing(true);
     else setLoading(true);
-    Promise.all([api.getMaps(), api.getHistoryMaps(), api.getTeam()])
+    return Promise.all([api.getMaps(), api.getHistoryMaps(), api.getTeam()])
       .then(([m, h, t]) => {
         setMaps(m);
         setHistoryMaps(h);
         setTeam(t);
       })
-      .catch(() => {
+      .catch(() =>
         Promise.all([api.getMaps(), api.getTeam()]).then(([m, t]) => {
           setMaps(m);
           setTeam(t);
-        });
-      })
+        })
+      )
       .finally(() => {
         setLoading(false);
         setRefreshing(false);
@@ -136,7 +139,23 @@ export function LeaderDashboardPage() {
         newMapsCount={newMapsCount}
       />
 
-      <div className="flex-1 min-w-0 px-6 py-6 overflow-y-auto">
+      <div className="flex-1 min-w-0 px-6 py-6 overflow-y-auto relative">
+        {csvImportBusy && (
+          <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-4 bg-slate-900/40 backdrop-blur-[1px]">
+            <div className="bg-white rounded-2xl shadow-xl border border-border px-10 py-8 flex flex-col items-center gap-4 max-w-sm mx-4">
+              <span
+                className="w-12 h-12 border-[3px] border-brand-600 border-t-transparent rounded-full animate-spin"
+                aria-hidden
+              />
+              <div className="text-center space-y-1">
+                <p className="font-semibold text-slate-900">Loading maps…</p>
+                <p className="text-sm text-muted">
+                  Saving to the database and refreshing the Maps page. Please wait.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
         <div className="space-y-6">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
@@ -150,13 +169,29 @@ export function LeaderDashboardPage() {
                 </span>
               )}
               {activeSection === "maps" && (
-                <button
-                  type="button"
-                  onClick={() => setShowAddMap(!showAddMap)}
-                  className="px-4 py-2.5 bg-brand-600 text-white text-sm font-medium rounded-xl hover:bg-brand-700 shadow-sm shadow-brand-600/20 transition-colors"
-                >
-                  + Add map from CS
-                </button>
+                <>
+                  <button
+                    type="button"
+                    disabled={csvImportBusy}
+                    onClick={() => {
+                      setShowCsvImport((v) => !v);
+                      setShowAddMap(false);
+                    }}
+                    className="px-4 py-2.5 border border-border bg-white text-sm font-medium rounded-xl hover:bg-slate-50 transition-colors disabled:opacity-50"
+                  >
+                    Import CSV
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAddMap(!showAddMap);
+                      setShowCsvImport(false);
+                    }}
+                    className="px-4 py-2.5 bg-brand-600 text-white text-sm font-medium rounded-xl hover:bg-brand-700 shadow-sm shadow-brand-600/20 transition-colors"
+                  >
+                    + Add map from CS
+                  </button>
+                </>
               )}
             </div>
           </div>
@@ -192,6 +227,19 @@ export function LeaderDashboardPage() {
                       </div>
                     ))}
                   </div>
+
+                  {showCsvImport && (
+                    <CsvImportPanel
+                      onBusyChange={setCsvImportBusy}
+                      onImported={async () => {
+                        await load({ soft: true });
+                        setShowCsvImport(false);
+                      }}
+                      onCancel={() => {
+                        if (!csvImportBusy) setShowCsvImport(false);
+                      }}
+                    />
+                  )}
 
                   {showAddMap && (
                     <form

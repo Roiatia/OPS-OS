@@ -98,6 +98,30 @@ model Map {
   assignedInspector   User?        @relation("InspectorMaps", fields: [assignedInspectorId], references: [id])
   assignedQaId        String?
   assignedQa          User?        @relation("QaMaps", fields: [assignedQaId], references: [id])
+  /** Spreadsheet import fields (Sam's Club / field ops CSV) — stored, not required in UI tables */
+  batch                   String?
+  building                String?
+  address                 String?
+  mapReceived             String?
+  setupStage              String?
+  mapperSource            String?
+  mapperName              String?
+  scheduleDate            String?
+  mappingDate             String?
+  postMappingDate         String?
+  sentToStudio            String?
+  receivedFromStudio      String?
+  graphicsPolishAssignee  String?
+  graphicsPolishStatus    String?
+  polishQaAssignee        String?
+  conversion              String?
+  polishStage             String?
+  activation              String?
+  remappingDate           String?
+  dashboardDate           String?
+  maintDate               String?
+  commentExternal         String?  @db.Text
+  commentInternal         String?  @db.Text
   tasks           Task[]
   events          MapEvent[]
   phaseHistory    MapPhaseHistory[]

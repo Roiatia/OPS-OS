@@ -72,6 +72,41 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  previewCsvImport: (csv: string) =>
+    request<{
+      headerRowIndex: number;
+      totalRows: number;
+      cancelledRows: number;
+      activeRows: number;
+      samples: {
+        mapNumber: string | null;
+        building: string | null;
+        batch: string | null;
+        address: string | null;
+        polishAssignee: string | null;
+      }[];
+    }>("/maps/import-csv/preview", {
+      method: "POST",
+      body: JSON.stringify({ csv }),
+    }),
+
+  importCsv: (csv: string, opts?: { clearExisting?: boolean; defaultClient?: string }) =>
+    request<{
+      created: number;
+      updated: number;
+      skipped: number;
+      cleared: number;
+      errors: { row: number; message: string }[];
+      sampleMapNumbers: string[];
+    }>("/maps/import-csv", {
+      method: "POST",
+      body: JSON.stringify({
+        csv,
+        clearExisting: opts?.clearExisting ?? false,
+        defaultClient: opts?.defaultClient,
+      }),
+    }),
+
   updateMapDueDate: (mapId: string, dueDate: string | null) =>
     request<import("./types").MapRecord>(`/maps/${mapId}/due-date`, {
       method: "PATCH",

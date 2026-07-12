@@ -6,6 +6,51 @@ import * as workflow from "../services/workflow.js";
 const router = Router();
 router.use(authMiddleware);
 
+router.post(
+  "/import-csv/preview",
+  requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN),
+  async (req, res) => {
+    try {
+      const { csv } = req.body as { csv?: string };
+      if (!csv?.trim()) {
+        res.status(400).json({ error: "csv text required" });
+        return;
+      }
+      const { previewSamsClubCsv } = await import("../services/csvImport.js");
+      const preview = await previewSamsClubCsv(csv);
+      res.json(preview);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+router.post(
+  "/import-csv",
+  requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN),
+  async (req, res) => {
+    try {
+      const { csv, clearExisting, defaultClient } = req.body as {
+        csv?: string;
+        clearExisting?: boolean;
+        defaultClient?: string;
+      };
+      if (!csv?.trim()) {
+        res.status(400).json({ error: "csv text required" });
+        return;
+      }
+      const { importSamsClubCsv } = await import("../services/csvImport.js");
+      const result = await importSamsClubCsv(csv, (req as AuthedRequest).user, {
+        clearExisting: clearExisting === true,
+        defaultClient,
+      });
+      res.json(result);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
 router.get("/", async (req, res) => {
   try {
     const maps = await workflow.listMapsForUser((req as AuthedRequest).user);

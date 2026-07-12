@@ -45,7 +45,7 @@ export function SettingsPanel() {
       </div>
 
       <p className="text-sm text-muted">
-        Settings are placeholders for now — toggles will be wired up as the platform grows.
+        Settings are placeholders for now — CSV import is on the Maps page.
       </p>
     </section>
   );
