@@ -9,49 +9,88 @@ import {
   getIncompleteReason,
   isCompleteMilestone,
   isIncompleteMilestone,
+  isReadyToAcceptMilestone,
   splitByTeam,
 } from "../../lib/activityDisplay";
 
 interface Props {
   updates: OpsActivityMessage[];
   shiftAlerts?: OpsShiftAlert[];
+  dismissedUpdates?: OpsActivityMessage[];
+  dismissedAlerts?: OpsShiftAlert[];
+  dismissedCount?: number;
   isDemoPreview?: boolean;
   onDismiss: (id: string) => void;
   onDismissAll: () => void;
+  onRestore?: (id: string) => void;
+  onRestoreAll?: () => void;
   onRefresh?: () => void;
 }
 
 function ShiftAlertRow({
   alert,
   onDismiss,
+  onRestore,
 }: {
   alert: OpsShiftAlert;
-  onDismiss: (id: string) => void;
+  onDismiss?: (id: string) => void;
+  onRestore?: (id: string) => void;
 }) {
+  const dismissed = Boolean(onRestore);
   return (
     <li
-      className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2.5 shadow-sm ring-1 ring-amber-200/60"
+      className={`rounded-xl border px-3 py-2.5 shadow-sm ring-1 ${
+        dismissed
+          ? "border-slate-200 bg-slate-50/90 ring-transparent opacity-90"
+          : "border-amber-300 bg-amber-50 ring-amber-200/60"
+      }`}
       role="alert"
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
-          <p className="text-[10px] font-bold uppercase tracking-wide text-amber-800">
+          <p
+            className={`text-[10px] font-bold uppercase tracking-wide ${
+              dismissed ? "text-slate-500" : "text-amber-800"
+            }`}
+          >
             Shift alert
           </p>
-          <p className="text-sm font-semibold text-amber-950 mt-0.5">{alert.message}</p>
-          <p className="text-xs text-amber-900 mt-1.5 leading-relaxed">{alert.detail}</p>
-          <p className="text-[11px] text-amber-800/80 mt-1.5">
+          <p
+            className={`text-sm font-semibold mt-0.5 ${
+              dismissed ? "text-slate-700" : "text-amber-950"
+            }`}
+          >
+            {alert.message}
+          </p>
+          <p
+            className={`text-xs mt-1.5 leading-relaxed ${
+              dismissed ? "text-slate-600" : "text-amber-900"
+            }`}
+          >
+            {alert.detail}
+          </p>
+          <p className="text-[11px] text-muted mt-1.5">
             {new Date(alert.createdAt).toLocaleString()}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => onDismiss(alert.id)}
-          className="text-[11px] font-medium text-amber-700 hover:text-amber-950 shrink-0 px-1"
-          aria-label="Dismiss alert"
-        >
-          ×
-        </button>
+        {onRestore ? (
+          <button
+            type="button"
+            onClick={() => onRestore(alert.id)}
+            className="text-[11px] font-medium text-brand-700 hover:text-brand-900 shrink-0 px-2 py-1 rounded-md hover:bg-brand-50"
+          >
+            Restore
+          </button>
+        ) : onDismiss ? (
+          <button
+            type="button"
+            onClick={() => onDismiss(alert.id)}
+            className="text-[11px] font-medium text-amber-700 hover:text-amber-950 shrink-0 px-1"
+            aria-label="Dismiss alert"
+          >
+            ×
+          </button>
+        ) : null}
       </div>
     </li>
   );
@@ -60,18 +99,24 @@ function ShiftAlertRow({
 function ActivityRow({
   message,
   onDismiss,
+  onRestore,
   accent,
+  muted = false,
 }: {
   message: OpsActivityMessage;
-  onDismiss: (id: string) => void;
+  onDismiss?: (id: string) => void;
+  onRestore?: (id: string) => void;
   accent: "graphics" | "ops";
+  muted?: boolean;
 }) {
   const complete = isCompleteMilestone(message.action);
   const incomplete = isIncompleteMilestone(message.action);
   const reason = getIncompleteReason(message);
   const progress = getIncompleteProgress(message);
 
-  const border = incomplete
+  const border = muted
+    ? "border-slate-200 bg-slate-50/90"
+    : incomplete
     ? "border-amber-200 bg-amber-50/90"
     : complete
       ? accent === "graphics"
@@ -81,7 +126,9 @@ function ActivityRow({
         ? "border-violet-100 bg-white"
         : "border-brand-100 bg-white";
 
-  const titleColor = incomplete
+  const titleColor = muted
+    ? "text-slate-600"
+    : incomplete
     ? "text-amber-900"
     : complete
       ? accent === "graphics"
@@ -123,17 +170,26 @@ function ActivityRow({
           {incomplete && !reason && (
             <p className="text-xs text-amber-700 mt-1 italic">No reason provided yet</p>
           )}
+          {isReadyToAcceptMilestone(message.action) && (
+            <p className="text-xs text-emerald-800 mt-1.5">
+              Waiting for OPS acceptance — open Maps → Ready to accept to send to polish.
+            </p>
+          )}
           <p className="text-[11px] text-muted mt-1.5">
             {message.user.name} · {new Date(message.createdAt).toLocaleString()}
           </p>
         </div>
         <button
           type="button"
-          onClick={() => onDismiss(message.id)}
-          className="text-[11px] font-medium text-muted hover:text-slate-900 shrink-0 px-1"
-          aria-label="Dismiss"
+          onClick={() => (onRestore ? onRestore(message.id) : onDismiss?.(message.id))}
+          className={
+            onRestore
+              ? "text-[11px] font-medium text-brand-700 hover:text-brand-900 shrink-0 px-2 py-1 rounded-md hover:bg-brand-50"
+              : "text-[11px] font-medium text-muted hover:text-slate-900 shrink-0 px-1"
+          }
+          aria-label={onRestore ? "Restore update" : "Dismiss"}
         >
-          ×
+          {onRestore ? "Restore" : "×"}
         </button>
       </div>
     </li>
@@ -147,15 +203,19 @@ function ActivityColumn({
   items,
   shiftAlerts = [],
   onDismiss,
+  onRestore,
   emptyLabel,
+  muted = false,
 }: {
   title: string;
   subtitle: string;
   accent: "graphics" | "ops";
   items: OpsActivityMessage[];
   shiftAlerts?: OpsShiftAlert[];
-  onDismiss: (id: string) => void;
+  onDismiss?: (id: string) => void;
+  onRestore?: (id: string) => void;
   emptyLabel: string;
+  muted?: boolean;
 }) {
   const headerBg =
     accent === "graphics" ? "bg-violet-50 border-violet-200" : "bg-brand-50 border-brand-200";
@@ -182,10 +242,22 @@ function ActivityColumn({
         ) : (
           <ul className="space-y-2">
             {shiftAlerts.map((alert) => (
-              <ShiftAlertRow key={alert.id} alert={alert} onDismiss={onDismiss} />
+              <ShiftAlertRow
+                key={alert.id}
+                alert={alert}
+                onDismiss={onDismiss}
+                onRestore={onRestore}
+              />
             ))}
             {items.map((m) => (
-              <ActivityRow key={m.id} message={m} onDismiss={onDismiss} accent={accent} />
+              <ActivityRow
+                key={m.id}
+                message={m}
+                onDismiss={onDismiss}
+                onRestore={onRestore}
+                accent={accent}
+                muted={muted}
+              />
             ))}
           </ul>
         )}
@@ -197,24 +269,57 @@ function ActivityColumn({
 export function OpsUpdatesPanel({
   updates,
   shiftAlerts = [],
+  dismissedUpdates = [],
+  dismissedAlerts = [],
+  dismissedCount = 0,
   isDemoPreview = false,
   onDismiss,
   onDismissAll,
+  onRestore,
+  onRestoreAll,
   onRefresh,
 }: Props) {
   const [search, setSearch] = useState("");
+  const [view, setView] = useState<"inbox" | "dismissed">("inbox");
+
+  const inboxUpdates = updates;
+  const inboxAlerts = shiftAlerts;
+  const archiveUpdates = dismissedUpdates;
+  const archiveAlerts = dismissedAlerts;
+
+  const activeUpdates = view === "dismissed" ? archiveUpdates : inboxUpdates;
+  const activeAlerts = view === "dismissed" ? archiveAlerts : inboxAlerts;
 
   const filtered = useMemo(
-    () => filterActivityMessages(updates, search),
-    [updates, search]
+    () => filterActivityMessages(activeUpdates, search),
+    [activeUpdates, search]
   );
   const filteredAlerts = useMemo(
-    () => filterShiftAlerts(shiftAlerts, search),
-    [shiftAlerts, search]
+    () => filterShiftAlerts(activeAlerts, search),
+    [activeAlerts, search]
   );
   const { graphics, ops } = useMemo(() => splitByTeam(filtered), [filtered]);
-  const hasContent = updates.length > 0 || shiftAlerts.length > 0;
+  const hasInboxContent = inboxUpdates.length > 0 || inboxAlerts.length > 0;
+  const hasArchiveContent = archiveUpdates.length > 0 || archiveAlerts.length > 0;
   const hasFilteredContent = filtered.length > 0 || filteredAlerts.length > 0;
+
+  function handleDismissAll() {
+    if (
+      !window.confirm(
+        "Dismiss all visible updates? You can find them again under the Dismissed tab."
+      )
+    ) {
+      return;
+    }
+    onDismissAll();
+  }
+
+  function handleRestoreAll() {
+    if (!onRestoreAll) return;
+    if (!window.confirm("Restore all dismissed updates to your inbox?")) return;
+    onRestoreAll();
+    setView("inbox");
+  }
 
   return (
     <div className="space-y-4">
@@ -237,7 +342,31 @@ export function OpsUpdatesPanel({
             className="w-full border border-border rounded-xl px-4 py-2.5 text-sm bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-400"
           />
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-2 shrink-0 flex-wrap">
+          <div className="inline-flex rounded-lg border border-border bg-white p-0.5 shadow-sm">
+            <button
+              type="button"
+              onClick={() => setView("inbox")}
+              className={`text-xs font-medium px-3 py-1.5 rounded-md transition-colors ${
+                view === "inbox"
+                  ? "bg-brand-600 text-white"
+                  : "text-muted hover:text-slate-900 hover:bg-slate-50"
+              }`}
+            >
+              Inbox
+            </button>
+            <button
+              type="button"
+              onClick={() => setView("dismissed")}
+              className={`text-xs font-medium px-3 py-1.5 rounded-md transition-colors ${
+                view === "dismissed"
+                  ? "bg-slate-700 text-white"
+                  : "text-muted hover:text-slate-900 hover:bg-slate-50"
+              }`}
+            >
+              Dismissed{dismissedCount > 0 ? ` (${dismissedCount})` : ""}
+            </button>
+          </div>
           {onRefresh && (
             <button
               type="button"
@@ -247,24 +376,47 @@ export function OpsUpdatesPanel({
               Refresh
             </button>
           )}
-          {hasContent && (
+          {view === "inbox" && hasInboxContent && (
             <button
               type="button"
-              onClick={onDismissAll}
+              onClick={handleDismissAll}
               className="text-xs font-medium text-muted hover:text-slate-900 px-3 py-2 rounded-lg hover:bg-slate-100"
             >
               Dismiss all
             </button>
           )}
+          {view === "dismissed" && hasArchiveContent && onRestoreAll && (
+            <button
+              type="button"
+              onClick={handleRestoreAll}
+              className="text-xs font-medium text-brand-700 hover:text-brand-900 px-3 py-2 rounded-lg hover:bg-brand-50"
+            >
+              Restore all
+            </button>
+          )}
         </div>
       </div>
 
-      {!hasContent ? (
+      {view === "dismissed" && (
+        <p className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+          Dismissed updates are kept here — nothing is deleted. Use <strong>Restore</strong> to
+          bring an item back to your inbox.
+        </p>
+      )}
+
+      {view === "inbox" && !hasInboxContent ? (
         <div className="rounded-2xl border border-dashed border-border bg-slate-50/80 px-6 py-12 text-center">
           <p className="text-sm font-medium text-slate-700">No updates yet</p>
           <p className="text-xs text-muted mt-1 max-w-md mx-auto">
             Map stage completions and field complete / incomplete updates from graphics and ops.
             Shift alerts appear here when supervisors are on shift without a shift leader.
+          </p>
+        </div>
+      ) : view === "dismissed" && !hasArchiveContent ? (
+        <div className="rounded-2xl border border-dashed border-border bg-slate-50/80 px-6 py-12 text-center">
+          <p className="text-sm font-medium text-slate-700">No dismissed updates</p>
+          <p className="text-xs text-muted mt-1 max-w-md mx-auto">
+            When you dismiss an update by mistake, it will appear here so you can restore it.
           </p>
         </div>
       ) : !hasFilteredContent ? (
@@ -278,7 +430,9 @@ export function OpsUpdatesPanel({
             subtitle="Upload, polish, and QA stage completions"
             accent="graphics"
             items={graphics}
-            onDismiss={onDismiss}
+            onDismiss={view === "inbox" ? onDismiss : undefined}
+            onRestore={view === "dismissed" ? onRestore : undefined}
+            muted={view === "dismissed"}
             emptyLabel={
               search ? "No graphics updates match your search." : "No graphics updates yet."
             }
@@ -289,7 +443,9 @@ export function OpsUpdatesPanel({
             accent="ops"
             items={ops}
             shiftAlerts={filteredAlerts}
-            onDismiss={onDismiss}
+            onDismiss={view === "inbox" ? onDismiss : undefined}
+            onRestore={view === "dismissed" ? onRestore : undefined}
+            muted={view === "dismissed"}
             emptyLabel={search ? "No ops updates match your search." : "No ops updates yet."}
           />
         </div>

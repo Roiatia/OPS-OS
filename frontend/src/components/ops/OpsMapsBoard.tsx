@@ -47,13 +47,17 @@ import {
   formatFieldDateTime,
   getOpsPipelineLabel,
   getOpsStatusLabel,
+  getReadyToAcceptMaps,
+  isReadyToRelease,
   matchesOpsQueue,
   needsSupervisorAssignment,
   OPS_QUEUE_TABS,
   opsPipelineTone,
   opsStatusTone,
+  sortOpsMaps,
   type OpsMapQueue,
 } from "../../lib/opsDisplay";
+import { ReadyToAcceptModal } from "./ReadyToAcceptModal";
 import type { OpsWorkloadAlert } from "../../lib/opsWorkload";
 
 interface Props {
@@ -61,12 +65,21 @@ interface Props {
   team: TeamMember[];
   workloadAlerts: OpsWorkloadAlert[];
   onRefresh: () => void;
+  readyPanelOpen?: boolean;
+  onReadyPanelOpenChange?: (open: boolean) => void;
 }
 
 const filterInputClass =
   "w-full border border-border rounded px-2 py-1 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-brand-500";
 
-export function OpsMapsBoard({ maps, team, workloadAlerts, onRefresh }: Props) {
+export function OpsMapsBoard({
+  maps,
+  team,
+  workloadAlerts,
+  onRefresh,
+  readyPanelOpen,
+  onReadyPanelOpenChange,
+}: Props) {
   const [queue, setQueue] = useState<OpsMapQueue>("all");
   const [columnFilters, setColumnFilters] = useState<MapColumnFilters>(EMPTY_COLUMN_FILTERS);
   const [phaseFilter, setPhaseFilter] = useState("");
@@ -82,6 +95,17 @@ export function OpsMapsBoard({ maps, team, workloadAlerts, onRefresh }: Props) {
   const [shuffleStep, setShuffleStep] = useState<"pick" | "preview">("pick");
   const [shuffleSupervisorIds, setShuffleSupervisorIds] = useState<Set<string>>(new Set());
   const [shuffleInspectorIds, setShuffleInspectorIds] = useState<Set<string>>(new Set());
+  const [internalReadyPanelOpen, setInternalReadyPanelOpen] = useState(false);
+
+  const readyMaps = useMemo(() => getReadyToAcceptMaps(maps), [maps]);
+  const readyPanelIsOpen = readyPanelOpen ?? internalReadyPanelOpen;
+
+  function setReadyPanelOpen(open: boolean) {
+    onReadyPanelOpenChange?.(open);
+    if (readyPanelOpen === undefined) {
+      setInternalReadyPanelOpen(open);
+    }
+  }
 
   const supervisors = team.filter(memberIsSupervisor);
   const inspectors = team.filter((m) => m.roles.some((r) => r.role === "MAPPING_INSPECTOR"));
@@ -118,11 +142,13 @@ export function OpsMapsBoard({ maps, team, workloadAlerts, onRefresh }: Props) {
 
   const filteredMaps = useMemo(
     () =>
-      maps.filter((map) => {
-        if (!matchesOpsQueue(map, queue)) return false;
-        if (phaseFilter && getOpsPipelineLabel(map) !== phaseFilter) return false;
-        return matchesColumnFilters(map, columnFilters);
-      }),
+      sortOpsMaps(
+        maps.filter((map) => {
+          if (!matchesOpsQueue(map, queue)) return false;
+          if (phaseFilter && getOpsPipelineLabel(map) !== phaseFilter) return false;
+          return matchesColumnFilters(map, columnFilters);
+        })
+      ),
     [maps, queue, phaseFilter, columnFilters]
   );
 
@@ -382,6 +408,16 @@ export function OpsMapsBoard({ maps, team, workloadAlerts, onRefresh }: Props) {
           ))}
         </div>
 
+        {readyMaps.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setReadyPanelOpen(true)}
+            className="px-3 py-1.5 text-sm font-medium rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm shadow-emerald-600/20"
+          >
+            Ready to accept ({readyMaps.length})
+          </button>
+        )}
+
         {selectedForShuffle.length > 0 && (
           <button
             type="button"
@@ -573,8 +609,16 @@ export function OpsMapsBoard({ maps, team, workloadAlerts, onRefresh }: Props) {
               filteredMaps.map((map) => {
                 const taskType = getTaskType(map);
                 const graphicsState = getMapDisplayState(map);
+                const ready = isReadyToRelease(map);
                 return (
-                  <tr key={map.id} className="hover:bg-slate-50/50 align-top">
+                  <tr
+                    key={map.id}
+                    className={`align-top ${
+                      ready
+                        ? "bg-emerald-50/70 hover:bg-emerald-50 ring-1 ring-inset ring-emerald-200/60"
+                        : "hover:bg-slate-50/50"
+                    }`}
+                  >
                     <td className="px-3 py-3">
                       <input
                         type="checkbox"
@@ -1001,6 +1045,13 @@ export function OpsMapsBoard({ maps, team, workloadAlerts, onRefresh }: Props) {
           </div>
         </Modal>
       )}
+
+      <ReadyToAcceptModal
+        maps={readyMaps}
+        open={readyPanelIsOpen}
+        onClose={() => setReadyPanelOpen(false)}
+        onAccepted={onRefresh}
+      />
     </section>
   );
 }

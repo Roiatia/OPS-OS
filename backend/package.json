@@ -15,6 +15,7 @@
     "db:reseed-maps": "tsx prisma/reseed-demo-maps.ts",
     "db:reseed-updates": "tsx prisma/reseed-demo-updates.ts",
     "db:reseed-reports": "tsx prisma/seed-demo-reports.ts",
+    "db:hub-demo": "node scripts/hub-demo-setup.mjs",
     "db:setup": "prisma migrate deploy && tsx prisma/seed.ts",
     "db:find-pooler": "node scripts/find-pooler.mjs",
     "db:check": "node scripts/check-db.mjs",
@@ -30,9 +31,11 @@
   "dependencies": {
     "@prisma/client": "^6.9.0",
     "cors": "^2.8.5",
+    "csv-parse": "^7.0.1",
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
     "google-auth-library": "^9.15.1",
+    "googleapis": "^173.0.0",
     "jsonwebtoken": "^9.0.2"
   },
   "devDependencies": {

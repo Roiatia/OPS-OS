@@ -10,13 +10,13 @@ import {
   HUB_DRAG_MIME,
   hubDropPayload,
   mapInHubZone,
-  nextProgress,
   poolMaps,
   shortName,
   statusColumnMaps,
   supervisorMaps,
   type HubDropZone,
 } from "../../lib/hubDisplay";
+import { normalizeMapRecord } from "../../lib/mapSync";
 import {
   hasOpsManagerRole,
   hasShiftLeaderRole,
@@ -58,9 +58,10 @@ const PROGRESS_OPTIONS = [0, 25, 50, 75, 100];
 
 /**
  * Who may drag a specific map:
- * - OPS manager → any map
- * - Shift leader → any map
- * - Supervisor → only maps assigned to them (not others', not unassigned intake)
+ * - OPS manager → any map (including restoring cancelled)
+ * - Shift leader → any non-cancelled map
+ * - Supervisor → only maps assigned to them
+ * - Cancelled → OPS manager only
  */
 export function canUserDragHubMap(
   map: MapRecord,
@@ -72,8 +73,14 @@ export function canUserDragHubMap(
   }
 ): boolean {
   if (opts.savingMapId === map.id) return false;
+  if (map.fieldWorkStatus === "CANCELLED") return opts.isOpsManager;
   if (opts.isOpsManager || opts.isShiftLeader) return true;
   return map.assignedSupervisor?.id === opts.currentUserId;
+}
+
+/** Progress % control only on maps in the Uncompleted end-of-day column */
+export function showHubProgressControl(map: MapRecord): boolean {
+  return map.onHubStatusBoard && map.fieldWorkStatus === "UNCOMPLETED";
 }
 
 export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
@@ -91,8 +98,12 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
     reason: string;
     percent: number;
   } | null>(null);
+  const [progressDraft, setProgressDraft] = useState<{ mapId: string; pct: number } | null>(
+    null
+  );
 
   const draggedMapIdRef = useRef<string | null>(null);
+  const pendingDropRef = useRef<Set<string>>(new Set());
   const onMutateRef = useRef(onMutate);
   onMutateRef.current = onMutate;
 
@@ -218,6 +229,7 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
   ) {
     const map = maps.find((m) => m.id === mapId);
     if (!map) return;
+    if (pendingDropRef.current.has(mapId)) return;
 
     const dropPayload = {
       ...hubDropPayload(zone),
@@ -226,10 +238,9 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
 
     const optimistic = applyHubDropLocally(map, zone, supervisors, extras);
     const previousMaps = maps;
-    const previousSupervisors = supervisors;
 
+    pendingDropRef.current.add(mapId);
     setMaps((prev) => prev.map((m) => (m.id === mapId ? optimistic : m)));
-    setSavingMapId(mapId);
     setError("");
     setActiveDropZone(null);
     setDraggingId(null);
@@ -237,20 +248,14 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
 
     try {
       const updated = await api.updateHubMap(mapId, dropPayload);
-      const normalized = {
-        ...updated,
-        fieldProgressPercent: updated.fieldProgressPercent ?? 0,
-        onHubStatusBoard: updated.onHubStatusBoard ?? false,
-      };
+      const normalized = normalizeMapRecord(updated);
       setMaps((prev) => prev.map((m) => (m.id === mapId ? normalized : m)));
       onMutateRef.current?.(normalized);
-      void load(true);
     } catch (err) {
       setMaps(previousMaps);
-      setSupervisors(previousSupervisors);
       setError((err as Error).message);
     } finally {
-      setSavingMapId(null);
+      pendingDropRef.current.delete(mapId);
       draggedMapIdRef.current = null;
     }
   }
@@ -283,18 +288,18 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
     await commitDrop(zone, mapId);
   }
 
-  async function handleProgressClick(map: MapRecord) {
-    if (map.fieldWorkStatus !== "UNCOMPLETED") return;
+  async function handleProgressSet(map: MapRecord, pct: number) {
+    if (!showHubProgressControl(map)) return;
     if (!canDrag(map)) return;
-    const pct = nextProgress(map.fieldProgressPercent ?? 0);
+    if (pct === (map.fieldProgressPercent ?? 0)) return;
     setSavingMapId(map.id);
     try {
       const updated = await api.updateHubMap(map.id, { fieldProgressPercent: pct });
-      const normalized = {
+      const normalized = normalizeMapRecord({
+        ...map,
         ...updated,
         fieldProgressPercent: updated.fieldProgressPercent ?? pct,
-        onHubStatusBoard: updated.onHubStatusBoard ?? false,
-      };
+      });
       setMaps((prev) => prev.map((m) => (m.id === map.id ? normalized : m)));
       onMutateRef.current?.(normalized);
     } catch (err) {
@@ -325,12 +330,18 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
     const isDragging = draggingId === map.id;
     const assignedToMe = map.assignedSupervisor?.id === currentUserId;
     const lockHint = !draggable
-      ? map.assignedSupervisor
-        ? assignedToMe
-          ? null
-          : `Only ${map.assignedSupervisor.name.split(" ")[0]}, shift leaders & OPS can move this`
-        : "Assign to a supervisor first (OPS only)"
+      ? map.fieldWorkStatus === "CANCELLED"
+        ? "Cancelled — only OPS manager can restore"
+        : map.assignedSupervisor
+          ? assignedToMe
+            ? null
+            : `Only ${map.assignedSupervisor.name.split(" ")[0]}, shift leaders & OPS can move this`
+          : "Assign to a supervisor first (OPS only)"
       : null;
+    const pct = map.fieldProgressPercent ?? 0;
+    const displayPct =
+      progressDraft?.mapId === map.id ? progressDraft.pct : pct;
+    const showProgressBar = showProgress && showHubProgressControl(map);
 
     return (
       <div
@@ -376,18 +387,39 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
         {lockHint && (
           <p className="text-[10px] text-amber-800 mt-1.5 leading-snug">{lockHint}</p>
         )}
-        {showProgress && map.fieldWorkStatus === "UNCOMPLETED" && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              void handleProgressClick(map);
-            }}
-            disabled={isSaving || !draggable}
-            className="mt-2 w-full text-left text-[11px] font-semibold text-brand-700 bg-brand-50 hover:bg-brand-100 rounded-lg px-2 py-1.5 disabled:opacity-50"
-          >
-            {isSaving ? "Saving…" : `${map.fieldProgressPercent ?? 0}% complete`}
-          </button>
+        {showProgressBar && (
+          <div className="mt-2.5 space-y-1" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between text-[10px] font-semibold text-amber-900">
+              <span>Progress</span>
+              <span className="tabular-nums">
+                {isSaving && progressDraft?.mapId === map.id ? "Saving…" : `${displayPct}%`}
+              </span>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={25}
+              value={displayPct}
+              disabled={isSaving || !draggable}
+              onChange={(e) =>
+                setProgressDraft({ mapId: map.id, pct: Number(e.target.value) })
+              }
+              onPointerUp={() => {
+                const next =
+                  progressDraft?.mapId === map.id ? progressDraft.pct : displayPct;
+                setProgressDraft(null);
+                void handleProgressSet(map, next);
+              }}
+              className="w-full h-2 accent-amber-600 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              aria-label={`Field progress ${displayPct}%`}
+            />
+            <div className="flex justify-between text-[9px] text-muted tabular-nums px-0.5">
+              {[0, 25, 50, 75, 100].map((n) => (
+                <span key={n}>{n}%</span>
+              ))}
+            </div>
+          </div>
         )}
       </div>
     );
@@ -478,7 +510,13 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
       )}
       {isShiftLeader && !isOpsManager && (
         <p className="text-xs text-muted bg-violet-50 border border-violet-200 rounded-xl px-3 py-2">
-          Shift leader — you can drag any map on today&apos;s board to Completed / Uncompleted / Cancelled.
+          Shift leader — you can drag any active map to Completed / Uncompleted / Cancelled. Cancelled maps are OPS-only to restore.
+        </p>
+      )}
+      {isOpsManager &&
+        maps.some((m) => m.fieldWorkStatus === "CANCELLED" && m.onHubStatusBoard) && (
+        <p className="text-xs text-muted bg-brand-50 border border-brand-200 rounded-xl px-3 py-2">
+          Drag cancelled maps back to Intake or a supervisor column to restore them to today&apos;s list.
         </p>
       )}
 
@@ -551,7 +589,7 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
                           </span>
                         </div>
                         <div className="p-2.5">
-                          {dropZone(zone, supMaps, "min-h-[110px]", true)}
+                          {dropZone(zone, supMaps, "min-h-[110px]", false)}
                         </div>
                       </div>
                     );

@@ -20,7 +20,8 @@ export const ACTIVITY_LABELS: Record<string, string> = {
   fix_done: "Polish fixes complete",
   inspector_done: "Graphics work complete",
   field_complete: "Mapping accepted — sent to polish",
-  hub_completed: "Field mapping complete",
+  hub_completed: "Ready to accept — field mapping complete",
+  supervisor_field_done: "Ready to accept — supervisor marked complete",
   hub_uncompleted: "Field mapping incomplete",
   hub_cancelled: "Map cancelled",
 };
@@ -105,9 +106,13 @@ export function splitByTeam(messages: OpsActivityMessage[]): {
   return { graphics, ops };
 }
 
+export function isReadyToAcceptMilestone(action: string): boolean {
+  return action === "hub_completed" || action === "supervisor_field_done";
+}
+
 export function isCompleteMilestone(action: string): boolean {
   return (
-    action === "hub_completed" ||
+    isReadyToAcceptMilestone(action) ||
     action === "upload_approved" ||
     action === "qa_approved" ||
     action === "fix_done" ||

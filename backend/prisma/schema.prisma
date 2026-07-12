@@ -69,6 +69,7 @@ model User {
   avatarUrl String?
   googleId  String?    @unique
   shiftStartedAt DateTime?
+  fridayContract   Boolean  @default(false)
   roles     UserRole[]
   assignedMapsAsInspector Map[]  @relation("InspectorMaps")
   assignedMapsAsQa      Map[]  @relation("QaMaps")
@@ -79,6 +80,7 @@ model User {
   phaseHistory            MapPhaseHistory[]
   attachments             MapAttachment[]
   notes                   MapNote[]
+  availabilitySubmissions AvailabilitySubmission[]
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
 }
@@ -206,4 +208,35 @@ model OpsDailyReport {
   createdAt   DateTime @default(now())
 
   @@index([reportDate(sort: Desc)])
+}
+
+model AvailabilitySubmission {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  weekStart      DateTime @db.Date
+  fridayContract Boolean  @default(false)
+  note           String?
+  submittedAt    DateTime?
+  days           AvailabilityDay[]
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([userId, weekStart])
+  @@index([weekStart])
+}
+
+model AvailabilityDay {
+  id           String   @id @default(cuid())
+  submissionId String
+  submission   AvailabilitySubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  dayOfWeek    Int
+  canWork      Boolean
+  allDay       Boolean  @default(false)
+  startMinutes Int?
+  endMinutes   Int?
+  note         String?
+
+  @@unique([submissionId, dayOfWeek])
+  @@index([submissionId])
 }

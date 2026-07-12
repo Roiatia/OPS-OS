@@ -5,6 +5,7 @@ import { SettingsPanel } from "../components/leader/SettingsPanel";
 import { MapHubBoard } from "../components/hub/MapHubBoard";
 import { OpsHistoryPanel } from "../components/ops/OpsHistoryPanel";
 import { OpsMapsBoard } from "../components/ops/OpsMapsBoard";
+import { SpreadsheetSyncPanel } from "../components/ops/SpreadsheetSyncPanel";
 import { OpsReportsPanel } from "../components/ops/OpsReportsPanel";
 import { OpsUpdatesPanel } from "../components/ops/OpsUpdatesPanel";
 import { OpsManagerSidebar, type OpsSection } from "../components/ops/OpsManagerSidebar";
@@ -17,6 +18,7 @@ import {
   matchesOpsQueue,
 } from "../lib/opsDisplay";
 import { getOpsWorkloadAlerts } from "../lib/opsWorkload";
+import { patchMapInList, normalizeMapRecord } from "../lib/mapSync";
 import { useOpsUpdates } from "../lib/useOpsUpdates";
 import { useAuth } from "../context/AuthContext";
 import type { MapRecord, TeamMember } from "../types";
@@ -52,7 +54,7 @@ const SECTION_TITLES: Record<OpsSection, { title: string; subtitle: string }> = 
   },
   availability: {
     title: "Availability",
-    subtitle: "",
+    subtitle: "Supervisor & shift leader shifts — plan coverage vs CS map volume",
   },
   confluence: {
     title: "Confluence",
@@ -71,6 +73,7 @@ export function OpsManagerDashboardPage() {
   const [team, setTeam] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddMap, setShowAddMap] = useState(false);
+  const [readyPanelOpen, setReadyPanelOpen] = useState(false);
   const [error, setError] = useState("");
   const [activeSection, setActiveSection] = useState<OpsSection>("hub");
   const [form, setForm] = useState({
@@ -107,11 +110,26 @@ export function OpsManagerDashboardPage() {
     load();
   }, [load]);
 
+  /** Keep Maps table in sync with Hub — own actions + supervisors on shift */
   useEffect(() => {
-    if (activeSection !== "maps" && activeSection !== "team") return;
-    const interval = setInterval(() => load(true), 30_000);
+    const interval = setInterval(() => load(true), 20_000);
     return () => clearInterval(interval);
-  }, [activeSection, load]);
+  }, [load]);
+
+  const opsUpdates = useOpsUpdates(() => load(true));
+
+  const handleHubMutate = useCallback(
+    (updated?: MapRecord) => {
+      if (!updated) return;
+      const normalized = normalizeMapRecord(updated);
+      setMaps((prev) => patchMapInList(prev, updated));
+      // Refresh Updates for hub status moves and when a map becomes ready to accept
+      if (updated.onHubStatusBoard || isReadyToRelease(normalized)) {
+        void opsUpdates.refresh();
+      }
+    },
+    [opsUpdates]
+  );
 
   async function handleAddMap(e: React.FormEvent) {
     e.preventDefault();
@@ -138,7 +156,7 @@ export function OpsManagerDashboardPage() {
       total: maps.length,
       newFromCs: maps.filter((m) => matchesOpsQueue(m, "new_from_cs")).length,
       atGraphics: maps.filter((m) => isAtGraphics(m)).length,
-      field: maps.filter((m) => matchesOpsQueue(m, "field")).length,
+      fieldOps: maps.filter((m) => m.phase === "FIELD").length,
       ready: maps.filter((m) => isReadyToRelease(m)).length,
     }),
     [maps]
@@ -155,8 +173,6 @@ export function OpsManagerDashboardPage() {
     [team, maps, allMaps]
   );
 
-  const opsUpdates = useOpsUpdates(() => load(true));
-
   const { title, subtitle } = SECTION_TITLES[activeSection];
 
   return (
@@ -164,7 +180,7 @@ export function OpsManagerDashboardPage() {
       <OpsManagerSidebar
         activeSection={activeSection}
         onSectionChange={setActiveSection}
-        fieldCount={stats.field}
+        fieldCount={stats.fieldOps}
         readyCount={stats.ready}
         lightLoadCount={workloadAlerts.length}
         updateCount={opsUpdates.unreadCount}
@@ -190,7 +206,7 @@ export function OpsManagerDashboardPage() {
 
           {activeSection === "maps" && (
             <p className="text-xs text-muted -mt-4">
-              Table refreshes every 30s when supervisors update field work. CRM sync coming later.
+              Stays in sync with Hub — supervisor complete / incomplete / cancelled updates appear here within seconds.
             </p>
           )}
 
@@ -198,24 +214,20 @@ export function OpsManagerDashboardPage() {
             <MapHubBoard
               mode="ops"
               currentUserId={user.id}
-              onMutate={(updated) => {
-                if (updated) {
-                  setMaps((prev) =>
-                    prev.map((m) => (m.id === updated.id ? { ...m, ...updated } : m))
-                  );
-                }
-                void load(true);
-                // Pull hub_completed / hub_uncompleted into Updates immediately
-                void opsUpdates.refresh();
-              }}
+              onMutate={handleHubMutate}
             />
           ) : activeSection === "updates" ? (
             <OpsUpdatesPanel
               updates={opsUpdates.updates}
               shiftAlerts={opsUpdates.shiftAlerts}
+              dismissedUpdates={opsUpdates.dismissedUpdates}
+              dismissedAlerts={opsUpdates.dismissedAlerts}
+              dismissedCount={opsUpdates.dismissedCount}
               isDemoPreview={opsUpdates.isDemoPreview}
               onDismiss={opsUpdates.dismiss}
               onDismissAll={opsUpdates.dismissAll}
+              onRestore={opsUpdates.restore}
+              onRestoreAll={opsUpdates.restoreAll}
               onRefresh={opsUpdates.refresh}
             />
           ) : activeSection === "reports" ? (
@@ -226,30 +238,24 @@ export function OpsManagerDashboardPage() {
             <>
               {activeSection === "maps" && (
                 <>
-                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                     {[
                       { label: "All maps", value: stats.total },
                       { label: "New from CS", value: stats.newFromCs },
                       { label: "At graphics", value: stats.atGraphics },
-                      { label: "Field work", value: stats.field },
-                      {
-                        label: "Ready to accept",
-                        value: stats.ready,
-                        highlight: stats.ready > 0,
-                      },
+                      { label: "maps in field ops", value: stats.fieldOps },
                     ].map((s) => (
-                      <div key={s.label} className="bg-card border border-border rounded-2xl p-4 shadow-sm">
-                        <div
-                          className={`text-2xl font-bold ${
-                            s.highlight ? "text-emerald-600" : "text-brand-600"
-                          }`}
-                        >
-                          {s.value}
-                        </div>
+                      <div
+                        key={s.label}
+                        className="bg-card border border-border rounded-2xl p-4 shadow-sm"
+                      >
+                        <div className="text-2xl font-bold text-brand-600">{s.value}</div>
                         <div className="text-sm text-muted">{s.label}</div>
                       </div>
                     ))}
                   </div>
+
+                  <SpreadsheetSyncPanel onSynced={load} />
 
                   {showAddMap && (
                     <form
@@ -321,7 +327,12 @@ export function OpsManagerDashboardPage() {
                     maps={maps}
                     team={team}
                     workloadAlerts={workloadAlerts}
-                    onRefresh={load}
+                    onRefresh={() => {
+                      load();
+                      void opsUpdates.refresh();
+                    }}
+                    readyPanelOpen={readyPanelOpen}
+                    onReadyPanelOpenChange={setReadyPanelOpen}
                   />
                 </>
               )}

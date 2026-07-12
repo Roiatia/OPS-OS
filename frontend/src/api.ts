@@ -58,6 +58,19 @@ export const api = {
 
   getHistoryMaps: () => request<import("./types").MapRecord[]>("/maps/history"),
 
+  syncSpreadsheet: (body: { csv?: string; sheetTab?: string } = {}) =>
+    request<{
+      imported: number;
+      updated: number;
+      skipped: number;
+      history: number;
+      todayHub: number;
+      errors: string[];
+    }>("/maps/sync-spreadsheet", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
   getMap: (id: string) => request<import("./types").MapRecord>(`/maps/${id}`),
 
   getTeam: () => request<import("./types").TeamMember[]>("/maps/team"),
@@ -258,6 +271,33 @@ export const api = {
 
   getReport: (id: string) =>
     request<import("./types/report").OpsDailyReportDetail>(`/reports/${id}`),
+
+  getMyAvailability: (weekStart?: string) =>
+    request<import("./types/availability").AvailabilitySubmission>(
+      `/availability/mine${buildQuery({ weekStart })}`
+    ),
+
+  saveMyAvailability: (body: {
+    weekStart?: string;
+    fridayContract: boolean;
+    days: {
+      dayOfWeek: number;
+      canWork: boolean;
+      allDay?: boolean;
+      startMinutes?: number | null;
+      endMinutes?: number | null;
+      note?: string | null;
+    }[];
+  }) =>
+    request<import("./types/availability").AvailabilitySubmission>("/availability/mine", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+
+  getAvailabilityRoster: (weekStart?: string) =>
+    request<import("./types/availability").AvailabilityRoster>(
+      `/availability/roster${buildQuery({ weekStart })}`
+    ),
 };
 
 export function setAuthToken(token: string | null) {

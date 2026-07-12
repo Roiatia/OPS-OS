@@ -3,6 +3,7 @@ import { InspectorStatus, MapPhase, QaStatus, RoleName, SupervisorStatus, FieldW
 import { authMiddleware, requireRoles, type AuthedRequest } from "../middleware/auth.js";
 import { userHasOpsManagerRole } from "../lib/roles.js";
 import * as workflow from "../services/workflow.js";
+import { syncMapsFromSpreadsheet } from "../services/spreadsheetSync.js";
 
 const router = Router();
 router.use(authMiddleware);
@@ -503,6 +504,26 @@ router.patch("/tasks/:taskId", async (req, res) => {
     }
     const task = await workflow.updateTaskStatus(req.params.taskId, status, (req as AuthedRequest).user);
     res.json(task);
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+/** Import / update maps from Oriient Field Operations spreadsheet (CSV upload or Google Sheets). */
+router.post("/sync-spreadsheet", requireRoles(RoleName.OPS_ADMIN, RoleName.OPS_MANAGER_2), async (req, res) => {
+  try {
+    const { csv, sheetTab } = req.body as { csv?: string; sheetTab?: string };
+    if (!csv?.trim() && !process.env.GOOGLE_SHEETS_SPREADSHEET_ID) {
+      res.status(400).json({
+        error: "Upload a CSV file from Google Sheets (File → Download → CSV).",
+      });
+      return;
+    }
+    const result = await syncMapsFromSpreadsheet((req as AuthedRequest).user, {
+      csv: csv?.trim() || undefined,
+      sheetTab,
+    });
+    res.json(result);
   } catch (e) {
     res.status(400).json({ error: (e as Error).message });
   }

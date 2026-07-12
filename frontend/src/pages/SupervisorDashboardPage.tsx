@@ -8,6 +8,7 @@ import { SupervisorSidebar, type SupervisorSection } from "../components/supervi
 import { SupervisorTeamPanel } from "../components/supervisor/SupervisorTeamPanel";
 import { ConfluencePanel } from "../components/shared/ConfluencePanel";
 import { getSupervisorFieldStatus } from "../lib/supervisorDisplay";
+import { patchMapInList } from "../lib/mapSync";
 import { useAuth } from "../context/AuthContext";
 import type { MapRecord, TeamMember } from "../types";
 
@@ -16,19 +17,15 @@ const SECTION_TITLES: Record<SupervisorSection, { title: string; subtitle: strin
   maps: { title: "Maps", subtitle: "" },
   team: { title: "Team", subtitle: "All supervisors on the field ops team" },
   "company-dashboard": { title: "Dashboard", subtitle: "Field ops metrics and coverage" },
-  availability: { title: "Availability", subtitle: "" },
+  availability: {
+    title: "Availability",
+    subtitle: "Submit your weekly shifts — due every Sunday",
+  },
   confluence: { title: "Confluence", subtitle: "" },
   settings: { title: "Settings", subtitle: "Workspace preferences" },
 };
 
-function PlaceholderPanel({ title }: { title: string }) {
-  return (
-    <section className="rounded-xl border border-dashed border-border bg-white p-12 text-center">
-      <p className="text-lg font-semibold text-slate-800">{title}</p>
-      <p className="text-sm text-muted mt-2">Coming soon — we&apos;ll build this together.</p>
-    </section>
-  );
-}
+import { SupervisorAvailabilityForm } from "../components/availability/SupervisorAvailabilityForm";
 
 export function SupervisorDashboardPage() {
   const { user } = useAuth();
@@ -55,6 +52,20 @@ export function SupervisorDashboardPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    const interval = setInterval(() => load(true), 20_000);
+    return () => clearInterval(interval);
+  }, [load]);
+
+  const handleHubMutate = useCallback(
+    (updated?: MapRecord) => {
+      if (updated) {
+        setMaps((prev) => patchMapInList(prev, updated));
+      }
+    },
+    []
+  );
 
   const stats = useMemo(() => {
     const uncompleted = maps.filter((m) => getSupervisorFieldStatus(m) === "UNCOMPLETED").length;
@@ -87,14 +98,7 @@ export function SupervisorDashboardPage() {
             <MapHubBoard
               mode="supervisor"
               currentUserId={user.id}
-              onMutate={(updated) => {
-                if (updated) {
-                  setMaps((prev) =>
-                    prev.map((m) => (m.id === updated.id ? { ...m, ...updated } : m))
-                  );
-                }
-                void load(true);
-              }}
+              onMutate={handleHubMutate}
             />
           ) : loading ? (
             <p className="text-muted">Loading...</p>
@@ -132,7 +136,7 @@ export function SupervisorDashboardPage() {
 
               {activeSection === "company-dashboard" && <CompanyDashboardPanel />}
 
-              {activeSection === "availability" && <PlaceholderPanel title="Availability" />}
+              {activeSection === "availability" && <SupervisorAvailabilityForm />}
 
               {activeSection === "confluence" && <ConfluencePanel />}
 

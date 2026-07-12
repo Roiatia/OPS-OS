@@ -8,6 +8,7 @@ export const MILESTONE_ACTIONS = [
   "fix_done",
   "field_complete",
   "hub_completed",
+  "supervisor_field_done",
   "hub_uncompleted",
   "hub_cancelled",
 ] as const;
@@ -23,6 +24,7 @@ const GRAPHICS_MILESTONES = new Set<string>([
 const OPS_MILESTONES = new Set<string>([
   "field_complete",
   "hub_completed",
+  "supervisor_field_done",
   "hub_uncompleted",
   "hub_cancelled",
 ]);
@@ -39,7 +41,8 @@ export const ACTIVITY_LABELS: Record<string, string> = {
   fix_done: "Polish fixes complete",
   inspector_done: "Graphics work complete",
   field_complete: "Mapping accepted — sent to polish",
-  hub_completed: "Field mapping complete",
+  hub_completed: "Ready to accept — field mapping complete",
+  supervisor_field_done: "Ready to accept — supervisor marked complete",
   hub_uncompleted: "Field mapping incomplete",
   hub_cancelled: "Map cancelled",
 };

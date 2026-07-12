@@ -43,7 +43,10 @@ function hubMapsWhereClause() {
     phase: MapPhase.FIELD,
     uploadApproved: true,
     uploadCompletedAt: { not: null },
-    fieldWorkStatus: { not: FieldWorkStatus.CANCELLED },
+    OR: [
+      { fieldWorkStatus: { not: FieldWorkStatus.CANCELLED } },
+      { fieldWorkStatus: FieldWorkStatus.CANCELLED, onHubStatusBoard: true },
+    ],
   };
 }
 
@@ -129,6 +132,13 @@ const mapIncludes = {
     include: { user: { select: { id: true, name: true } } },
     orderBy: { createdAt: "asc" as const },
   },
+};
+
+/** Hub board + PATCH /hub — no events/notes/tasks (much faster over remote DB) */
+const hubMapIncludes = {
+  assignedInspector: { select: { id: true, name: true, email: true } },
+  assignedQa: { select: { id: true, name: true, email: true } },
+  assignedSupervisor: { select: { id: true, name: true, email: true } },
 };
 
 export async function listMapsForUser(user: AuthUser) {
@@ -1153,7 +1163,7 @@ export async function listHubMaps(user: AuthUser) {
   // may only move maps assigned to them.
   return prisma.map.findMany({
     where: hubMapsWhereClause(),
-    include: mapIncludes,
+    include: hubMapIncludes,
     orderBy: [{ fieldDate: "asc" }, { updatedAt: "desc" }],
   });
 }
@@ -1334,6 +1344,10 @@ export async function updateHubMap(
     );
   }
 
+  if (map.fieldWorkStatus === FieldWorkStatus.CANCELLED && !isOps) {
+    throw new Error("Only OPS manager can restore a cancelled map");
+  }
+
   if (!isOps && data.assignedSupervisorId !== undefined) {
     throw new Error("Only OPS manager can reassign supervisors in the hub");
   }
@@ -1409,17 +1423,8 @@ export async function updateHubMap(
     }
   }
 
-  await prisma.map.update({
-    where: { id: mapId },
-    data: patch,
-  });
-
   const actor = user.name;
-  const mapRef = await prisma.map.findUnique({
-    where: { id: mapId },
-    select: { mapNumber: true },
-  });
-  const mapLabel = mapRef?.mapNumber ?? mapId;
+  const mapLabel = map.mapNumber ?? mapId;
 
   const becameCompleted =
     patch.fieldWorkStatus === FieldWorkStatus.COMPLETED &&
@@ -1479,7 +1484,11 @@ export async function updateHubMap(
     );
   }
 
-  return prisma.map.findUnique({ where: { id: mapId }, include: mapIncludes });
+  return prisma.map.update({
+    where: { id: mapId },
+    data: patch,
+    include: hubMapIncludes,
+  });
 }
 
 /** Backfill phase history from map creation for maps missing entries */
