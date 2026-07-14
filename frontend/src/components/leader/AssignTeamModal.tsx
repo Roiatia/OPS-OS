@@ -27,6 +27,7 @@ interface Props {
   }) => void;
 }
 
+/** Modal for assigning both inspector and QA in one step. */
 export function AssignTeamModal({ map, team, maps, loading, onClose, onAssign }: Props) {
   const isIntake = map.phase === "INTAKE";
   const showInspector = canAssignInspector(map);
@@ -237,6 +238,7 @@ export function AssignTeamModal({ map, team, maps, loading, onClose, onAssign }:
   );
 }
 
+/** Reads an attachment file as base64 for team assignment upload. */
 function readFileAsBase64(file: File) {
   return new Promise<{ fileName: string; mimeType: string; data: string }>((resolve, reject) => {
     const reader = new FileReader();

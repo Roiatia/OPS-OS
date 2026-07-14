@@ -3,6 +3,7 @@ import type { MapRecord } from "../types";
 import { getMapDisplayState, getWorkflowTimelineLabel, workflowStateTone, workflowTimelineTone, getWorkflowTimelinePhase } from "../lib/mapDisplay";
 import { Badge } from "./Badge";
 
+/** Summary card linking to a map's detail page. */
 export function MapCard({ map }: { map: MapRecord }) {
   const state = getMapDisplayState(map);
 

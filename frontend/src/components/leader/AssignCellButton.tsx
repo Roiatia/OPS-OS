@@ -6,6 +6,7 @@ interface Props {
   onClick: () => void;
 }
 
+/** Pipeline table cell button for assigning or viewing an assignee. */
 export function AssignCellButton({ assigned, assigneeName, tone, disabled, onClick }: Props) {
   const styles =
     tone === "brand"

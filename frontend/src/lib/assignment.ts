@@ -31,8 +31,9 @@ export function countInspectorActiveMaps(maps: MapRecord[], userId: string): num
 }
 
 /**
- * Balanced distribution: each map goes to the inspector with the fewest total
- * active maps (existing workload + maps already assigned in this batch).
+ * Greedy least-loaded assignment (client-side shuffle preview).
+ * For each map: pick the inspector with the lowest current count (name as tiebreak),
+ * then bump their count so the next map spreads across the pool.
  */
 export function buildBalancedInspectorAssignments(
   mapsToAssign: MapRecord[],
@@ -61,6 +62,7 @@ export function buildBalancedInspectorAssignments(
   return assignments;
 }
 
+/** Assigns maps to QA reviewers using least-loaded balanced distribution. */
 export function buildBalancedQaAssignments(
   mapsToAssign: MapRecord[],
   qaMembers: Pick<TeamMember, "id" | "name">[],
@@ -87,6 +89,7 @@ export function buildBalancedQaAssignments(
   return assignments;
 }
 
+/** Summarizes a QA shuffle plan with per-member workload totals. */
 export function summarizeQaShufflePlan(
   plan: QaAssignment[],
   qaMembers: Pick<TeamMember, "id" | "name">[],
@@ -112,6 +115,7 @@ export function summarizeQaShufflePlan(
     .sort((a, b) => a.totalAfter - b.totalAfter || a.inspectorName.localeCompare(b.inspectorName));
 }
 
+/** Summarizes an inspector shuffle plan with per-member workload totals. */
 export function summarizeShufflePlan(
   plan: MapAssignment[],
   inspectors: Pick<TeamMember, "id" | "name">[],
@@ -137,6 +141,7 @@ export function summarizeShufflePlan(
     .sort((a, b) => a.totalAfter - b.totalAfter || a.inspectorName.localeCompare(b.inspectorName));
 }
 
+/** Picks the inspector with the fewest active maps from the given IDs. */
 export function pickLeastLoadedInspector(
   inspectorIds: string[],
   allMaps: MapRecord[]
@@ -181,6 +186,7 @@ export function countQaActiveMaps(maps: MapRecord[], userId: string): number {
   return countQaWorkload(maps, userId);
 }
 
+/** Picks the QA member with the fewest active maps from the given IDs. */
 export function pickLeastLoadedQa(qaIds: string[], allMaps: MapRecord[]): string | null {
   if (qaIds.length === 0) return null;
 

@@ -1,3 +1,4 @@
+/** Wraps children with a loading spinner overlay when busy. */
 export function LoadingField({
   loading,
   children,

@@ -11,6 +11,7 @@ const KNOWN_DEMO_EMAILS = [
   { email: "qa@ops-demo.local", label: "Graphic QA" },
 ];
 
+/** Sign-in page with demo and Google OAuth options. */
 export function LoginPage() {
   const { user, loginDemo, loginGoogle } = useAuth();
   const navigate = useNavigate();

@@ -9,6 +9,7 @@ import { MapDetailPage } from "./pages/MapDetailPage";
 import { Layout } from "./components/Layout";
 import { api } from "./api";
 
+/** Redirects unauthenticated users to the login page. */
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   if (loading) return <div className="min-h-screen flex items-center justify-center text-muted">Loading...</div>;
@@ -16,6 +17,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+/** Defines public and authenticated application routes. */
 function AppRoutes() {
   return (
     <Routes>
@@ -37,9 +39,11 @@ function AppRoutes() {
   );
 }
 
+/** Root app: OAuth provider, router, and auth wrapper. */
 export default function App() {
   const [googleClientId, setGoogleClientId] = useState<string | null>(null);
 
+  // Client id comes from the API so demo mode can run without Google configured.
   useEffect(() => {
     api.getConfig().then((c) => setGoogleClientId(c.googleClientId));
   }, []);
@@ -50,6 +54,7 @@ export default function App() {
     </AuthProvider>
   );
 
+  // Wrap with GoogleOAuthProvider only when a client id exists (otherwise demo login only).
   if (googleClientId) {
     return (
       <GoogleOAuthProvider clientId={googleClientId}>

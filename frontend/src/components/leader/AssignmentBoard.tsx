@@ -63,6 +63,11 @@ const QUEUE_TABS: { id: AssignmentQueue; label: string }[] = [
 const filterInputClass =
   "w-full border border-border rounded px-2 py-1 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-brand-500";
 
+/**
+ * Released/pipeline maps table (not the New Maps box).
+ * `maps` = rows to show; `allMaps` = option source for column filters so
+ * filter dropdowns still list clients/assignees from intake maps.
+ */
 export function AssignmentBoard({ maps, allMaps, team, onRefresh }: Props) {
   const [queue, setQueue] = useState<AssignmentQueue>("all");
   const [columnFilters, setColumnFilters] = useState<MapColumnFilters>(EMPTY_COLUMN_FILTERS);
@@ -75,6 +80,7 @@ export function AssignmentBoard({ maps, allMaps, team, onRefresh }: Props) {
   const [bulkQaId, setBulkQaId] = useState("");
   const [dueDateSaving, setDueDateSaving] = useState<string | null>(null);
   const [shuffleOpen, setShuffleOpen] = useState(false);
+  /** Two-step shuffle: pick inspectors → preview balanced plan → confirm. */
   const [shuffleStep, setShuffleStep] = useState<"pick" | "preview">("pick");
   const [shuffleInspectorIds, setShuffleInspectorIds] = useState<Set<string>>(new Set());
 
@@ -87,6 +93,7 @@ export function AssignmentBoard({ maps, allMaps, team, onRefresh }: Props) {
     [team]
   );
 
+  // Prefer full list for filter option values; fall back to table rows only.
   const filterSource = allMaps ?? maps;
 
   const filterOptions = useMemo(() => {

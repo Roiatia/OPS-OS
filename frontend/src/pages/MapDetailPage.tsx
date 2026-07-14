@@ -14,6 +14,7 @@ import { SHIFTS, getShiftInspectors } from "../lib/shifts";
 import { MAP_STATUS_OPTIONS } from "../lib/activeMapsWorkflow";
 import type { MapRecord, TeamMember, MapStatus } from "../types";
 
+/** Single-map detail view with timeline, status actions, and tasks. */
 export function MapDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -33,6 +34,7 @@ export function MapDetailPage() {
   const isQa = hasRole(user!, "GRAPHIC_QA");
   const isArchived = map?.phase === "APPROVED" || map?.phase === "CANCELLED";
 
+  /** Load this map by id (detail endpoint includes attachments + full history). */
   function load() {
     if (!id) return;
     api.getMap(id).then(setMap).catch((e) => setError((e as Error).message));
@@ -42,6 +44,8 @@ export function MapDetailPage() {
     load();
   }, [id]);
 
+  // Leaders need the full maps list + team for assign modals / workload hints.
+  // (Detail page still uses getMap for the primary record.)
   useEffect(() => {
     if (!user || !hasRole(user, "GRAPHIC_TEAM_LEADER", "OPS_ADMIN")) return;
     Promise.all([api.getMaps(), api.getTeam()]).then(([m, t]) => {
@@ -50,6 +54,7 @@ export function MapDetailPage() {
     });
   }, [user]);
 
+  /** Run a mutation and replace local `map` with the API response. */
   async function act(fn: () => Promise<MapRecord>) {
     setError("");
     try {
@@ -498,6 +503,7 @@ export function MapDetailPage() {
   );
 }
 
+/** Grouped action block with title, hint, and content on the map detail page. */
 function ActionBlock({
   title,
   hint,

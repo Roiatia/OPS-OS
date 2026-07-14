@@ -26,10 +26,12 @@ export type AuthUser = {
   roles: RoleName[];
 };
 
+/** True if the user has at least one of the given roles. */
 export function hasRole(user: AuthUser, ...roles: RoleName[]) {
   return roles.some((r) => user.roles.includes(r));
 }
 
+/** True if the user is a graphic team leader or OPS admin. */
 export function isLeaderOrAdmin(user: AuthUser) {
   return hasRole(user, RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN);
 }

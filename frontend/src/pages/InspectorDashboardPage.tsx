@@ -13,6 +13,7 @@ import {
 import { useMapsPolling } from "../lib/useMapsPolling";
 import type { MapRecord } from "../types";
 
+/** Inspector dashboard: inbox for new assignments and active maps table. */
 export function InspectorDashboardPage() {
   const { user } = useAuth();
   const [maps, setMaps] = useState<MapRecord[]>([]);
@@ -39,6 +40,7 @@ export function InspectorDashboardPage() {
 
   const softRefresh = useCallback(() => load({ soft: true }), [load]);
 
+  // Same GET /maps payload; client splits into Inbox (need Accept) vs Active (in progress).
   const inbox = useMemo(
     () => maps.filter((m) => isInspectorInbox(m, user!.id)),
     [maps, user]
@@ -103,6 +105,7 @@ export function InspectorDashboardPage() {
   );
 }
 
+/** QA dashboard: inbox for new assignments and active review queue. */
 export function QaDashboardPage() {
   const { user } = useAuth();
   const [maps, setMaps] = useState<MapRecord[]>([]);
@@ -129,6 +132,7 @@ export function QaDashboardPage() {
 
   const softRefresh = useCallback(() => load({ soft: true }), [load]);
 
+  // Inbox = intake awaiting QA accept; Active = assigned + review/fix queues.
   const inbox = useMemo(
     () => maps.filter((m) => isQaInbox(m, user!.id)),
     [maps, user]

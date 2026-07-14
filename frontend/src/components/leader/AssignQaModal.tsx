@@ -16,6 +16,7 @@ interface Props {
   }) => void;
 }
 
+/** Modal for assigning QA to a map with least-loaded suggestion. */
 export function AssignQaModal({ map, team, maps, loading, onClose, onAssign }: Props) {
   const [file, setFile] = useState<File | null>(null);
 
@@ -113,6 +114,7 @@ export function AssignQaModal({ map, team, maps, loading, onClose, onAssign }: P
   );
 }
 
+/** Reads an attachment file as base64 for QA assignment upload. */
 function readFileAsBase64(file: File) {
   return new Promise<{ fileName: string; mimeType: string; data: string }>((resolve, reject) => {
     const reader = new FileReader();

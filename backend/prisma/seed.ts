@@ -46,6 +46,7 @@ const DEMO_USERS = [
   },
 ];
 
+/** Upsert demo users and their roles. */
 async function seedUsers() {
   console.log("Seeding users...");
 
@@ -76,6 +77,7 @@ async function seedUsers() {
   }
 }
 
+/** Seed demo maps only if the maps table is empty. */
 async function seedSampleMaps() {
   const count = await prisma.map.count();
   if (count > 0) {
@@ -87,6 +89,7 @@ async function seedSampleMaps() {
   await seedDemoMaps(prisma);
 }
 
+/** Run user seed, then sample maps. */
 async function main() {
   await seedUsers();
   await seedSampleMaps();

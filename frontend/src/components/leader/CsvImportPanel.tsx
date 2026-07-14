@@ -11,6 +11,7 @@ interface Props {
   onBusyChange?: (busy: boolean) => void;
 }
 
+/** CSV upload, preview, and import flow for bulk map creation. */
 export function CsvImportPanel({ onImported, onCancel, onBusyChange }: Props) {
   const [fileName, setFileName] = useState("");
   const [csv, setCsv] = useState("");
@@ -35,6 +36,7 @@ export function CsvImportPanel({ onImported, onCancel, onBusyChange }: Props) {
     setCsv(text);
   }
 
+  /** Requests a CSV import preview from the backend. */
   async function runPreview() {
     if (!csv.trim()) {
       setError("Choose a CSV file first.");
@@ -53,6 +55,7 @@ export function CsvImportPanel({ onImported, onCancel, onBusyChange }: Props) {
     }
   }
 
+  /** Imports CSV data and triggers a refresh when complete. */
   async function runImport() {
     if (!csv.trim()) {
       setError("Choose a CSV file first.");

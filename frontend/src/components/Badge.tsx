@@ -15,6 +15,7 @@ const STYLES: Record<string, string> = {
   PENDING: "bg-slate-100 text-slate-600",
 };
 
+/** Colored pill label for phases, statuses, and workflow states. */
 export function Badge({ label, tone }: { label: string; tone?: string }) {
   const style = tone ? STYLES[tone] : "bg-slate-100 text-slate-700";
   return (

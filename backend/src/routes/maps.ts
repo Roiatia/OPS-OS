@@ -6,6 +6,7 @@ import * as workflow from "../services/workflow.js";
 const router = Router();
 router.use(authMiddleware);
 
+/** Preview Sam's Club CSV parse without writing to the DB. */
 router.post(
   "/import-csv/preview",
   requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN),
@@ -25,6 +26,7 @@ router.post(
   }
 );
 
+/** Import maps from Sam's Club CSV (leaders/admins). */
 router.post(
   "/import-csv",
   requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN),
@@ -51,6 +53,7 @@ router.post(
   }
 );
 
+/** List active maps for the current user. */
 router.get("/", async (req, res) => {
   try {
     const maps = await workflow.listMapsForUser((req as AuthedRequest).user);
@@ -60,6 +63,7 @@ router.get("/", async (req, res) => {
   }
 });
 
+/** List approved/cancelled history maps. */
 router.get("/history", requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN), async (req, res) => {
   try {
     const maps = await workflow.listHistoryMaps((req as AuthedRequest).user);
@@ -69,6 +73,7 @@ router.get("/history", requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_A
   }
 });
 
+/** Balance-assign inspectors + QA on selected new maps. */
 router.post(
   "/shuffle-assign-new",
   requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN),
@@ -96,6 +101,7 @@ router.post(
   }
 );
 
+/** Delete many maps at once. */
 router.post(
   "/bulk-delete",
   requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN),
@@ -114,6 +120,7 @@ router.post(
   }
 );
 
+/** Balance-assign inspectors on selected pipeline maps. */
 router.post(
   "/shuffle-assign",
   requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN),
@@ -143,11 +150,13 @@ router.post(
   }
 );
 
+/** List team members for assignment UIs. */
 router.get("/team", requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN), async (_req, res) => {
   const team = await workflow.listTeamMembers();
   res.json(team);
 });
 
+/** Create a map from Jira-style intake fields. */
 router.post(
   "/",
   requireRoles(RoleName.OPS_ADMIN, RoleName.GRAPHIC_TEAM_LEADER),
@@ -161,6 +170,7 @@ router.post(
   }
 );
 
+/** Get one map with full detail. */
 router.get("/:id", async (req, res) => {
   const map = await workflow.getMapForUser(req.params.id, (req as AuthedRequest).user);
   if (!map) {
@@ -170,6 +180,7 @@ router.get("/:id", async (req, res) => {
   res.json(map);
 });
 
+/** Assign an inspector to a map. */
 router.post(
   "/:id/assign",
   requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN),
@@ -196,6 +207,7 @@ router.post(
   }
 );
 
+/** Assign a QA reviewer to a map. */
 router.post(
   "/:id/assign-qa",
   requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN),
@@ -222,6 +234,7 @@ router.post(
   }
 );
 
+/** Release an intake map into the pipeline. */
 router.post(
   "/:id/release-to-pipeline",
   requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN),
@@ -238,6 +251,7 @@ router.post(
   }
 );
 
+/** Remove the inspector assignment. */
 router.post(
   "/:id/unassign",
   requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN),
@@ -254,6 +268,7 @@ router.post(
   }
 );
 
+/** Remove the QA assignment. */
 router.post(
   "/:id/unassign-qa",
   requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN),
@@ -267,6 +282,7 @@ router.post(
   }
 );
 
+/** Update workflow station / phase target. */
 router.patch(
   "/:id/workflow-phase-target",
   requireRoles(
@@ -297,6 +313,7 @@ router.patch(
   }
 );
 
+/** Update map station via legacy /:id/station alias. */
 router.patch(
   "/:id/station",
   requireRoles(
@@ -325,6 +342,7 @@ router.patch(
   }
 );
 
+/** Update a map due date. */
 router.patch(
   "/:id/due-date",
   requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN),
@@ -347,6 +365,7 @@ router.patch(
   }
 );
 
+/** Cancel a map. */
 router.post(
   "/:id/cancel",
   requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN),
@@ -361,6 +380,7 @@ router.post(
   }
 );
 
+/** Delete a single map. */
 router.delete(
   "/:id",
   requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN),
@@ -374,6 +394,7 @@ router.delete(
   }
 );
 
+/** Inspector accepts their assignment. */
 router.post("/:id/accept-assignment", requireRoles(RoleName.MAPPING_INSPECTOR), async (req, res) => {
   try {
     const map = await workflow.acceptInspectorAssignment(req.params.id, (req as AuthedRequest).user);
@@ -383,6 +404,7 @@ router.post("/:id/accept-assignment", requireRoles(RoleName.MAPPING_INSPECTOR), 
   }
 });
 
+/** QA accepts their assignment. */
 router.post("/:id/accept-qa-assignment", requireRoles(RoleName.GRAPHIC_QA), async (req, res) => {
   try {
     const map = await workflow.acceptQaAssignment(req.params.id, (req as AuthedRequest).user);
@@ -392,6 +414,7 @@ router.post("/:id/accept-qa-assignment", requireRoles(RoleName.GRAPHIC_QA), asyn
   }
 });
 
+/** Update unified map status. */
 router.patch("/:id/status", async (req, res) => {
   try {
     const { status, note, attachment } = req.body as {
@@ -424,6 +447,7 @@ router.patch("/:id/status", async (req, res) => {
   }
 });
 
+/** Inspector updates status on their map. */
 router.patch("/:id/inspector-status", requireRoles(RoleName.MAPPING_INSPECTOR), async (req, res) => {
   try {
     const { status, note } = req.body as { status?: MapStatus; note?: string };
@@ -443,6 +467,7 @@ router.patch("/:id/inspector-status", requireRoles(RoleName.MAPPING_INSPECTOR), 
   }
 });
 
+/** Add a note to a map. */
 router.post("/:id/notes", async (req, res) => {
   try {
     const { body } = req.body as { body?: string };
@@ -463,6 +488,7 @@ router.post("/:id/notes", async (req, res) => {
   }
 });
 
+/** QA upload-review decision (approve/reject). */
 router.post("/:id/upload-review", requireRoles(RoleName.GRAPHIC_QA, RoleName.OPS_ADMIN), async (req, res) => {
   try {
     const { approved, note, attachment } = req.body as {
@@ -487,6 +513,7 @@ router.post("/:id/upload-review", requireRoles(RoleName.GRAPHIC_QA, RoleName.OPS
   }
 });
 
+/** Mark field/dashboard work complete (advance toward polish). */
 router.post(
   "/:id/field-complete",
   requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN),
@@ -500,6 +527,7 @@ router.post(
   }
 );
 
+/** QA polish-review decision (approve/fix). */
 router.post("/:id/qa-review", requireRoles(RoleName.GRAPHIC_QA, RoleName.OPS_ADMIN, RoleName.MAPPING_INSPECTOR), async (req, res) => {
   try {
     const { status, note, attachment } = req.body as {
@@ -527,6 +555,7 @@ router.post("/:id/qa-review", requireRoles(RoleName.GRAPHIC_QA, RoleName.OPS_ADM
   }
 });
 
+/** Create a task on a map. */
 router.post(
   "/:id/tasks",
   requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.GRAPHIC_QA, RoleName.OPS_ADMIN),
@@ -554,6 +583,7 @@ router.post(
   }
 );
 
+/** Update a task status. */
 router.patch("/tasks/:taskId", async (req, res) => {
   try {
     const { status } = req.body as { status?: TaskStatus };

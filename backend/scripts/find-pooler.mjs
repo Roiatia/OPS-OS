@@ -3,6 +3,10 @@ import { execSync } from "child_process";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 
+/**
+ * Probe Supabase pooler regions until one accepts the DB password from .env,
+ * then rewrite DATABASE_URL / DIRECT_URL to that pooler host.
+ */
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const envPath = join(root, ".env");
 const env = readFileSync(envPath, "utf8");

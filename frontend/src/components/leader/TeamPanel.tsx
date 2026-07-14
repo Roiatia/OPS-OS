@@ -25,6 +25,7 @@ interface Props {
   onRefresh: () => void;
 }
 
+/** Team workload overview with idle alerts and per-member task assignment. */
 export function TeamPanel({ team, maps, onRefresh }: Props) {
   const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
   const [search, setSearch] = useState("");

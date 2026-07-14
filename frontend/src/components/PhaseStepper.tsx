@@ -7,6 +7,7 @@ import {
   type TimelineHistoryEntry,
 } from "../lib/mapDisplay";
 
+/** Formats a timeline timestamp for display. */
 function formatDate(iso: string) {
   return new Date(iso).toLocaleString(undefined, {
     month: "short",
@@ -16,6 +17,7 @@ function formatDate(iso: string) {
   });
 }
 
+/** Horizontal or vertical workflow timeline with phase history. */
 export function PhaseStepper({
   current,
   phaseHistory,

@@ -10,6 +10,7 @@ interface Props {
   onRefresh: () => void;
 }
 
+/** Formats a due date for the QA inbox table. */
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString(undefined, {
     day: "numeric",
@@ -18,10 +19,12 @@ function formatDate(iso: string) {
   });
 }
 
+/** Table of new QA assignments awaiting acceptance. */
 export function QaInboxTable({ maps, onRefresh }: Props) {
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [error, setError] = useState("");
 
+  /** Accepts a new QA assignment via the API. */
   async function accept(map: MapRecord) {
     setError("");
     setLoadingId(map.id);

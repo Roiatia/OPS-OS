@@ -10,6 +10,7 @@ interface Props {
   onRefresh: () => void;
 }
 
+/** Formats a due date for the inspector inbox table. */
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString(undefined, {
     day: "numeric",
@@ -18,10 +19,12 @@ function formatDate(iso: string) {
   });
 }
 
+/** Table of new inspector assignments awaiting acceptance. */
 export function InspectorInboxTable({ maps, onRefresh }: Props) {
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [error, setError] = useState("");
 
+  /** Accepts a new inspector assignment via the API. */
   async function accept(map: MapRecord) {
     setError("");
     setLoadingId(map.id);

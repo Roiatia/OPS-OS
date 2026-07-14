@@ -1,3 +1,4 @@
+/** Placeholder workspace settings panel for leaders. */
 export function SettingsPanel() {
   return (
     <section className="space-y-6">

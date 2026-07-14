@@ -3,6 +3,7 @@ import { useAuth, hasRole } from "../context/AuthContext";
 import { OriientLogo } from "./OriientLogo";
 import { ROLE_LABELS } from "../types";
 
+/** Authenticated app shell with header navigation and role-aware layout. */
 export function Layout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();

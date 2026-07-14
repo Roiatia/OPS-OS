@@ -22,6 +22,7 @@ interface Props {
   onRefresh: () => void | Promise<void>;
 }
 
+/** Formats a due date for inbox and active map tables. */
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString(undefined, {
     day: "numeric",
@@ -30,6 +31,7 @@ function formatDate(iso: string) {
   });
 }
 
+/** Returns Tailwind classes for the status dropdown based on display state. */
 function statusSelectClass(displayState: string): string {
   switch (displayState) {
     case "Fix":
@@ -49,6 +51,7 @@ function statusSelectClass(displayState: string): string {
   }
 }
 
+/** Shared inspector/QA table for updating status, notes, and station. */
 export function ActiveMapsTable({ maps, role, onRefresh }: Props) {
   const [statusLoadingId, setStatusLoadingId] = useState<string | null>(null);
   const [noteLoadingId, setNoteLoadingId] = useState<string | null>(null);
@@ -82,6 +85,7 @@ export function ActiveMapsTable({ maps, role, onRefresh }: Props) {
     }
   }
 
+  /** Applies a status change, opening the fix modal when Fix is selected. */
   function handleStatusChange(map: MapRecord, options: StatusOption[], value: string) {
     const currentValue = getCurrentStatusValue(map);
     if (value === currentValue) return;

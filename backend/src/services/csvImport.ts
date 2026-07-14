@@ -41,15 +41,18 @@ export type CsvImportResult = {
   sampleMapNumbers: string[];
 };
 
+/** Trim CR/LF and whitespace from a CSV header cell. */
 function normalizeHeader(h: string): string {
   return h.replace(/\r/g, "").replace(/\n/g, " ").trim();
 }
 
+/** Read a trimmed cell value from a parsed CSV row. */
 function cell(row: Record<string, string>, header: string): string {
   const v = row[header];
   return typeof v === "string" ? v.trim() : "";
 }
 
+/** Convert empty strings to null for Prisma optional fields. */
 function emptyToNull(v: string): string | null {
   return v ? v : null;
 }
@@ -106,11 +109,15 @@ export function parseSamsClubCsv(csvText: string): {
   return { rows, headerRowIndex };
 }
 
+/** Delete every map (used before a full CSV re-import). */
 export async function clearAllMaps(): Promise<number> {
   const result = await prisma.map.deleteMany({});
   return result.count;
 }
 
+/**
+ * Upsert maps from a Sam's Club CSV; optionally clear existing maps first.
+ */
 export async function importSamsClubCsv(
   csvText: string,
   user: AuthUser,
@@ -173,9 +180,12 @@ export async function importSamsClubCsv(
       continue;
     }
 
+    // Stable map id from building code (matches existing Sam's Club naming).
     const mapNumber = `SC-${building}`;
+    // Batch column "Cancelled" → CANCELLED phase (still imported for history).
     const isCancelled = batch.toLowerCase() === "cancelled";
 
+    // Copy all spreadsheet columns onto Map.* string fields for later use.
     const spreadsheetData: Record<string, string | null> = {};
     for (const [header, field] of Object.entries(HEADER_TO_FIELD)) {
       spreadsheetData[field] = emptyToNull(cell(row, header));
@@ -327,6 +337,7 @@ export async function importSamsClubCsv(
   return { created, updated, skipped, cleared, errors, sampleMapNumbers };
 }
 
+/** Dry-run CSV parse: row counts and sample buildings, no DB writes. */
 export async function previewSamsClubCsv(csvText: string) {
   const { rows, headerRowIndex } = parseSamsClubCsv(csvText);
   const cancelled = rows.filter((r) => cell(r, "Batch").toLowerCase() === "cancelled").length;

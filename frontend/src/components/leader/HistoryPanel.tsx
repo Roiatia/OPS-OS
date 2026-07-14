@@ -20,6 +20,7 @@ interface Props {
   onRefresh: () => void;
 }
 
+/** Searchable archive of approved and cancelled maps. */
 export function HistoryPanel({ maps, onRefresh }: Props) {
   const [search, setSearch] = useState("");
   const [outcomeFilter, setOutcomeFilter] = useState<"all" | "APPROVED" | "CANCELLED">("all");

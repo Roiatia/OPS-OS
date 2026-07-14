@@ -36,14 +36,21 @@ const SECTION_TITLES: Record<LeaderSection, { title: string; subtitle: string }>
   },
 };
 
+/**
+ * Leader shell: sidebar sections + Maps (new box + pipeline), Team, History, etc.
+ * All sections share one maps/team fetch; History uses a separate archived list.
+ */
 export function LeaderDashboardPage() {
   const [maps, setMaps] = useState<MapRecord[]>([]);
+  /** Approved/cancelled only — loaded with active maps (not filtered client-side). */
   const [historyMaps, setHistoryMaps] = useState<MapRecord[]>([]);
   const [team, setTeam] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
+  /** Soft refresh (poll / after mutation): keep UI visible, show "Updating…" instead of skeleton. */
   const [refreshing, setRefreshing] = useState(false);
   const [showAddMap, setShowAddMap] = useState(false);
   const [showCsvImport, setShowCsvImport] = useState(false);
+  /** Full-screen overlay while CSV import writes to DB (can take a while). */
   const [csvImportBusy, setCsvImportBusy] = useState(false);
   const [error, setError] = useState("");
   const [activeSection, setActiveSection] = useState<LeaderSection>("maps");
@@ -56,6 +63,11 @@ export function LeaderDashboardPage() {
     dueDate: "",
   });
 
+  /**
+   * soft=false → blocking skeleton (first paint).
+   * soft=true → poll/mutation refresh without unmounting tables.
+   * History fetch can 403 for non-leaders; fall back to maps+team only.
+   */
   function load(opts?: { soft?: boolean }) {
     if (opts?.soft) setRefreshing(true);
     else setLoading(true);
@@ -66,6 +78,7 @@ export function LeaderDashboardPage() {
         setTeam(t);
       })
       .catch(() =>
+        // History is leader-only; keep Maps/Team usable if that call fails.
         Promise.all([api.getMaps(), api.getTeam()]).then(([m, t]) => {
           setMaps(m);
           setTeam(t);
@@ -81,8 +94,10 @@ export function LeaderDashboardPage() {
     load();
   }, []);
 
+  // Re-fetch every ~15s so assignment changes from other users show up.
   useMapsPolling((opts) => load(opts));
 
+  /** Manual "Add map from CS" → creates INTAKE map, then soft-refresh. */
   async function handleAddMap(e: React.FormEvent) {
     e.preventDefault();
     setError("");
@@ -103,9 +118,11 @@ export function LeaderDashboardPage() {
     }
   }
 
+  // Split active maps: unreleased intake → NewMapsPanel; rest → AssignmentBoard.
   const newMaps = useMemo(() => maps.filter(isNewMapForLeader), [maps]);
   const pipelineMaps = useMemo(() => maps.filter(isPipelineMapForLeader), [maps]);
 
+  /** Header stat cards — counts derived from the same `maps` payload. */
   const stats = {
     total: maps.length,
     newMaps: newMaps.length,
@@ -115,6 +132,7 @@ export function LeaderDashboardPage() {
     onDashboard: maps.filter((m) => m.phase === "FIELD").length,
   };
 
+  // Sidebar badges (idle / needs QA / new maps).
   const idleInspectorCount = useMemo(
     () => getIdleInspectors(team, maps).length,
     [team, maps]

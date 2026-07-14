@@ -2,6 +2,7 @@ import { useAuth, hasRole } from "../context/AuthContext";
 import { LeaderDashboardPage } from "./LeaderDashboardPage";
 import { InspectorDashboardPage, QaDashboardPage } from "./InspectorDashboardPage";
 
+/** Routes the signed-in user to the dashboard for their role. */
 export function DashboardPage() {
   const { user } = useAuth();
 

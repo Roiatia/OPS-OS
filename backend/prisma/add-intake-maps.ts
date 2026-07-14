@@ -2,6 +2,7 @@ import { MapPhase, PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
+/** Extra intake maps to append without wiping the DB. */
 const NEW_MAPS = [
   {
     mapNumber: "MAP-2026-0135",
@@ -42,6 +43,7 @@ const NEW_MAPS = [
   },
 ];
 
+/** Create the NEW_MAPS intake rows if their map numbers are not already present. */
 async function main() {
   const leader = await prisma.user.findUnique({ where: { email: "leader@ops-demo.local" } });
   if (!leader) {

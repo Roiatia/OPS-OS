@@ -1,5 +1,6 @@
 export type DueDateStatus = "none" | "ok" | "soon" | "overdue";
 
+/** Formats an ISO due date for display. */
 export function formatDueDate(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, {
     day: "numeric",
@@ -8,6 +9,7 @@ export function formatDueDate(iso: string): string {
   });
 }
 
+/** Converts an ISO date to a yyyy-mm-dd value for date inputs. */
 export function toDateInputValue(iso: string | null): string {
   if (!iso) return "";
   const d = new Date(iso);
@@ -17,6 +19,7 @@ export function toDateInputValue(iso: string | null): string {
   return `${y}-${m}-${day}`;
 }
 
+/** Classifies a due date as none, ok, soon, or overdue. */
 export function getDueDateStatus(dueDate: string | null): DueDateStatus {
   if (!dueDate) return "none";
 

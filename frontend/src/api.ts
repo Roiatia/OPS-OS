@@ -1,9 +1,11 @@
 const API = "/api";
 
+/** Reads the stored auth token from localStorage. */
 function getToken() {
   return localStorage.getItem("ops_token");
 }
 
+/** Sends an authenticated JSON request to the backend API. */
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getToken();
   const method = options.method ?? "GET";
@@ -29,6 +31,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return res.json();
 }
 
+/** Typed client for all backend REST endpoints. */
 export const api = {
   getConfig: () => request<{ demoMode: boolean; googleClientId: string | null }>("/auth/config"),
 
@@ -289,6 +292,7 @@ export const api = {
     }),
 };
 
+/** Persists or clears the JWT used for API requests. */
 export function setAuthToken(token: string | null) {
   if (token) localStorage.setItem("ops_token", token);
   else localStorage.removeItem("ops_token");

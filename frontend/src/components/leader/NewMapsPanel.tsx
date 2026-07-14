@@ -31,6 +31,7 @@ interface Props {
   onRefresh: () => void;
 }
 
+/** Panel for intake maps not yet released to the pipeline table. */
 export function NewMapsPanel({ maps, team, onRefresh }: Props) {
   const newMaps = maps.filter(isNewMapForLeader);
   const [loading, setLoading] = useState(false);
@@ -564,6 +565,7 @@ export function NewMapsPanel({ maps, team, onRefresh }: Props) {
   );
 }
 
+/** Checkbox list for picking team members in shuffle modals. */
 function MemberPickList({
   members,
   selectedIds,
@@ -616,6 +618,7 @@ function MemberPickList({
   );
 }
 
+/** Table preview of workload changes before confirming a shuffle. */
 function PreviewTable({
   title,
   rows,

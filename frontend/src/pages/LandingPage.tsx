@@ -19,6 +19,7 @@ const FEATURES = [
 
 const FLOW = ["Pre-upload", "Uploaded to dashboard", "Polish", "Approved"];
 
+/** Public marketing landing page with sign-in entry point. */
 export function LandingPage() {
   const { user } = useAuth();
 

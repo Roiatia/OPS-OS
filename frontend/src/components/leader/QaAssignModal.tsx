@@ -17,6 +17,7 @@ interface Props {
   onUnassign: () => void;
 }
 
+/** Modal for assigning or unassigning QA with optional attachment. */
 export function QaAssignModal({ map, team, maps, loading, onClose, onAssign, onUnassign }: Props) {
   const isIntake = map.phase === "INTAKE";
   const hasQa = !!map.assignedQa;
@@ -166,6 +167,7 @@ export function QaAssignModal({ map, team, maps, loading, onClose, onAssign, onU
   );
 }
 
+/** Reads an attachment file as base64 for QA assignment upload. */
 function readFileAsBase64(file: File) {
   return new Promise<{ fileName: string; mimeType: string; data: string }>((resolve, reject) => {
     const reader = new FileReader();

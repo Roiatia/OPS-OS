@@ -17,6 +17,7 @@ interface Props {
   onStatusChange?: (taskId: string, status: TaskStatus) => void;
 }
 
+/** Table of map tasks with optional status editing for inspectors. */
 export function TaskTable({ tasks, mapNumber, canEdit, onStatusChange }: Props) {
   if (tasks.length === 0) {
     return (

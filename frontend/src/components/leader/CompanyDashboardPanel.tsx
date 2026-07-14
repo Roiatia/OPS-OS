@@ -1,3 +1,4 @@
+/** Placeholder panel for future company dashboard integration. */
 export function CompanyDashboardPanel() {
   return (
     <section className="flex flex-col items-center justify-center py-24 text-center">

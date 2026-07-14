@@ -9,6 +9,7 @@ const router = Router();
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const demoMode = process.env.DEMO_MODE === "true";
 
+/** Public config for the SPA (demo mode + Google client id). */
 router.get("/config", (_req, res) => {
   res.json({
     demoMode,
@@ -16,6 +17,7 @@ router.get("/config", (_req, res) => {
   });
 });
 
+/** Verify Google ID token, upsert user, return JWT + user. */
 router.post("/google", async (req, res) => {
   const { credential } = req.body as { credential?: string };
   if (!credential) {
@@ -77,6 +79,7 @@ router.post("/google", async (req, res) => {
   }
 });
 
+/** Demo-mode login by email (no Google); returns JWT + user. */
 router.post("/demo", async (req, res) => {
   if (!demoMode) {
     res.status(403).json({ error: "Demo login disabled" });
@@ -110,6 +113,7 @@ router.post("/demo", async (req, res) => {
   res.json({ token: signToken(authUser), user: authUser });
 });
 
+/** List seeded @ops-demo.local users for the login role picker. */
 router.get("/demo-users", async (_req, res) => {
   if (!demoMode) {
     res.json([]);
@@ -133,6 +137,7 @@ router.get("/demo-users", async (_req, res) => {
   );
 });
 
+/** Return the currently authenticated user from the JWT. */
 router.get("/me", authMiddleware, (req, res) => {
   res.json({ user: (req as AuthedRequest).user });
 });

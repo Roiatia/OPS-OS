@@ -69,17 +69,20 @@ const TIMELINE_GRANULAR: Record<WorkflowTimelinePhase, MapPhase[]> = {
   POLISH: ["POLISH", "QA_REVIEW", "APPROVED"],
 };
 
+/** Maps a granular map phase to its macro timeline step. */
 export function getWorkflowTimelinePhase(phase: MapPhase): WorkflowTimelinePhase {
   if (["INTAKE", "PREP", "UPLOAD_REVIEW"].includes(phase)) return "PRE_UPLOAD";
   if (phase === "FIELD") return "UPLOADED";
   return "POLISH";
 }
 
+/** Returns the workflow station target for a map. */
 export function getMapWorkflowPhaseTarget(map: MapRecord): WorkflowPhaseTarget {
   if (map.phase === "APPROVED") return "POLISHED";
   return map.workflowPhaseTarget ?? "PRE_UPLOAD";
 }
 
+/** Maps a workflow target to its representative granular phase. */
 export function granularPhaseForWorkflowTarget(target: WorkflowPhaseTarget): MapPhase {
   switch (target) {
     case "PRE_UPLOAD":
@@ -93,10 +96,12 @@ export function granularPhaseForWorkflowTarget(target: WorkflowPhaseTarget): Map
   }
 }
 
+/** Returns the display label for a workflow phase target. */
 export function workflowPhaseTargetLabel(target: WorkflowPhaseTarget): string {
   return MAP_STATIONS.find((t) => t.id === target)?.label ?? target;
 }
 
+/** Maps a workflow target to a badge tone key. */
 export function stationTone(target: WorkflowPhaseTarget): string {
   switch (target) {
     case "PRE_UPLOAD":
@@ -110,6 +115,7 @@ export function stationTone(target: WorkflowPhaseTarget): string {
   }
 }
 
+/** Returns the timeline label for a map's current phase. */
 export function getWorkflowTimelineLabel(phase: MapPhase): string {
   const entry = WORKFLOW_TIMELINE.find((s) => s.id === getWorkflowTimelinePhase(phase));
   return entry?.label ?? phase;
@@ -131,6 +137,7 @@ export interface TimelineHistoryEntry {
   note?: string | null;
 }
 
+/** Finds the first phase-history entry within a timeline step. */
 export function getTimelineHistoryEntry(
   timelinePhase: WorkflowTimelinePhase,
   phaseHistory: TimelineHistoryEntry[]
@@ -139,6 +146,7 @@ export function getTimelineHistoryEntry(
   return phaseHistory.find((e) => targets.includes(e.phase));
 }
 
+/** Maps a timeline phase to a badge tone key. */
 export function workflowTimelineTone(timelinePhase: WorkflowTimelinePhase): string {
   switch (timelinePhase) {
     case "PRE_UPLOAD":
@@ -195,6 +203,7 @@ export function getMapState(map: MapRecord): string {
   return getMapDisplayState(map);
 }
 
+/** Returns the primary assignee name for a map based on its phase. */
 export function getMapAssignee(map: MapRecord): string {
   if (map.phase === "UPLOAD_REVIEW" || map.phase === "QA_REVIEW") {
     return map.assignedQa?.name ?? "—";
@@ -204,6 +213,7 @@ export function getMapAssignee(map: MapRecord): string {
   return "—";
 }
 
+/** Counts maps assigned to a member as inspector or QA. */
 export function countMapsForMember(maps: MapRecord[], userId: string): number {
   return maps.filter(
     (m) => m.assignedInspector?.id === userId || m.assignedQa?.id === userId
@@ -212,16 +222,19 @@ export function countMapsForMember(maps: MapRecord[], userId: string): number {
 
 export type TaskType = "Upload" | "Polish";
 
+/** Returns Upload or Polish based on the map's current phase. */
 export function getTaskType(map: MapRecord): TaskType | null {
   if (["INTAKE", "PREP", "UPLOAD_REVIEW"].includes(map.phase)) return "Upload";
   if (["POLISH", "QA_REVIEW"].includes(map.phase)) return "Polish";
   return null;
 }
 
+/** Returns true when a leader may assign an inspector to this map. */
 export function canAssignInspector(map: MapRecord): boolean {
   return ["INTAKE", "PREP", "POLISH"].includes(map.phase);
 }
 
+/** Returns true when a leader may assign QA to this map. */
 export function canAssignQa(map: MapRecord): boolean {
   if (["INTAKE", "UPLOAD_REVIEW", "QA_REVIEW"].includes(map.phase)) return true;
   // Prep maps saved without QA — leader can still assign from the pipeline table
@@ -248,10 +261,12 @@ export function showQaManualAssignFallback(map: MapRecord): boolean {
   return map.phase === "PREP" && !map.assignedQa;
 }
 
+/** Returns true when the assign modal can be opened for this map. */
 export function canOpenAssignModal(map: MapRecord): boolean {
   return canAssignInspector(map) || canAssignQa(map);
 }
 
+/** Returns true when intake assignments await inspector or QA acceptance. */
 export function isAwaitingTeamAcceptance(map: MapRecord): boolean {
   return (
     map.phase === "INTAKE" &&
@@ -261,25 +276,31 @@ export function isAwaitingTeamAcceptance(map: MapRecord): boolean {
   );
 }
 
-/** INTAKE maps the leader has not yet saved to the pipeline table. */
+/** INTAKE maps the leader has not yet released — shown in NewMapsPanel only. */
 export function isNewMapForLeader(map: MapRecord): boolean {
   return map.phase === "INTAKE" && map.releasedToPipeline !== true;
 }
 
-/** Maps shown in the pipeline table — saved or already past intake. */
+/**
+ * Pipeline table rows: already past intake, OR intake maps the leader
+ * "saved to pipeline" (releasedToPipeline) so they leave the new-maps box.
+ */
 export function isPipelineMapForLeader(map: MapRecord): boolean {
   return map.phase !== "INTAKE" || map.releasedToPipeline === true;
 }
 
+/** Returns true when the map lacks inspector assignment on intake. */
 export function needsInspectorAssignment(map: MapRecord): boolean {
   return map.phase === "INTAKE" && !map.assignedInspector;
 }
 
+/** Returns true when the map still needs a QA assignee. */
 export function needsQaAssignment(map: MapRecord): boolean {
   if (map.phase === "INTAKE") return !map.assignedQa;
   return canAssignQa(map) && !map.assignedQa;
 }
 
+/** Counts active prep/polish maps assigned to an inspector. */
 export function countInspectorWorkload(maps: MapRecord[], userId: string): number {
   return maps.filter(
     (m) =>
@@ -288,6 +309,7 @@ export function countInspectorWorkload(maps: MapRecord[], userId: string): numbe
   ).length;
 }
 
+/** Counts active QA-review maps assigned to a QA member. */
 export function countQaWorkload(maps: MapRecord[], userId: string): number {
   return maps.filter(
     (m) =>
@@ -306,6 +328,10 @@ export type AssignmentQueue =
   | "in_progress"
   | "in_qa";
 
+/**
+ * AssignmentBoard queue tabs — filters released/pipeline maps only.
+ * "needs_qa" / "unassigned" use the same helpers as the sidebar badges.
+ */
 export function matchesQueue(map: MapRecord, queue: AssignmentQueue): boolean {
   switch (queue) {
     case "all":
@@ -315,6 +341,7 @@ export function matchesQueue(map: MapRecord, queue: AssignmentQueue): boolean {
     case "needs_qa":
       return needsQaAssignment(map);
     case "in_progress":
+      // Inspector-owned execution (prep polish) + client dashboard (FIELD)
       return ["PREP", "POLISH", "FIELD"].includes(map.phase);
     case "in_qa":
       return ["UPLOAD_REVIEW", "QA_REVIEW"].includes(map.phase);
@@ -323,10 +350,12 @@ export function matchesQueue(map: MapRecord, queue: AssignmentQueue): boolean {
   }
 }
 
+/** Returns the inspector column label for a map. */
 export function getInspectorLabel(map: MapRecord): string {
   return map.assignedInspector?.name ?? "Unassigned";
 }
 
+/** Returns the QA column label for a map. */
 export function getQaLabel(map: MapRecord): string {
   if (map.phase === "INTAKE") {
     return map.assignedQa?.name ?? "Unassigned";
@@ -365,6 +394,7 @@ export const EMPTY_COLUMN_FILTERS: MapColumnFilters = {
   qa: "",
 };
 
+/** Returns true when a map matches all active column filters. */
 export function matchesColumnFilters(map: MapRecord, filters: MapColumnFilters): boolean {
   const mapLabel = map.mapNumber.toLowerCase();
   const client = map.client.toLowerCase();
@@ -390,10 +420,12 @@ export function canDeleteMap(map: MapRecord): boolean {
   return map.phase !== "APPROVED";
 }
 
+/** Builds the confirmation message for bulk map deletion. */
 export function getBulkDeleteConfirmMessage(count: number): string {
   return `Permanently delete ${count} map${count !== 1 ? "s" : ""}? This cannot be undone.`;
 }
 
+/** Builds a context-aware confirmation message for deleting one map. */
 export function getDeleteConfirmMessage(map: MapRecord): string {
   if (map.phase === "CANCELLED") {
     return `Permanently delete ${map.mapNumber}? This cannot be undone.`;
@@ -407,6 +439,7 @@ export function getDeleteConfirmMessage(map: MapRecord): string {
   return `Permanently delete ${map.mapNumber}? All tasks and history for this map will be removed. Consider cancelling instead if you want to keep a record.`;
 }
 
+/** Maps a display state string to a badge tone key. */
 export function workflowStateTone(state: WorkflowDisplayState): string {
   switch (state) {
     case "Accepted":

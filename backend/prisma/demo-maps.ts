@@ -249,6 +249,7 @@ export const DEMO_MAPS: DemoMapInput[] = [
   ...NEW_INTAKE_MAPS,
 ];
 
+/** Wipe maps/tasks/events and recreate the full demo map set. */
 export async function seedDemoMaps(prisma: PrismaClient) {
   const leader = await prisma.user.findUnique({ where: { email: "leader@ops-demo.local" } });
   const inspector = await prisma.user.findUnique({ where: { email: "inspector@ops-demo.local" } });

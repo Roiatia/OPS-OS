@@ -12,6 +12,7 @@ interface Props {
   onError?: (message: string) => void;
 }
 
+/** Dropdown to change a map's pipeline station with save feedback. */
 export function StationSelect({ map, disabled, className, onUpdated, onError }: Props) {
   const [saving, setSaving] = useState(false);
   const value = getMapWorkflowPhaseTarget(map);

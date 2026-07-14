@@ -31,18 +31,21 @@ export const SHIFTS: ShiftDefinition[] = [
   },
 ];
 
+/** Returns team members assigned to the given shift. */
 export function getShiftMembers(team: TeamMember[], shiftId: ShiftId): TeamMember[] {
   const shift = SHIFTS.find((s) => s.id === shiftId);
   if (!shift) return [];
   return team.filter((m) => shift.memberEmails.includes(m.email));
 }
 
+/** Returns mapping inspectors on the given shift. */
 export function getShiftInspectors(team: TeamMember[], shiftId: ShiftId) {
   return getShiftMembers(team, shiftId).filter((m) =>
     m.roles.some((r) => r.role === "MAPPING_INSPECTOR")
   );
 }
 
+/** Returns graphic QA members on the given shift. */
 export function getShiftQaMembers(team: TeamMember[], shiftId: ShiftId) {
   return getShiftMembers(team, shiftId).filter((m) =>
     m.roles.some((r) => r.role === "GRAPHIC_QA")

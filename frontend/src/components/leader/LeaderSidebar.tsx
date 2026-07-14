@@ -24,6 +24,7 @@ interface Props {
   newMapsCount?: number;
 }
 
+/** Leader sidebar navigation with section badges for alerts. */
 export function LeaderSidebar({
   activeSection,
   onSectionChange,

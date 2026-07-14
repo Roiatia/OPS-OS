@@ -10,6 +10,7 @@ interface Props {
   className?: string;
 }
 
+/** Confirms and permanently deletes a map when allowed. */
 export function DeleteMapButton({
   map,
   onDeleted,

@@ -1,3 +1,4 @@
+/** Reads a file as a base64 data URL payload for upload. */
 export function readFileAsBase64(file: File) {
   return new Promise<{ fileName: string; mimeType: string; data: string }>((resolve, reject) => {
     const reader = new FileReader();

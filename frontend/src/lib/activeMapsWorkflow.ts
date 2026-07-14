@@ -4,7 +4,11 @@ import { MAP_STATUS_LABELS, MAP_STATUS_VALUES } from "./mapStatus";
 
 const ARCHIVED = new Set(["APPROVED", "CANCELLED"]);
 
-/** New assignment — inspector has not accepted yet */
+/**
+ * Inspector Inbox: assigned to me, not accepted yet.
+ * INTAKE uses inspectorAssignAccepted; PREP/POLISH with null status is a
+ * legacy "pending accept" path. Once status is set, the map is Active.
+ */
 export function isInspectorInbox(map: MapRecord, userId: string): boolean {
   if (ARCHIVED.has(map.phase)) return false;
   if (map.assignedInspector?.id !== userId) return false;
@@ -13,11 +17,15 @@ export function isInspectorInbox(map: MapRecord, userId: string): boolean {
     return map.inspectorAssignAccepted !== true;
   }
 
+  // Shared status already set → active work, not inbox.
   if (map.status !== null) return false;
   return ["PREP", "POLISH"].includes(map.phase);
 }
 
-/** New QA assignment on intake — QA has not accepted yet */
+/**
+ * QA Inbox is intake-only (must accept assignment first).
+ * Later phases use isQaActive for the shared review workspace.
+ */
 export function isQaInbox(map: MapRecord, userId: string): boolean {
   if (ARCHIVED.has(map.phase)) return false;
   if (map.phase !== "INTAKE") return false;
@@ -25,7 +33,7 @@ export function isQaInbox(map: MapRecord, userId: string): boolean {
   return map.qaAssignAccepted !== true;
 }
 
-/** Accepted and in progress — shared inspector ↔ QA workspace */
+/** Inspector Active = assigned to me and not sitting in Inbox. */
 export function isInspectorActive(map: MapRecord, userId: string): boolean {
   if (ARCHIVED.has(map.phase)) return false;
   if (map.assignedInspector?.id !== userId) return false;
@@ -34,8 +42,10 @@ export function isInspectorActive(map: MapRecord, userId: string): boolean {
 }
 
 /**
- * Maps this QA owns after accepting (or already past intake), plus anything
- * currently in a review/fix queue. Scoped to assignedQa when userId is set.
+ * QA Active:
+ * - Assigned maps after accept / in pipeline phases
+ * - Any UPLOAD_REVIEW / QA_REVIEW (so review work is never invisible)
+ * - FIX / FIX_DONE (needs QA regardless of assignee)
  */
 export function isQaActive(map: MapRecord, userId?: string): boolean {
   if (ARCHIVED.has(map.phase)) return false;
@@ -86,10 +96,12 @@ export function getQaStatusOptions(map: MapRecord): StatusOption[] {
   return getMapStatusOptions(map);
 }
 
+/** Returns true when the status option represents a fix request. */
 export function isFixStatusOption(option: StatusOption): boolean {
   return option.value === "FIX";
 }
 
+/** Returns the map's current status value, or empty string if unset. */
 export function getCurrentStatusValue(map: MapRecord): MapStatus | "" {
   return map.status ?? "";
 }
@@ -102,10 +114,12 @@ export function getCurrentStatusValueForRole(
   return getCurrentStatusValue(map);
 }
 
+/** Returns the human-readable shared status label for a map. */
 export function getRoleStatusLabel(map: MapRecord): string {
   return getMapDisplayState(map);
 }
 
+/** Returns a background class for table rows based on map status. */
 export function statusRowClass(map: MapRecord): string {
   const state = getMapDisplayState(map);
   switch (state) {
@@ -126,6 +140,7 @@ export function statusRowClass(map: MapRecord): string {
   }
 }
 
+/** Builds a one-line preview of the most recent map note. */
 export function formatNotePreview(notes: MapRecord["notes"]): string {
   if (!notes?.length) return "";
   const last = notes[notes.length - 1]!;
@@ -134,6 +149,7 @@ export function formatNotePreview(notes: MapRecord["notes"]): string {
   return `${roleTag}${last.body}`;
 }
 
+/** Returns all shared workflow status labels in display order. */
 export function getRoleStatusList(): readonly string[] {
   return MAP_STATUS_VALUES.map((s) => MAP_STATUS_LABELS[s]);
 }

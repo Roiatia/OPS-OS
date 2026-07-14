@@ -22,6 +22,7 @@ interface Props {
   onUnassign: () => void;
 }
 
+/** Modal for assigning or unassigning an inspector, individually or by shift. */
 export function InspectorAssignModal({
   map,
   team,
@@ -227,6 +228,7 @@ export function InspectorAssignModal({
   );
 }
 
+/** Reads an attachment file as base64 for assignment upload. */
 function readFileAsBase64(file: File) {
   return new Promise<{ fileName: string; mimeType: string; data: string }>((resolve, reject) => {
     const reader = new FileReader();

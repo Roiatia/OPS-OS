@@ -13,6 +13,7 @@ interface Props {
   }) => void;
 }
 
+/** Modal for QA to submit a fix request with optional attachment. */
 export function QaFixModal({ map, loading, onClose, onSubmit }: Props) {
   const [note, setNote] = useState("");
   const [file, setFile] = useState<File | null>(null);
