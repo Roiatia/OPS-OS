@@ -1,10 +1,20 @@
-import { Router } from "express";
+import { Router, type Response } from "express";
 import { MapPhase, MapStatus, RoleName, TaskStatus } from "@prisma/client";
 import { authMiddleware, requireRoles, type AuthedRequest } from "../middleware/auth.js";
+import {
+  broadcastMapsDeleted,
+  broadcastMapsInvalidate,
+  broadcastMapsUpsert,
+} from "../realtime.js";
 import * as workflow from "../services/workflow.js";
 
 const router = Router();
 router.use(authMiddleware);
+
+function respondMap(res: Response, map: unknown, status = 200) {
+  if (map) broadcastMapsUpsert([map]);
+  res.status(status).json(map);
+}
 
 router.post(
   "/import-csv/preview",
@@ -44,6 +54,7 @@ router.post(
         clearExisting: clearExisting === true,
         defaultClient,
       });
+      broadcastMapsInvalidate();
       res.json(result);
     } catch (e) {
       res.status(400).json({ error: (e as Error).message });
@@ -89,6 +100,7 @@ router.post(
         qaIds ?? [],
         (req as AuthedRequest).user
       );
+      broadcastMapsInvalidate();
       res.json(result);
     } catch (e) {
       res.status(400).json({ error: (e as Error).message });
@@ -107,6 +119,29 @@ router.post(
         return;
       }
       const result = await workflow.deleteMaps(mapIds, (req as AuthedRequest).user);
+      broadcastMapsDeleted(mapIds);
+      res.json(result);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+router.post(
+  "/bulk-unassign-new",
+  requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN),
+  async (req, res) => {
+    try {
+      const { mapIds } = req.body as { mapIds?: string[] };
+      if (!mapIds?.length) {
+        res.status(400).json({ error: "mapIds required" });
+        return;
+      }
+      const result = await workflow.bulkUnassignNewMaps(
+        mapIds,
+        (req as AuthedRequest).user
+      );
+      broadcastMapsInvalidate();
       res.json(result);
     } catch (e) {
       res.status(400).json({ error: (e as Error).message });
@@ -136,6 +171,7 @@ router.post(
         inspectorIds,
         (req as AuthedRequest).user
       );
+      broadcastMapsInvalidate();
       res.json(result);
     } catch (e) {
       res.status(400).json({ error: (e as Error).message });
@@ -154,12 +190,29 @@ router.post(
   async (req, res) => {
     try {
       const map = await workflow.createMapFromJira(req.body, (req as AuthedRequest).user);
-      res.status(201).json(map);
+      respondMap(res, map, 201);
     } catch (e) {
       res.status(400).json({ error: (e as Error).message });
     }
   }
 );
+
+router.get("/attachments/:attachmentId", async (req, res) => {
+  try {
+    const attachmentId = String(req.params.attachmentId);
+    const attachment = await workflow.getAttachmentForUser(
+      attachmentId,
+      (req as unknown as AuthedRequest).user
+    );
+    if (!attachment) {
+      res.status(404).json({ error: "Attachment not found" });
+      return;
+    }
+    res.json(attachment);
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
 
 router.get("/:id", async (req, res) => {
   const map = await workflow.getMapForUser(req.params.id, (req as AuthedRequest).user);
@@ -189,7 +242,7 @@ router.post(
         (req as AuthedRequest).user,
         attachment
       );
-      res.json(map);
+      respondMap(res, map);
     } catch (e) {
       res.status(400).json({ error: (e as Error).message });
     }
@@ -215,7 +268,7 @@ router.post(
         (req as AuthedRequest).user,
         attachment
       );
-      res.json(map);
+      respondMap(res, map);
     } catch (e) {
       res.status(400).json({ error: (e as Error).message });
     }
@@ -231,7 +284,7 @@ router.post(
         req.params.id,
         (req as AuthedRequest).user
       );
-      res.json(map);
+      respondMap(res, map);
     } catch (e) {
       res.status(400).json({ error: (e as Error).message });
     }
@@ -247,7 +300,7 @@ router.post(
         req.params.id,
         (req as AuthedRequest).user
       );
-      res.json(map);
+      respondMap(res, map);
     } catch (e) {
       res.status(400).json({ error: (e as Error).message });
     }
@@ -260,7 +313,7 @@ router.post(
   async (req, res) => {
     try {
       const map = await workflow.unassignQa(req.params.id, (req as AuthedRequest).user);
-      res.json(map);
+      respondMap(res, map);
     } catch (e) {
       res.status(400).json({ error: (e as Error).message });
     }
@@ -290,7 +343,7 @@ router.patch(
         workflowPhaseTarget as import("@prisma/client").WorkflowPhaseTarget,
         (req as AuthedRequest).user
       );
-      res.json(map);
+      respondMap(res, map);
     } catch (e) {
       res.status(400).json({ error: (e as Error).message });
     }
@@ -318,7 +371,7 @@ router.patch(
         station as import("@prisma/client").WorkflowPhaseTarget,
         (req as AuthedRequest).user
       );
-      res.json(map);
+      respondMap(res, map);
     } catch (e) {
       res.status(400).json({ error: (e as Error).message });
     }
@@ -340,7 +393,7 @@ router.patch(
         dueDate ?? null,
         (req as AuthedRequest).user
       );
-      res.json(map);
+      respondMap(res, map);
     } catch (e) {
       res.status(400).json({ error: (e as Error).message });
     }
@@ -354,7 +407,7 @@ router.post(
     try {
       const { note } = req.body as { note?: string };
       const map = await workflow.cancelMap(req.params.id, (req as AuthedRequest).user, note);
-      res.json(map);
+      respondMap(res, map);
     } catch (e) {
       res.status(400).json({ error: (e as Error).message });
     }
@@ -367,6 +420,7 @@ router.delete(
   async (req, res) => {
     try {
       const result = await workflow.deleteMap(req.params.id, (req as AuthedRequest).user);
+      broadcastMapsDeleted([req.params.id]);
       res.json(result);
     } catch (e) {
       res.status(400).json({ error: (e as Error).message });
@@ -377,7 +431,7 @@ router.delete(
 router.post("/:id/accept-assignment", requireRoles(RoleName.MAPPING_INSPECTOR), async (req, res) => {
   try {
     const map = await workflow.acceptInspectorAssignment(req.params.id, (req as AuthedRequest).user);
-    res.json(map);
+    respondMap(res, map);
   } catch (e) {
     res.status(400).json({ error: (e as Error).message });
   }
@@ -386,7 +440,7 @@ router.post("/:id/accept-assignment", requireRoles(RoleName.MAPPING_INSPECTOR), 
 router.post("/:id/accept-qa-assignment", requireRoles(RoleName.GRAPHIC_QA), async (req, res) => {
   try {
     const map = await workflow.acceptQaAssignment(req.params.id, (req as AuthedRequest).user);
-    res.json(map);
+    respondMap(res, map);
   } catch (e) {
     res.status(400).json({ error: (e as Error).message });
   }
@@ -418,7 +472,7 @@ router.patch("/:id/status", async (req, res) => {
       note,
       attachment
     );
-    res.json(map);
+    respondMap(res, map);
   } catch (e) {
     res.status(400).json({ error: (e as Error).message });
   }
@@ -437,7 +491,7 @@ router.patch("/:id/inspector-status", requireRoles(RoleName.MAPPING_INSPECTOR), 
       (req as AuthedRequest).user,
       note
     );
-    res.json(map);
+    respondMap(res, map);
   } catch (e) {
     res.status(400).json({ error: (e as Error).message });
   }
@@ -457,7 +511,7 @@ router.post("/:id/notes", async (req, res) => {
       return;
     }
     const map = await workflow.addMapNote(req.params.id, user.id, body.trim());
-    res.json(map);
+    respondMap(res, map);
   } catch (e) {
     res.status(400).json({ error: (e as Error).message });
   }
@@ -481,7 +535,7 @@ router.post("/:id/upload-review", requireRoles(RoleName.GRAPHIC_QA, RoleName.OPS
       note,
       attachment
     );
-    res.json(map);
+    respondMap(res, map);
   } catch (e) {
     res.status(400).json({ error: (e as Error).message });
   }
@@ -493,7 +547,7 @@ router.post(
   async (req, res) => {
     try {
       const map = await workflow.completeFieldWork(req.params.id, (req as AuthedRequest).user);
-      res.json(map);
+      respondMap(res, map);
     } catch (e) {
       res.status(400).json({ error: (e as Error).message });
     }
@@ -521,7 +575,7 @@ router.post("/:id/qa-review", requireRoles(RoleName.GRAPHIC_QA, RoleName.OPS_ADM
       return;
     }
     const map = await workflow.qaPolishDecision(req.params.id, status, user, note, attachment);
-    res.json(map);
+    respondMap(res, map);
   } catch (e) {
     res.status(400).json({ error: (e as Error).message });
   }
@@ -547,6 +601,7 @@ router.post(
         { title, description, assignedToId, phase: phase ?? MapPhase.PREP },
         (req as AuthedRequest).user
       );
+      broadcastMapsInvalidate();
       res.status(201).json(task);
     } catch (e) {
       res.status(400).json({ error: (e as Error).message });
@@ -562,6 +617,7 @@ router.patch("/tasks/:taskId", async (req, res) => {
       return;
     }
     const task = await workflow.updateTaskStatus(req.params.taskId, status, (req as AuthedRequest).user);
+    broadcastMapsInvalidate();
     res.json(task);
   } catch (e) {
     res.status(400).json({ error: (e as Error).message });

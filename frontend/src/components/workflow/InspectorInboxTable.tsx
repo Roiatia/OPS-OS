@@ -8,6 +8,7 @@ import { Badge } from "../Badge";
 interface Props {
   maps: MapRecord[];
   onRefresh: () => void;
+  onMapUpdated?: (maps: MapRecord[]) => void;
 }
 
 function formatDate(iso: string) {
@@ -18,7 +19,7 @@ function formatDate(iso: string) {
   });
 }
 
-export function InspectorInboxTable({ maps, onRefresh }: Props) {
+export function InspectorInboxTable({ maps, onRefresh, onMapUpdated }: Props) {
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [error, setError] = useState("");
 
@@ -26,12 +27,12 @@ export function InspectorInboxTable({ maps, onRefresh }: Props) {
     setError("");
     setLoadingId(map.id);
     try {
-      if (map.phase === "INTAKE") {
-        await api.acceptInspectorAssignment(map.id);
-      } else {
-        await api.updateMapStatus(map.id, "ACCEPTED");
-      }
-      onRefresh();
+      const updated =
+        map.phase === "INTAKE"
+          ? await api.acceptInspectorAssignment(map.id)
+          : await api.updateMapStatus(map.id, "ACCEPTED");
+      if (onMapUpdated) onMapUpdated([updated]);
+      else onRefresh();
     } catch (e) {
       setError((e as Error).message);
     } finally {

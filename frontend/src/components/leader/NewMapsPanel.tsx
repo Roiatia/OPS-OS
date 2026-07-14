@@ -29,9 +29,14 @@ interface Props {
   maps: MapRecord[];
   team: TeamMember[];
   onRefresh: () => void;
+  onMapUpdated?: (maps: MapRecord[]) => void;
 }
 
-export function NewMapsPanel({ maps, team, onRefresh }: Props) {
+export function NewMapsPanel({ maps, team, onRefresh, onMapUpdated }: Props) {
+  function commitMap(map: MapRecord) {
+    if (onMapUpdated) onMapUpdated([map]);
+    else onRefresh();
+  }
   const newMaps = maps.filter(isNewMapForLeader);
   const [loading, setLoading] = useState(false);
   const [savingId, setSavingId] = useState<string | null>(null);
@@ -70,6 +75,16 @@ export function NewMapsPanel({ maps, team, onRefresh }: Props) {
 
   const deletableSelected = useMemo(
     () => selectedMaps.filter(canDeleteMap),
+    [selectedMaps]
+  );
+
+  const assignedNewMaps = useMemo(
+    () => newMaps.filter((m) => m.assignedInspector || m.assignedQa),
+    [newMaps]
+  );
+
+  const assignedSelected = useMemo(
+    () => selectedMaps.filter((m) => m.assignedInspector || m.assignedQa),
     [selectedMaps]
   );
 
@@ -145,6 +160,28 @@ export function NewMapsPanel({ maps, team, onRefresh }: Props) {
     }
   }
 
+  async function handleBulkUnassign(mapIds: string[]) {
+    if (mapIds.length === 0) return;
+    if (
+      !confirm(
+        `Unassign inspector and QA from ${mapIds.length} new map${mapIds.length === 1 ? "" : "s"}? You can shuffle-assign again after.`
+      )
+    ) {
+      return;
+    }
+    setError("");
+    setLoading(true);
+    try {
+      await api.bulkUnassignNewMaps(mapIds);
+      setSelected(new Set());
+      onRefresh();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleShuffleAssign() {
     if (selectedMaps.length === 0) return;
     setError("");
@@ -175,10 +212,11 @@ export function NewMapsPanel({ maps, team, onRefresh }: Props) {
     setLoading(true);
     try {
       const map = assignInspectorMap;
+      let updated: MapRecord;
       if (opts.mode === "shift" && opts.shiftId) {
         const shift = SHIFTS.find((s) => s.id === opts.shiftId)!;
         const shiftInspectors = getShiftInspectors(team, opts.shiftId);
-        await api.assignInspector(map.id, opts.inspectorId, opts.attachment);
+        updated = await api.assignInspector(map.id, opts.inspectorId, opts.attachment);
         for (const inspector of shiftInspectors) {
           await api.createTask(map.id, {
             title: `${shift.label} shift — ${map.mapNumber}`,
@@ -187,11 +225,12 @@ export function NewMapsPanel({ maps, team, onRefresh }: Props) {
             phase: "PREP",
           });
         }
+        onRefresh();
       } else {
-        await api.assignInspector(map.id, opts.inspectorId, opts.attachment);
+        updated = await api.assignInspector(map.id, opts.inspectorId, opts.attachment);
+        commitMap(updated);
       }
       setAssignInspectorMap(null);
-      onRefresh();
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -204,9 +243,8 @@ export function NewMapsPanel({ maps, team, onRefresh }: Props) {
     setError("");
     setLoading(true);
     try {
-      await api.unassignInspector(assignInspectorMap.id);
+      commitMap(await api.unassignInspector(assignInspectorMap.id));
       setAssignInspectorMap(null);
-      onRefresh();
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -222,9 +260,8 @@ export function NewMapsPanel({ maps, team, onRefresh }: Props) {
     setError("");
     setLoading(true);
     try {
-      await api.assignQa(assignQaMap.id, opts.qaId, opts.attachment);
+      commitMap(await api.assignQa(assignQaMap.id, opts.qaId, opts.attachment));
       setAssignQaMap(null);
-      onRefresh();
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -237,9 +274,8 @@ export function NewMapsPanel({ maps, team, onRefresh }: Props) {
     setError("");
     setLoading(true);
     try {
-      await api.unassignQa(assignQaMap.id);
+      commitMap(await api.unassignQa(assignQaMap.id));
       setAssignQaMap(null);
-      onRefresh();
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -251,8 +287,7 @@ export function NewMapsPanel({ maps, team, onRefresh }: Props) {
     setError("");
     setPhaseSavingId(mapId);
     try {
-      await api.updateMapWorkflowPhaseTarget(mapId, workflowPhaseTarget);
-      onRefresh();
+      commitMap(await api.updateMapWorkflowPhaseTarget(mapId, workflowPhaseTarget));
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -264,8 +299,7 @@ export function NewMapsPanel({ maps, team, onRefresh }: Props) {
     setError("");
     setSavingId(mapId);
     try {
-      await api.releaseMapToPipeline(mapId);
-      onRefresh();
+      commitMap(await api.releaseMapToPipeline(mapId));
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -279,11 +313,23 @@ export function NewMapsPanel({ maps, team, onRefresh }: Props) {
   return (
     <section className="rounded-2xl border-2 border-amber-200 bg-gradient-to-br from-amber-50/80 to-white shadow-sm overflow-hidden">
       <div className="px-5 py-4 border-b border-amber-200/80">
-        <div className="flex items-center gap-2">
-          <h2 className="text-lg font-semibold text-amber-950">New maps</h2>
-          <span className="text-xs font-bold tabular-nums px-2 py-0.5 rounded-full bg-amber-200 text-amber-900">
-            {newMaps.length}
-          </span>
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg font-semibold text-amber-950">New maps</h2>
+            <span className="text-xs font-bold tabular-nums px-2 py-0.5 rounded-full bg-amber-200 text-amber-900">
+              {newMaps.length}
+            </span>
+          </div>
+          {assignedNewMaps.length > 0 && (
+            <button
+              type="button"
+              disabled={loading}
+              onClick={() => handleBulkUnassign(assignedNewMaps.map((m) => m.id))}
+              className="ml-auto px-3 py-1.5 text-sm font-semibold text-amber-950 border border-amber-300 bg-white rounded-lg hover:bg-amber-50 disabled:opacity-50"
+            >
+              Unassign all ({assignedNewMaps.length})
+            </button>
+          )}
         </div>
         <p className="text-sm text-amber-900/70 mt-1 max-w-2xl">
           Maps from CS land here first. Assign an inspector — QA is assigned automatically by
@@ -311,6 +357,17 @@ export function NewMapsPanel({ maps, team, onRefresh }: Props) {
               className="px-4 py-1.5 text-sm font-semibold bg-violet-600 text-white rounded-lg hover:bg-violet-700 disabled:opacity-50"
             >
               Shuffle assign
+            </button>
+          )}
+
+          {assignedSelected.length > 0 && (
+            <button
+              type="button"
+              disabled={loading}
+              onClick={() => handleBulkUnassign(assignedSelected.map((m) => m.id))}
+              className="px-4 py-1.5 text-sm font-semibold text-amber-950 border border-amber-300 bg-white rounded-lg hover:bg-amber-50 disabled:opacity-50"
+            >
+              Unassign selected ({assignedSelected.length})
             </button>
           )}
 

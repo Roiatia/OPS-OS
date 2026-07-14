@@ -57,6 +57,9 @@ export const api = {
 
   getMap: (id: string) => request<import("./types").MapRecord>(`/maps/${id}`),
 
+  getAttachment: (attachmentId: string) =>
+    request<import("./types").MapAttachment>(`/maps/attachments/${attachmentId}`),
+
   getTeam: () => request<import("./types").TeamMember[]>("/maps/team"),
 
   createMap: (data: {
@@ -198,6 +201,12 @@ export const api = {
 
   deleteMaps: (mapIds: string[]) =>
     request<{ ok: true; deleted: number }>("/maps/bulk-delete", {
+      method: "POST",
+      body: JSON.stringify({ mapIds }),
+    }),
+
+  bulkUnassignNewMaps: (mapIds: string[]) =>
+    request<{ ok: true; unassigned: number }>("/maps/bulk-unassign-new", {
       method: "POST",
       body: JSON.stringify({ mapIds }),
     }),

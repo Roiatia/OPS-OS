@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { AssignmentBoard } from "../components/leader/AssignmentBoard";
 import { NewMapsPanel } from "../components/leader/NewMapsPanel";
@@ -9,7 +9,12 @@ import { LeaderSidebar, type LeaderSection } from "../components/leader/LeaderSi
 import { SettingsPanel } from "../components/leader/SettingsPanel";
 import { TeamPanel } from "../components/leader/TeamPanel";
 import { getIdleInspectors } from "../lib/assignment";
-import { useMapsPolling } from "../lib/useMapsPolling";
+import {
+  removeMapsById,
+  upsertActiveMaps,
+  upsertHistoryMaps,
+} from "../lib/mapState";
+import { useMapsRealtime } from "../lib/useMapsRealtime";
 import { isNewMapForLeader, isPipelineMapForLeader, needsQaAssignment } from "../lib/mapDisplay";
 import type { MapRecord, TeamMember } from "../types";
 
@@ -56,7 +61,7 @@ export function LeaderDashboardPage() {
     dueDate: "",
   });
 
-  function load(opts?: { soft?: boolean }) {
+  const load = useCallback((opts?: { soft?: boolean }) => {
     if (opts?.soft) setRefreshing(true);
     else setLoading(true);
     return Promise.all([api.getMaps(), api.getHistoryMaps(), api.getTeam()])
@@ -75,19 +80,35 @@ export function LeaderDashboardPage() {
         setLoading(false);
         setRefreshing(false);
       });
-  }
+  }, []);
+
+  const applyUpsert = useCallback((incoming: MapRecord[]) => {
+    setMaps((prev) => upsertActiveMaps(prev, incoming));
+    setHistoryMaps((prev) => upsertHistoryMaps(prev, incoming));
+  }, []);
+
+  const applyDeleted = useCallback((mapIds: string[]) => {
+    setMaps((prev) => removeMapsById(prev, mapIds));
+    setHistoryMaps((prev) => removeMapsById(prev, mapIds));
+  }, []);
 
   useEffect(() => {
     load();
-  }, []);
+  }, [load]);
 
-  useMapsPolling((opts) => load(opts));
+  useMapsRealtime({
+    onUpsert: applyUpsert,
+    onDeleted: applyDeleted,
+    onInvalidate: () => {
+      void load({ soft: true });
+    },
+  });
 
   async function handleAddMap(e: React.FormEvent) {
     e.preventDefault();
     setError("");
     try {
-      await api.createMap({
+      const map = await api.createMap({
         mapNumber: form.mapNumber,
         jiraTicketId: form.jiraTicketId || undefined,
         client: form.client,
@@ -97,7 +118,7 @@ export function LeaderDashboardPage() {
       });
       setShowAddMap(false);
       setForm({ mapNumber: "", jiraTicketId: "", client: "", area: "", description: "", dueDate: "" });
-      load({ soft: true });
+      applyUpsert([map]);
     } catch (err) {
       setError((err as Error).message);
     }
@@ -307,13 +328,19 @@ export function LeaderDashboardPage() {
                     </form>
                   )}
 
-                  <NewMapsPanel maps={maps} team={team} onRefresh={() => load({ soft: true })} />
+                  <NewMapsPanel
+                    maps={maps}
+                    team={team}
+                    onRefresh={() => load({ soft: true })}
+                    onMapUpdated={applyUpsert}
+                  />
 
                   <AssignmentBoard
                     maps={pipelineMaps}
                     allMaps={maps}
                     team={team}
                     onRefresh={() => load({ soft: true })}
+                    onMapUpdated={applyUpsert}
                   />
                 </>
               )}

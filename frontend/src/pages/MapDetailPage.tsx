@@ -12,7 +12,7 @@ import { getMapDisplayState, getWorkflowTimelineLabel, workflowStateTone, canAss
 import { toDateInputValue, formatDueDate, getDueDateStatus, DUE_DATE_CLASS } from "../lib/dates";
 import { SHIFTS, getShiftInspectors } from "../lib/shifts";
 import { MAP_STATUS_OPTIONS } from "../lib/activeMapsWorkflow";
-import type { MapRecord, TeamMember, MapStatus } from "../types";
+import type { MapAttachment, MapRecord, TeamMember, MapStatus } from "../types";
 
 export function MapDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -163,37 +163,7 @@ export function MapDetailPage() {
               </h2>
               <div className="space-y-3">
                 {map.attachments!.map((att) => (
-                  <div
-                    key={att.id}
-                    className="flex items-center gap-3 bg-white rounded-xl border border-border p-3"
-                  >
-                    {att.mimeType.startsWith("image/") && att.data ? (
-                      <img
-                        src={`data:${att.mimeType};base64,${att.data}`}
-                        alt={att.fileName}
-                        className="w-14 h-14 object-cover rounded-lg border border-border shrink-0"
-                      />
-                    ) : (
-                      <div className="w-14 h-14 rounded-lg bg-brand-50 flex items-center justify-center shrink-0 text-brand-600 text-xs font-bold">
-                        FILE
-                      </div>
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">{att.fileName}</p>
-                      <p className="text-xs text-muted">
-                        {att.uploadedBy.name} · {new Date(att.createdAt).toLocaleDateString()}
-                      </p>
-                    </div>
-                    {att.data && !att.mimeType.startsWith("image/") && (
-                      <a
-                        href={`data:${att.mimeType};base64,${att.data}`}
-                        download={att.fileName}
-                        className="text-xs text-brand-600 font-medium shrink-0"
-                      >
-                        Download
-                      </a>
-                    )}
-                  </div>
+                  <AttachmentRow key={att.id} attachment={att} />
                 ))}
               </div>
             </div>
@@ -512,6 +482,88 @@ function ActionBlock({
       <h3 className="text-sm font-semibold text-slate-800">{title}</h3>
       <p className="text-xs text-muted mt-0.5 mb-3">{hint}</p>
       {children}
+    </div>
+  );
+}
+
+function AttachmentRow({ attachment }: { attachment: MapAttachment }) {
+  const [data, setData] = useState(attachment.data);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  async function ensureData() {
+    if (data) return data;
+    setLoading(true);
+    setError("");
+    try {
+      const full = await api.getAttachment(attachment.id);
+      setData(full.data);
+      return full.data;
+    } catch (e) {
+      setError((e as Error).message);
+      return undefined;
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!attachment.mimeType.startsWith("image/") || data) return;
+    let cancelled = false;
+    setLoading(true);
+    api
+      .getAttachment(attachment.id)
+      .then((full) => {
+        if (!cancelled) setData(full.data);
+      })
+      .catch((e) => {
+        if (!cancelled) setError((e as Error).message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [attachment.id, attachment.mimeType, data]);
+
+  return (
+    <div className="flex items-center gap-3 bg-white rounded-xl border border-border p-3">
+      {attachment.mimeType.startsWith("image/") && data ? (
+        <img
+          src={`data:${attachment.mimeType};base64,${data}`}
+          alt={attachment.fileName}
+          className="w-14 h-14 object-cover rounded-lg border border-border shrink-0"
+        />
+      ) : (
+        <div className="w-14 h-14 rounded-lg bg-brand-50 flex items-center justify-center shrink-0 text-brand-600 text-xs font-bold">
+          {loading ? "…" : "FILE"}
+        </div>
+      )}
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium truncate">{attachment.fileName}</p>
+        <p className="text-xs text-muted">
+          {attachment.uploadedBy.name} · {new Date(attachment.createdAt).toLocaleDateString()}
+        </p>
+        {error && <p className="text-xs text-red-600 mt-1">{error}</p>}
+      </div>
+      {!attachment.mimeType.startsWith("image/") && (
+        <button
+          type="button"
+          disabled={loading}
+          onClick={async () => {
+            const blobData = await ensureData();
+            if (!blobData) return;
+            const link = document.createElement("a");
+            link.href = `data:${attachment.mimeType};base64,${blobData}`;
+            link.download = attachment.fileName;
+            link.click();
+          }}
+          className="text-xs text-brand-600 font-medium shrink-0 disabled:opacity-50"
+        >
+          {loading ? "Loading…" : "Download"}
+        </button>
+      )}
     </div>
   );
 }
