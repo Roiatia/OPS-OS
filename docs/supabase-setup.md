@@ -74,67 +74,6 @@ JOIN "UserRole" ur ON ur."userId" = u.id
 ORDER BY u.name;
 ```
 
-## 6. Realtime (live updates via WebSocket)
-
-Dashboards and the map detail page update live using **Supabase Realtime Broadcast**
-instead of only polling. The backend emits a small "maps changed" signal after every
-successful mutation; connected clients react by refetching through the normal REST API
-(so role-based visibility and custom-JWT auth are unchanged). Polling stays on as a slow
-safety net (60s when Realtime is configured, 15s when it isn't).
-
-### 6a. Get your Realtime keys
-
-In Supabase: **Project Settings → API**
-
-- **Project URL** — e.g. `https://xxxxx.supabase.co`
-- **anon public** key — safe to expose in the browser
-- **service_role** key — server-only secret, never ship to the frontend
-
-### 6b. Environment variables
-
-Add to **`backend/.env`** (used to send broadcasts):
-
-```env
-SUPABASE_URL="https://xxxxx.supabase.co"
-SUPABASE_SERVICE_ROLE_KEY="your-service-role-key"
-```
-
-Create **`frontend/.env`** (used to subscribe; Vite only exposes `VITE_`-prefixed vars):
-
-```env
-VITE_SUPABASE_URL="https://xxxxx.supabase.co"
-VITE_SUPABASE_ANON_KEY="your-anon-public-key"
-```
-
-> If these are omitted, the app still works — it just falls back to 15s polling and logs
-> a warning on the backend. No code changes needed to turn Realtime on/off.
-
-### 6c. Install deps & run
-
-`@supabase/supabase-js` is already in `frontend/package.json`. After pulling, run
-`npm install` in `frontend` (and `backend`), then start normally with `./start.sh`.
-
-No database replication or RLS setup is required — Broadcast does not read table data,
-so this works with the existing schema as-is. Realtime is enabled by default on new
-Supabase projects.
-
-### 6d. How it works (for maintainers)
-
-- Backend: `backend/src/lib/realtime.ts` posts to Supabase's stateless broadcast REST
-  endpoint (`/realtime/v1/api/broadcast/ops-maps/events/maps_changed`). A middleware in
-  `backend/src/routes/maps.ts` fires it after any successful `POST`/`PATCH`/`DELETE`,
-  including the affected `mapId` when the response carries one.
-- Frontend: `frontend/src/lib/supabase.ts` creates the anon client and
-  `frontend/src/lib/useMapsRealtime.ts` subscribes to the `ops-maps` channel. Dashboards
-  refetch on any change; the map detail page refetches only when the change matches its
-  `mapId`.
-
-### 6e. Verify
-
-Open two browser windows logged in as different users. Change a map in one (assign,
-status, note) and the other should update within ~1s without a manual refresh. On the
-backend console you should **not** see the `realtime … disabled` warning.
-
 ## Troubleshooting
 
 **`Can't reach database server`** — Check password, project ref, and that IP allowlist allows your connection (Supabase: Database → Network restrictions).
@@ -144,10 +83,3 @@ backend console you should **not** see the `realtime … disabled` warning.
 **Re-seed users only** — Safe to run `npm run db:seed` again; users are upserted by email.
 
 **Reset database** — Supabase SQL Editor: drop tables or use **Reset database** in project settings (destructive).
-
-**Realtime not updating** — Confirm all four env vars are set (backend `SUPABASE_URL` +
-`SUPABASE_SERVICE_ROLE_KEY`, frontend `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY`) and
-that the frontend was restarted after adding `frontend/.env` (Vite reads env only at
-startup). Check the browser console for a WebSocket connection to `…supabase.co/realtime`
-and the backend console for the `realtime … disabled` warning. Updates still arrive via
-polling within 60s regardless.

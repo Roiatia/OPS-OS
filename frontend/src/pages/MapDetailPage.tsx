@@ -12,7 +12,6 @@ import { getMapDisplayState, getWorkflowTimelineLabel, workflowStateTone, canAss
 import { toDateInputValue, formatDueDate, getDueDateStatus, DUE_DATE_CLASS } from "../lib/dates";
 import { SHIFTS, getShiftInspectors } from "../lib/shifts";
 import { MAP_STATUS_OPTIONS } from "../lib/activeMapsWorkflow";
-import { useMapsRealtime } from "../lib/useMapsRealtime";
 import type { MapRecord, TeamMember, MapStatus } from "../types";
 
 /** Single-map detail view with timeline, status actions, and tasks. */
@@ -44,9 +43,6 @@ export function MapDetailPage() {
   useEffect(() => {
     load();
   }, [id]);
-
-  // Live-refresh this map when someone else changes it.
-  useMapsRealtime(() => load(), { mapId: id });
 
   // Leaders need the full maps list + team for assign modals / workload hints.
   // (Detail page still uses getMap for the primary record.)
