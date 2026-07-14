@@ -97,6 +97,8 @@ export const api = {
       assignedSupervisorId?: string | null;
       onHubStatusBoard?: boolean;
       opsManagerComment?: string | null;
+      shiftLeaderApproved?: boolean | null;
+      returnVisitAt?: string | null;
     }
   ) =>
     request<import("./types").MapRecord>(`/maps/${mapId}/hub`, {
@@ -272,6 +274,12 @@ export const api = {
   getReport: (id: string) =>
     request<import("./types/report").OpsDailyReportDetail>(`/reports/${id}`),
 
+  updateReportNote: (id: string, opsManagerNote: string | null) =>
+    request<import("./types/report").OpsDailyReportDetail>(`/reports/${id}/note`, {
+      method: "PATCH",
+      body: JSON.stringify({ opsManagerNote }),
+    }),
+
   getMyAvailability: (weekStart?: string) =>
     request<import("./types/availability").AvailabilitySubmission>(
       `/availability/mine${buildQuery({ weekStart })}`
@@ -280,12 +288,15 @@ export const api = {
   saveMyAvailability: (body: {
     weekStart?: string;
     fridayContract: boolean;
+    hagimOk?: boolean;
     days: {
       dayOfWeek: number;
       canWork: boolean;
       allDay?: boolean;
       startMinutes?: number | null;
       endMinutes?: number | null;
+      startMinutes2?: number | null;
+      endMinutes2?: number | null;
       note?: string | null;
     }[];
   }) =>
@@ -298,6 +309,26 @@ export const api = {
     request<import("./types/availability").AvailabilityRoster>(
       `/availability/roster${buildQuery({ weekStart })}`
     ),
+
+  getShiftPlan: (weekStart?: string) =>
+    request<import("./types/availability").ShiftPlanView>(
+      `/availability/plan${buildQuery({ weekStart })}`
+    ),
+
+  saveShiftPlan: (body: {
+    weekStart?: string;
+    assignments: import("./types/availability").ShiftPlanAssignment[];
+  }) =>
+    request<import("./types/availability").ShiftPlanSaveResult>("/availability/plan", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+
+  autoGenerateShiftPlan: (weekStart?: string) =>
+    request<import("./types/availability").ShiftPlanSaveResult>("/availability/plan/auto", {
+      method: "POST",
+      body: JSON.stringify({ weekStart }),
+    }),
 };
 
 export function setAuthToken(token: string | null) {

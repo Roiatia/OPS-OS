@@ -1,10 +1,13 @@
+import { useState } from "react";
 import { useAuth } from "../../context/AuthContext";
 import { hasOpsManagerRole, hasSupervisorRole } from "../../lib/roles";
 import { OpsAvailabilityRoster } from "../availability/OpsAvailabilityRoster";
+import { OpsShiftPlanner } from "../availability/OpsShiftPlanner";
 import { SupervisorAvailabilityForm } from "../availability/SupervisorAvailabilityForm";
 
 export function AvailabilityPanel() {
   const { user } = useAuth();
+  const [opsTab, setOpsTab] = useState<"roster" | "plan">("plan");
 
   if (hasSupervisorRole(user)) {
     return (
@@ -21,10 +24,30 @@ export function AvailabilityPanel() {
     return (
       <div className="space-y-4">
         <p className="text-sm text-muted max-w-2xl">
-          Review supervisor availability against field map volume from CS. Purple blocks are night
-          shifts (from 23:00, 6h+).
+          Review availability and plan weekly shifts based on field maps from CS (about one week ahead).
         </p>
-        <OpsAvailabilityRoster />
+        <div className="flex gap-2">
+          {(
+            [
+              { id: "plan" as const, label: "Shift plan" },
+              { id: "roster" as const, label: "Availability" },
+            ] as const
+          ).map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setOpsTab(tab.id)}
+              className={`px-4 py-2 text-sm font-medium rounded-xl ${
+                opsTab === tab.id
+                  ? "bg-brand-600 text-white"
+                  : "bg-white border border-border text-muted hover:bg-slate-50"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+        {opsTab === "plan" ? <OpsShiftPlanner /> : <OpsAvailabilityRoster />}
       </div>
     );
   }

@@ -33,12 +33,23 @@ export interface OpsDailyReportShiftMember {
   shiftStartedAt: string | null;
 }
 
+export interface OpsDailyReportTeamMember {
+  id: string;
+  name: string;
+  role: string;
+}
+
 export interface OpsDailyReportPayload {
   reportDate: string;
   shift: {
     members: OpsDailyReportShiftMember[];
     shiftLeaderCount: number;
     hadShiftLeader: boolean;
+  };
+  team: {
+    field: OpsDailyReportTeamMember[];
+    graphics: OpsDailyReportTeamMember[];
+    ops: OpsDailyReportTeamMember[];
   };
   field: {
     completed: OpsDailyReportMapItem[];
@@ -60,6 +71,7 @@ export interface OpsDailyReportPayload {
     approved: number;
   };
   alerts: string[];
+  opsManagerNote: string | null;
 }
 
 export interface OpsDailyReportListItem {
@@ -70,6 +82,7 @@ export interface OpsDailyReportListItem {
   generatedAt: string;
   fieldCompleted: number;
   fieldIncomplete: number;
+  fieldCancelled: number;
   shiftLeaderCount: number;
 }
 
@@ -114,13 +127,18 @@ function buildSummary(payload: OpsDailyReportPayload): string {
     payload.reportDate,
     `${payload.field.completed.length} field complete`,
     `${payload.field.incomplete.length} field incomplete`,
+    `${payload.field.cancelled.length} field cancelled`,
     `${payload.graphics.milestones.length} graphics milestones`,
     `${payload.ops.acceptedToPolish.length} accepted to polish`,
     `${payload.shift.members.length} on shift`,
     ...payload.field.completed.map((m) => m.mapNumber),
     ...payload.field.incomplete.map((m) => m.mapNumber),
+    ...payload.field.cancelled.map((m) => m.mapNumber),
     ...payload.graphics.milestones.map((m) => m.mapNumber),
     ...payload.shift.members.map((m) => m.name),
+    ...(payload.team?.graphics ?? []).map((m) => m.name),
+    ...(payload.team?.ops ?? []).map((m) => m.name),
+    payload.opsManagerNote ?? "",
     ...payload.alerts,
   ];
   return parts.filter(Boolean).join(" ");
@@ -143,9 +161,10 @@ function toListItem(
     title: row.title,
     summary: row.summary,
     generatedAt: row.generatedAt.toISOString(),
-    fieldCompleted: payload.field.completed.length,
-    fieldIncomplete: payload.field.incomplete.length,
-    shiftLeaderCount: payload.shift.shiftLeaderCount,
+    fieldCompleted: payload.field?.completed?.length ?? 0,
+    fieldIncomplete: payload.field?.incomplete?.length ?? 0,
+    fieldCancelled: payload.field?.cancelled?.length ?? 0,
+    shiftLeaderCount: payload.shift?.shiftLeaderCount ?? 0,
   };
 }
 
@@ -162,7 +181,7 @@ export async function buildDailyReportPayload(reportDate: Date): Promise<OpsDail
   const dayEnd = endOfDay(reportDate);
   const dateKey = formatReportDate(reportDate);
 
-  const [onShift, events, maps] = await Promise.all([
+  const [onShift, events, maps, eventActors] = await Promise.all([
     prisma.user.findMany({
       where: {
         roles: { some: { role: { in: [...SUPERVISOR_ROLE_NAMES] } } },
@@ -179,7 +198,7 @@ export async function buildDailyReportPayload(reportDate: Date): Promise<OpsDail
     prisma.mapEvent.findMany({
       where: { createdAt: { gte: dayStart, lte: dayEnd } },
       include: {
-        user: { select: { name: true } },
+        user: { select: { id: true, name: true, roles: { select: { role: true } } } },
         map: {
           select: {
             id: true,
@@ -200,6 +219,17 @@ export async function buildDailyReportPayload(reportDate: Date): Promise<OpsDail
         fieldWorkStatus: true,
         supervisorStatus: true,
       },
+    }),
+    prisma.user.findMany({
+      where: {
+        events: { some: { createdAt: { gte: dayStart, lte: dayEnd } } },
+      },
+      select: {
+        id: true,
+        name: true,
+        roles: { select: { role: true } },
+      },
+      orderBy: { name: "asc" },
     }),
   ]);
 
@@ -234,7 +264,7 @@ export async function buildDailyReportPayload(reportDate: Date): Promise<OpsDail
         client: event.map.client,
         supervisorName: event.map.assignedSupervisor?.name ?? null,
         reason:
-          action === "hub_uncompleted"
+          action === "hub_uncompleted" || action === "hub_cancelled"
             ? incompleteReason(event.note, event.map.opsManagerComment)
             : null,
       };
@@ -296,6 +326,56 @@ export async function buildDailyReportPayload(reportDate: Date): Promise<OpsDail
     approved: maps.filter((m) => m.phase === MapPhase.APPROVED).length,
   };
 
+  const ROLE_LABEL: Record<string, string> = {
+    SUPERVISOR: "Supervisor",
+    SUPERVISOR_SHIFT_LEADER: "Shift leader",
+    GRAPHIC_TEAM_LEADER: "Graphics leader",
+    MAPPING_INSPECTOR: "Mapping inspector",
+    GRAPHIC_QA: "Graphic QA",
+    OPS_ADMIN: "OPS Manager",
+    OPS_MANAGER_2: "OPS Manager 2",
+  };
+
+  function primaryRoleLabel(roles: { role: RoleName }[]): string {
+    const names = roles.map((r) => r.role);
+    const preferred = [
+      RoleName.OPS_ADMIN,
+      RoleName.OPS_MANAGER_2,
+      RoleName.GRAPHIC_TEAM_LEADER,
+      RoleName.SUPERVISOR_SHIFT_LEADER,
+      RoleName.SUPERVISOR,
+      RoleName.MAPPING_INSPECTOR,
+      RoleName.GRAPHIC_QA,
+    ];
+    const hit = preferred.find((r) => names.includes(r));
+    return hit ? ROLE_LABEL[hit] ?? hit : names[0] ?? "Team";
+  }
+
+  const fieldTeam: OpsDailyReportTeamMember[] = shiftMembers.map((m) => ({
+    id: m.id,
+    name: m.name,
+    role: m.isShiftLeader ? "Shift leader" : "Supervisor",
+  }));
+
+  const graphicsTeam: OpsDailyReportTeamMember[] = [];
+  const opsTeam: OpsDailyReportTeamMember[] = [];
+  for (const u of eventActors) {
+    const roles = u.roles.map((r) => r.role);
+    const isGraphics = roles.some(
+      (r) =>
+        r === RoleName.GRAPHIC_TEAM_LEADER ||
+        r === RoleName.MAPPING_INSPECTOR ||
+        r === RoleName.GRAPHIC_QA
+    );
+    const isOps = roles.some((r) => r === RoleName.OPS_ADMIN || r === RoleName.OPS_MANAGER_2);
+    if (isGraphics) {
+      graphicsTeam.push({ id: u.id, name: u.name, role: primaryRoleLabel(u.roles) });
+    }
+    if (isOps) {
+      opsTeam.push({ id: u.id, name: u.name, role: primaryRoleLabel(u.roles) });
+    }
+  }
+
   return {
     reportDate: dateKey,
     shift: {
@@ -303,17 +383,30 @@ export async function buildDailyReportPayload(reportDate: Date): Promise<OpsDail
       shiftLeaderCount,
       hadShiftLeader: shiftLeaderCount > 0,
     },
+    team: {
+      field: fieldTeam,
+      graphics: graphicsTeam,
+      ops: opsTeam,
+    },
     field: { completed, incomplete, cancelled },
     graphics: { milestones: graphicsMilestones },
     ops: { acceptedToPolish },
     pipeline,
     alerts,
+    opsManagerNote: null,
   };
 }
 
 export async function generateDailyReport(reportDate: Date) {
   const day = startOfDay(reportDate);
+  const existing = await prisma.opsDailyReport.findUnique({ where: { reportDate: day } });
+  const previousNote =
+    existing && typeof existing.payload === "object" && existing.payload !== null
+      ? ((existing.payload as OpsDailyReportPayload).opsManagerNote ?? null)
+      : null;
+
   const payload = await buildDailyReportPayload(day);
+  payload.opsManagerNote = previousNote;
   const title = formatReportTitle(day);
   const summary = buildSummary(payload);
 
@@ -355,9 +448,38 @@ export async function listOpsDailyReports(query?: string): Promise<OpsDailyRepor
 export async function getOpsDailyReport(id: string): Promise<OpsDailyReportDetail | null> {
   const row = await prisma.opsDailyReport.findUnique({ where: { id } });
   if (!row) return null;
+  const payload = row.payload as OpsDailyReportPayload;
   return {
     ...toListItem(row),
-    payload: row.payload as OpsDailyReportPayload,
+    payload: {
+      ...payload,
+      team: payload.team ?? { field: [], graphics: [], ops: [] },
+      opsManagerNote: payload.opsManagerNote ?? null,
+    },
+  };
+}
+
+export async function updateOpsDailyReportNote(
+  id: string,
+  opsManagerNote: string | null
+): Promise<OpsDailyReportDetail | null> {
+  const row = await prisma.opsDailyReport.findUnique({ where: { id } });
+  if (!row) return null;
+
+  const payload = {
+    ...(row.payload as OpsDailyReportPayload),
+    opsManagerNote: opsManagerNote?.trim() || null,
+  };
+  const summary = buildSummary(payload);
+
+  const updated = await prisma.opsDailyReport.update({
+    where: { id },
+    data: { payload, summary },
+  });
+
+  return {
+    ...toListItem(updated),
+    payload,
   };
 }
 
@@ -369,14 +491,18 @@ export async function ensureDailyReportForDate(reportDate: Date): Promise<boolea
   return true;
 }
 
-/** After 23:00 local time — generates today's end-of-day report once per day */
+/** After 08:00 local time — generates yesterday's report (covers overnight work) once */
 export async function runDailyReportSchedulerTick(now = new Date()): Promise<void> {
-  if (now.getHours() < 23) return;
-  await ensureDailyReportForDate(now);
+  if (now.getHours() < 8) return;
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  await ensureDailyReportForDate(yesterday);
 }
 
-/** On server start after 23:00 — catch up if today's report was missed */
+/** On server start after 08:00 — catch up if yesterday's morning report was missed */
 export async function catchUpDailyReportIfNeeded(now = new Date()): Promise<void> {
-  if (now.getHours() < 23) return;
-  await ensureDailyReportForDate(now);
+  if (now.getHours() < 8) return;
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  await ensureDailyReportForDate(yesterday);
 }

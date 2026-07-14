@@ -1,4 +1,3 @@
-import { OriientLogo } from "../OriientLogo";
 
 export type OpsSection =
   | "hub"
@@ -51,9 +50,8 @@ export function OpsManagerSidebar({
 
   return (
     <aside className="w-60 shrink-0 border-r border-border bg-white flex flex-col h-[calc(100vh-4rem)] sticky top-16 shadow-sm">
-      <div className="px-4 py-5 border-b border-border">
-        <OriientLogo size="sm" />
-        <p className="text-[11px] font-semibold uppercase tracking-widest text-muted mt-4">
+      <div className="px-4 py-4 border-b border-border">
+        <p className="text-[11px] font-semibold uppercase tracking-widest text-muted">
           Navigation
         </p>
       </div>

@@ -70,6 +70,7 @@ model User {
   googleId  String?    @unique
   shiftStartedAt DateTime?
   fridayContract   Boolean  @default(false)
+  hagimOk          Boolean  @default(false)
   roles     UserRole[]
   assignedMapsAsInspector Map[]  @relation("InspectorMaps")
   assignedMapsAsQa      Map[]  @relation("QaMaps")
@@ -81,6 +82,8 @@ model User {
   attachments             MapAttachment[]
   notes                   MapNote[]
   availabilitySubmissions AvailabilitySubmission[]
+  shiftPlansCreated       ShiftPlan[]           @relation("ShiftPlansCreated")
+  shiftPlanAssignments    ShiftPlanAssignment[]
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
 }
@@ -110,6 +113,10 @@ model Map {
   fieldWorkStatus FieldWorkStatus  @default(UNCOMPLETED)
   fieldProgressPercent Int          @default(0)
   onHubStatusBoard  Boolean          @default(false)
+  /** null = N/A; true = SL approved complete; false = completed without SL approval */
+  shiftLeaderApproved Boolean?
+  /** Scheduled return when incomplete/cancelled and mapper will continue later */
+  returnVisitAt   DateTime?
   phase           MapPhase         @default(INTAKE)
   inspectorStatus InspectorStatus?
   supervisorStatus SupervisorStatus?
@@ -216,6 +223,7 @@ model AvailabilitySubmission {
   user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   weekStart      DateTime @db.Date
   fridayContract Boolean  @default(false)
+  hagimOk        Boolean  @default(false)
   note           String?
   submittedAt    DateTime?
   days           AvailabilityDay[]
@@ -226,6 +234,31 @@ model AvailabilitySubmission {
   @@index([weekStart])
 }
 
+model ShiftPlan {
+  id          String                @id @default(cuid())
+  weekStart   DateTime              @db.Date
+  createdById String?
+  createdBy   User?                 @relation("ShiftPlansCreated", fields: [createdById], references: [id], onDelete: SetNull)
+  assignments ShiftPlanAssignment[]
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+
+  @@unique([weekStart])
+  @@index([weekStart])
+}
+
+model ShiftPlanAssignment {
+  id        String    @id @default(cuid())
+  planId    String
+  plan      ShiftPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  dayOfWeek Int
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, dayOfWeek, userId])
+  @@index([planId])
+  @@index([userId])
+}
 model AvailabilityDay {
   id           String   @id @default(cuid())
   submissionId String
@@ -235,6 +268,9 @@ model AvailabilityDay {
   allDay       Boolean  @default(false)
   startMinutes Int?
   endMinutes   Int?
+  /** Optional second block same day (e.g. 9–15 then 16–20) */
+  startMinutes2 Int?
+  endMinutes2   Int?
   note         String?
 
   @@unique([submissionId, dayOfWeek])

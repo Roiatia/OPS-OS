@@ -7,9 +7,13 @@ import { SupervisorMapsBoard } from "../components/supervisor/SupervisorMapsBoar
 import { SupervisorSidebar, type SupervisorSection } from "../components/supervisor/SupervisorSidebar";
 import { SupervisorTeamPanel } from "../components/supervisor/SupervisorTeamPanel";
 import { ConfluencePanel } from "../components/shared/ConfluencePanel";
+import { SupervisorAvailabilityForm } from "../components/availability/SupervisorAvailabilityForm";
+import { AvailabilityReminderModal } from "../components/availability/AvailabilityReminderModal";
 import { getSupervisorFieldStatus } from "../lib/supervisorDisplay";
 import { patchMapInList } from "../lib/mapSync";
 import { useAuth } from "../context/AuthContext";
+import { hasSupervisorRole } from "../lib/roles";
+import { useAvailabilityReminder } from "../lib/useAvailabilityReminder";
 import type { MapRecord, TeamMember } from "../types";
 
 const SECTION_TITLES: Record<SupervisorSection, { title: string; subtitle: string }> = {
@@ -25,8 +29,6 @@ const SECTION_TITLES: Record<SupervisorSection, { title: string; subtitle: strin
   settings: { title: "Settings", subtitle: "Workspace preferences" },
 };
 
-import { SupervisorAvailabilityForm } from "../components/availability/SupervisorAvailabilityForm";
-
 export function SupervisorDashboardPage() {
   const { user } = useAuth();
   const [maps, setMaps] = useState<MapRecord[]>([]);
@@ -34,6 +36,13 @@ export function SupervisorDashboardPage() {
   const [team, setTeam] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeSection, setActiveSection] = useState<SupervisorSection>("hub");
+  const availabilityReminder = useAvailabilityReminder(hasSupervisorRole(user));
+
+  function openAvailability() {
+    setActiveSection("availability");
+    availabilityReminder.promptNow();
+    void availabilityReminder.refresh();
+  }
 
   const load = useCallback((silent = false) => {
     if (!silent) setLoading(true);
@@ -80,9 +89,21 @@ export function SupervisorDashboardPage() {
 
   return (
     <div className="flex min-h-[calc(100vh-3.5rem)]">
+      <AvailabilityReminderModal
+        open={availabilityReminder.show}
+        weekLabel={availabilityReminder.weekLabel}
+        onDismiss={availabilityReminder.dismiss}
+        onFill={() => {
+          availabilityReminder.snooze();
+          setActiveSection("availability");
+        }}
+      />
       <SupervisorSidebar
         activeSection={activeSection}
-        onSectionChange={setActiveSection}
+        onSectionChange={(section) => {
+          if (section === "availability") openAvailability();
+          else setActiveSection(section);
+        }}
         activeMapCount={stats.uncompleted}
         teamCount={supervisors.length}
       />
@@ -136,7 +157,9 @@ export function SupervisorDashboardPage() {
 
               {activeSection === "company-dashboard" && <CompanyDashboardPanel />}
 
-              {activeSection === "availability" && <SupervisorAvailabilityForm />}
+              {activeSection === "availability" && (
+                <SupervisorAvailabilityForm onSubmitted={() => void availabilityReminder.refresh()} />
+              )}
 
               {activeSection === "confluence" && <ConfluencePanel />}
 

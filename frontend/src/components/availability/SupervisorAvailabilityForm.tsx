@@ -5,14 +5,15 @@ import {
   AVAILABILITY_DAYS,
   DAY_LABELS,
   DAY_LABELS_FULL,
+  countNightShiftsFromDays,
   defaultSubmissionWeekStart,
   formatWeekRange,
   isoWeekStart,
-  timeToMinutes,
   validateAvailabilityDays,
   weekStartSunday,
   type AvailabilityDayInput,
 } from "../../lib/availabilityRules";
+import { DayHourDragBar } from "./DayHourDragBar";
 
 type DayChoice = "unset" | "can" | "cant";
 
@@ -21,6 +22,9 @@ type LocalDay = {
   allDay: boolean;
   startMinutes: number;
   endMinutes: number;
+  hasSecond: boolean;
+  startMinutes2: number;
+  endMinutes2: number;
   note: string;
 };
 
@@ -29,6 +33,9 @@ const DEFAULT_DAY: LocalDay = {
   allDay: false,
   startMinutes: 9 * 60,
   endMinutes: 17 * 60,
+  hasSecond: false,
+  startMinutes2: 16 * 60,
+  endMinutes2: 20 * 60,
   note: "",
 };
 
@@ -47,6 +54,9 @@ function daysFromSubmission(data: AvailabilitySubmission): LocalDay[] {
       allDay: day.allDay,
       startMinutes: day.startMinutes ?? 9 * 60,
       endMinutes: day.endMinutes ?? 17 * 60,
+      hasSecond: day.startMinutes2 != null && day.endMinutes2 != null,
+      startMinutes2: day.startMinutes2 ?? 16 * 60,
+      endMinutes2: day.endMinutes2 ?? 20 * 60,
       note: day.note ?? "",
     };
   }
@@ -65,6 +75,8 @@ function toPayload(days: LocalDay[], fridayContract: boolean): AvailabilityDayIn
       allDay: canWork && d.allDay,
       startMinutes: canWork && !d.allDay ? d.startMinutes : null,
       endMinutes: canWork && !d.allDay ? d.endMinutes : null,
+      startMinutes2: canWork && !d.allDay && d.hasSecond ? d.startMinutes2 : null,
+      endMinutes2: canWork && !d.allDay && d.hasSecond ? d.endMinutes2 : null,
       note: d.note.trim() || null,
     };
   });
@@ -83,13 +95,11 @@ function localValidationErrors(days: LocalDay[], fridayContract: boolean): strin
   return [];
 }
 
-function minutesToInput(m: number): string {
-  return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
-}
-
-export function SupervisorAvailabilityForm() {
+export function SupervisorAvailabilityForm({ onSubmitted }: { onSubmitted?: () => void }) {
   const [weekStart, setWeekStart] = useState(() => defaultSubmissionWeekStart());
   const [fridayContract, setFridayContract] = useState(false);
+  const [hagimOk, setHagimOk] = useState(false);
+  const [priorWeekNightShifts, setPriorWeekNightShifts] = useState(0);
   const [days, setDays] = useState<LocalDay[]>(emptyWeek);
   const [submittedAt, setSubmittedAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -103,6 +113,8 @@ export function SupervisorAvailabilityForm() {
     try {
       const data: AvailabilitySubmission = await api.getMyAvailability(isoWeekStart(weekStart));
       setFridayContract(data.fridayContract);
+      setHagimOk(Boolean(data.hagimOk));
+      setPriorWeekNightShifts(data.nightShifts?.priorWeek ?? 0);
       setSubmittedAt(data.submittedAt);
       setDays(daysFromSubmission(data));
     } catch (err) {
@@ -120,8 +132,8 @@ export function SupervisorAvailabilityForm() {
   const validationErrors = useMemo(() => {
     const local = localValidationErrors(days, fridayContract);
     if (local.length > 0) return local;
-    return validateAvailabilityDays(payloadDays, fridayContract);
-  }, [days, fridayContract, payloadDays]);
+    return validateAvailabilityDays(payloadDays, fridayContract, priorWeekNightShifts);
+  }, [days, fridayContract, payloadDays, priorWeekNightShifts]);
 
   useEffect(() => {
     setDays((prev) =>
@@ -161,10 +173,12 @@ export function SupervisorAvailabilityForm() {
       const saved = await api.saveMyAvailability({
         weekStart: isoWeekStart(weekStart),
         fridayContract,
+        hagimOk,
         days: payloadDays,
       });
       setSubmittedAt(saved.submittedAt);
       setSuccess("Availability submitted.");
+      onSubmitted?.();
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -206,17 +220,56 @@ export function SupervisorAvailabilityForm() {
         )}
       </div>
 
-      <label className="flex items-start gap-3 rounded-xl border border-border bg-white p-4 cursor-pointer">
-        <input
-          type="checkbox"
-          checked={fridayContract}
-          onChange={(e) => setFridayContract(e.target.checked)}
-          className="mt-1"
-        />
-        <span>
-          <span className="text-sm font-semibold text-slate-900">I signed the Friday contract</span>
-        </span>
-      </label>
+      <div className="space-y-3">
+        <label className="flex items-start gap-3 rounded-xl border border-border bg-white p-4 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={fridayContract}
+            onChange={(e) => {
+              const on = e.target.checked;
+              setFridayContract(on);
+              if (on) setHagimOk(true);
+            }}
+            className="mt-1"
+          />
+          <span>
+            <span className="text-sm font-semibold text-slate-900">
+              I signed the Friday work form
+            </span>
+            <span className="block text-xs text-muted mt-0.5">
+              You may work Fridays (shishi) — not Sundays. Usually includes hagim as well.
+            </span>
+          </span>
+        </label>
+
+        <label
+          className={`flex items-start gap-3 rounded-xl border p-4 cursor-pointer ${
+            fridayContract ? "border-slate-200 bg-slate-50" : "border-border bg-white"
+          }`}
+        >
+          <input
+            type="checkbox"
+            checked={hagimOk}
+            disabled={fridayContract}
+            onChange={(e) => setHagimOk(e.target.checked)}
+            className="mt-1"
+          />
+          <span>
+            <span className="text-sm font-semibold text-slate-900">
+              I can work hagim (holidays), but not Friday
+            </span>
+            <span className="block text-xs text-muted mt-0.5">
+              For supervisors who accept holiday shifts without the Friday (shishi) form.
+            </span>
+          </span>
+        </label>
+      </div>
+
+      <p className="text-xs text-muted">
+        Drag hours from 00:00 → 00:00. Overnight example: Sunday 19:00 → 00:00, then Monday 00:00
+        → 04:00. Night shifts (from 23:00, 6h+): max 7 per 2 weeks — prior week: {priorWeekNightShifts},
+        this week: {countNightShiftsFromDays(payloadDays)}. Max 12 hours per shift.
+      </p>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-4">
         {AVAILABILITY_DAYS.map((day, idx) => {
@@ -268,9 +321,7 @@ export function SupervisorAvailabilityForm() {
                 )}
               </div>
 
-              {blocked && (
-                <p className="text-xs text-muted">Not available this week</p>
-              )}
+              {blocked && <p className="text-xs text-muted">Not available this week</p>}
 
               {!blocked && choice === "can" && (
                 <div className="space-y-3">
@@ -284,24 +335,51 @@ export function SupervisorAvailabilityForm() {
                     <span className="text-xs font-medium text-slate-700">All day</span>
                   </label>
                   {!dayState.allDay && (
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="time"
-                        value={minutesToInput(dayState.startMinutes)}
-                        onChange={(e) =>
-                          updateDay(idx, { startMinutes: timeToMinutes(e.target.value) })
+                    <div className="space-y-3">
+                      <DayHourDragBar
+                        startMinutes={dayState.startMinutes}
+                        endMinutes={dayState.endMinutes}
+                        onChange={(startMinutes, endMinutes) =>
+                          updateDay(idx, { startMinutes, endMinutes })
                         }
-                        className="flex-1 text-sm border border-border rounded-lg px-2 py-1.5"
                       />
-                      <span className="text-muted text-sm">–</span>
-                      <input
-                        type="time"
-                        value={minutesToInput(dayState.endMinutes)}
-                        onChange={(e) =>
-                          updateDay(idx, { endMinutes: timeToMinutes(e.target.value) })
-                        }
-                        className="flex-1 text-sm border border-border rounded-lg px-2 py-1.5"
-                      />
+                      {dayState.hasSecond ? (
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-medium text-slate-600">
+                              Second block
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => updateDay(idx, { hasSecond: false })}
+                              className="text-[11px] text-muted hover:text-red-600"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                          <DayHourDragBar
+                            startMinutes={dayState.startMinutes2}
+                            endMinutes={dayState.endMinutes2}
+                            onChange={(startMinutes2, endMinutes2) =>
+                              updateDay(idx, { startMinutes2, endMinutes2 })
+                            }
+                          />
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            updateDay(idx, {
+                              hasSecond: true,
+                              startMinutes2: Math.min(dayState.endMinutes + 60, 20 * 60),
+                              endMinutes2: Math.min(dayState.endMinutes + 60 + 4 * 60, 24 * 60),
+                            })
+                          }
+                          className="text-[11px] font-medium text-brand-600 hover:underline"
+                        >
+                          + Add second time block (e.g. after a break)
+                        </button>
+                      )}
                     </div>
                   )}
                   <label className="block">

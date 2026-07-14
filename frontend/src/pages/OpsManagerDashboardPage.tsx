@@ -54,7 +54,7 @@ const SECTION_TITLES: Record<OpsSection, { title: string; subtitle: string }> = 
   },
   availability: {
     title: "Availability",
-    subtitle: "Supervisor & shift leader shifts — plan coverage vs CS map volume",
+    subtitle: "Plan weekly shifts from field maps and supervisor availability",
   },
   confluence: {
     title: "Confluence",

@@ -6,6 +6,9 @@ import {
   isNightShift,
   minutesToTime,
   shiftDurationMinutes,
+  countNightShiftsFromDays,
+  computeShiftCoverageByDay,
+  MAX_NIGHT_SHIFTS_PER_TWO_WEEKS,
   type AvailabilityDayInput,
 } from "../lib/availabilityRules.js";
 import type { AuthUser } from "../lib/types.js";
@@ -37,6 +40,7 @@ const submissionInclude = {
       name: true,
       email: true,
       fridayContract: true,
+      hagimOk: true,
       roles: { select: { role: true } },
     },
   },
@@ -46,6 +50,7 @@ type SubmissionRow = {
   id: string;
   weekStart: Date;
   fridayContract: boolean;
+  hagimOk: boolean;
   note: string | null;
   submittedAt: Date | null;
   days: {
@@ -55,6 +60,8 @@ type SubmissionRow = {
     allDay: boolean;
     startMinutes: number | null;
     endMinutes: number | null;
+    startMinutes2: number | null;
+    endMinutes2: number | null;
     note: string | null;
   }[];
   user: {
@@ -62,13 +69,31 @@ type SubmissionRow = {
     name: string;
     email: string;
     fridayContract: boolean;
+    hagimOk: boolean;
     roles: { role: RoleName }[];
   };
 };
 
+function priorWeekStart(weekStart: Date): Date {
+  const d = new Date(weekStart);
+  d.setDate(d.getDate() - 7);
+  return d;
+}
+
+export async function getPriorWeekNightCount(userId: string, weekStart: Date): Promise<number> {
+  const prev = await prisma.availabilitySubmission.findUnique({
+    where: { userId_weekStart: { userId, weekStart: priorWeekStart(weekStart) } },
+    include: { days: true },
+  });
+  if (!prev) return 0;
+  return countNightShiftsFromDays(prev.days);
+}
+
 function serializeDay(day: SubmissionRow["days"][number]) {
   const hasHours =
     day.canWork && !day.allDay && day.startMinutes != null && day.endMinutes != null;
+  const hasSecond =
+    day.canWork && !day.allDay && day.startMinutes2 != null && day.endMinutes2 != null;
   return {
     id: day.id,
     dayOfWeek: day.dayOfWeek,
@@ -77,21 +102,41 @@ function serializeDay(day: SubmissionRow["days"][number]) {
     note: day.note,
     startMinutes: day.startMinutes,
     endMinutes: day.endMinutes,
+    startMinutes2: day.startMinutes2 ?? null,
+    endMinutes2: day.endMinutes2 ?? null,
     startTime: hasHours ? minutesToTime(day.startMinutes!) : null,
     endTime: hasHours ? minutesToTime(day.endMinutes!) : null,
+    startTime2: hasSecond ? minutesToTime(day.startMinutes2!) : null,
+    endTime2: hasSecond ? minutesToTime(day.endMinutes2!) : null,
     durationHours: hasHours
       ? Math.round((shiftDurationMinutes(day.startMinutes!, day.endMinutes!) / 60) * 10) / 10
       : null,
-    isNight: hasHours ? isNightShift(day.startMinutes!, day.endMinutes!) : false,
+    isNight: hasHours
+      ? day.startMinutes! >= 23 * 60 || isNightShift(day.startMinutes!, day.endMinutes!)
+      : false,
   };
 }
 
-function serializeSubmission(sub: SubmissionRow) {
+function nightShiftStats(days: SubmissionRow["days"], priorWeekNightCount: number) {
+  const thisWeek = countNightShiftsFromDays(days);
+  return {
+    thisWeek,
+    priorWeek: priorWeekNightCount,
+    twoWeekTotal: thisWeek + priorWeekNightCount,
+    twoWeekLimit: MAX_NIGHT_SHIFTS_PER_TWO_WEEKS,
+  };
+}
+
+function serializeSubmission(
+  sub: SubmissionRow,
+  priorWeekNightCount = 0
+) {
   const days = sub.days.map(serializeDay);
   return {
     id: sub.id,
     weekStart: toIsoDate(sub.weekStart),
     fridayContract: sub.fridayContract,
+    hagimOk: sub.hagimOk,
     note: sub.note,
     submittedAt: sub.submittedAt?.toISOString() ?? null,
     user: {
@@ -101,20 +146,48 @@ function serializeSubmission(sub: SubmissionRow) {
       roles: sub.user.roles.map((r) => r.role),
     },
     days,
-    /** Shifts derived from can-work days — for roster compatibility */
-    shifts: days
-      .filter((d) => d.canWork && !d.allDay && d.startMinutes != null && d.endMinutes != null)
-      .map((d) => ({
-        id: d.id,
-        dayOfWeek: d.dayOfWeek,
-        startMinutes: d.startMinutes!,
-        endMinutes: d.endMinutes!,
-        startTime: d.startTime!,
-        endTime: d.endTime!,
-        durationHours: d.durationHours!,
-        isNight: d.isNight,
-        note: d.note,
-      })),
+    shifts: days.flatMap((d) => {
+      const rows: {
+        id: string;
+        dayOfWeek: number;
+        startMinutes: number;
+        endMinutes: number;
+        startTime: string;
+        endTime: string;
+        durationHours: number;
+        isNight: boolean;
+        note: string | null;
+      }[] = [];
+      if (d.canWork && !d.allDay && d.startMinutes != null && d.endMinutes != null) {
+        rows.push({
+          id: d.id,
+          dayOfWeek: d.dayOfWeek,
+          startMinutes: d.startMinutes,
+          endMinutes: d.endMinutes,
+          startTime: d.startTime!,
+          endTime: d.endTime!,
+          durationHours: d.durationHours!,
+          isNight: d.isNight,
+          note: d.note,
+        });
+      }
+      if (d.canWork && !d.allDay && d.startMinutes2 != null && d.endMinutes2 != null) {
+        rows.push({
+          id: `${d.id}-2`,
+          dayOfWeek: d.dayOfWeek,
+          startMinutes: d.startMinutes2,
+          endMinutes: d.endMinutes2,
+          startTime: d.startTime2!,
+          endTime: d.endTime2!,
+          durationHours:
+            Math.round((shiftDurationMinutes(d.startMinutes2, d.endMinutes2) / 60) * 10) / 10,
+          isNight: d.startMinutes2 >= 23 * 60,
+          note: d.note,
+        });
+      }
+      return rows;
+    }),
+    nightShifts: nightShiftStats(sub.days, priorWeekNightCount),
   };
 }
 
@@ -125,6 +198,8 @@ export async function getMyAvailability(user: AuthUser, weekStartRaw?: string) {
 
   const weekStart = parseWeekStart(weekStartRaw);
   const dbUser = await prisma.user.findUnique({ where: { id: user.id } });
+
+  const priorWeekNightCount = await getPriorWeekNightCount(user.id, weekStart);
 
   let submission = await prisma.availabilitySubmission.findUnique({
     where: { userId_weekStart: { userId: user.id, weekStart } },
@@ -137,12 +212,13 @@ export async function getMyAvailability(user: AuthUser, weekStartRaw?: string) {
         userId: user.id,
         weekStart,
         fridayContract: dbUser?.fridayContract ?? false,
+        hagimOk: dbUser?.hagimOk ?? false,
       },
       include: submissionInclude,
     });
   }
 
-  return serializeSubmission(submission);
+  return serializeSubmission(submission, priorWeekNightCount);
 }
 
 export async function saveMyAvailability(
@@ -150,6 +226,7 @@ export async function saveMyAvailability(
   data: {
     weekStart?: string;
     fridayContract: boolean;
+    hagimOk?: boolean;
     note?: string | null;
     days: AvailabilityDayInput[];
   }
@@ -159,14 +236,17 @@ export async function saveMyAvailability(
   }
 
   const weekStart = parseWeekStart(data.weekStart);
-  const errors = validateAvailabilityDays(data.days, data.fridayContract);
+  const priorWeekNightCount = await getPriorWeekNightCount(user.id, weekStart);
+  const errors = validateAvailabilityDays(data.days, data.fridayContract, priorWeekNightCount);
   if (errors.length > 0) {
     throw new Error(errors.join(" "));
   }
 
+  const hagimOk = Boolean(data.hagimOk);
+
   await prisma.user.update({
     where: { id: user.id },
-    data: { fridayContract: data.fridayContract },
+    data: { fridayContract: data.fridayContract, hagimOk },
   });
 
   const submission = await prisma.availabilitySubmission.upsert({
@@ -175,6 +255,7 @@ export async function saveMyAvailability(
       userId: user.id,
       weekStart,
       fridayContract: data.fridayContract,
+      hagimOk,
       note: null,
       submittedAt: new Date(),
       days: {
@@ -184,12 +265,15 @@ export async function saveMyAvailability(
           allDay: Boolean(d.canWork && d.allDay),
           startMinutes: d.canWork && !d.allDay ? (d.startMinutes ?? null) : null,
           endMinutes: d.canWork && !d.allDay ? (d.endMinutes ?? null) : null,
+          startMinutes2: d.canWork && !d.allDay ? (d.startMinutes2 ?? null) : null,
+          endMinutes2: d.canWork && !d.allDay ? (d.endMinutes2 ?? null) : null,
           note: d.note?.trim() || null,
         })),
       },
     },
     update: {
       fridayContract: data.fridayContract,
+      hagimOk,
       note: null,
       submittedAt: new Date(),
       days: {
@@ -200,6 +284,8 @@ export async function saveMyAvailability(
           allDay: Boolean(d.canWork && d.allDay),
           startMinutes: d.canWork && !d.allDay ? (d.startMinutes ?? null) : null,
           endMinutes: d.canWork && !d.allDay ? (d.endMinutes ?? null) : null,
+          startMinutes2: d.canWork && !d.allDay ? (d.startMinutes2 ?? null) : null,
+          endMinutes2: d.canWork && !d.allDay ? (d.endMinutes2 ?? null) : null,
           note: d.note?.trim() || null,
         })),
       },
@@ -207,7 +293,7 @@ export async function saveMyAvailability(
     include: submissionInclude,
   });
 
-  return serializeSubmission(submission);
+  return serializeSubmission(submission, priorWeekNightCount);
 }
 
 export async function getAvailabilityRoster(user: AuthUser, weekStartRaw?: string) {
@@ -248,14 +334,20 @@ export async function getAvailabilityRoster(user: AuthUser, weekStartRaw?: strin
         email: sup.email,
         roles: sup.roles.map((r) => r.role),
         isShiftLeader: sup.roles.some((r) => r.role === RoleName.SUPERVISOR_SHIFT_LEADER),
+        fridayContract: sub?.fridayContract ?? sup.fridayContract,
+        hagimOk: sub?.hagimOk ?? sup.hagimOk,
       },
       submission: sub ? serializeSubmission(sub) : null,
     };
   });
 
+  const shiftCoverageByDay = computeShiftCoverageByDay(roster);
+  const shiftCoverageOk = shiftCoverageByDay.every((d) => d.ok);
+  const shiftCoverageGaps = shiftCoverageByDay.filter((d) => d.active && !d.ok);
+
   const submitted = roster.filter((r) => r.submission?.submittedAt).length;
   const totalNightShifts = roster.reduce((n, r) => {
-    return n + (r.submission?.shifts.filter((s) => s.isNight).length ?? 0);
+    return n + (r.submission?.nightShifts?.thisWeek ?? 0);
   }, 0);
 
   return {
@@ -268,14 +360,18 @@ export async function getAvailabilityRoster(user: AuthUser, weekStartRaw?: strin
       mapsScheduled,
       totalNightShifts,
       suggestedSupervisorsNeeded: Math.max(1, Math.ceil(mapsScheduled / 3)),
+      shiftCoverageOk,
+      shiftCoverageGaps: shiftCoverageGaps.length,
     },
+    shiftCoverageByDay,
     roster,
   };
 }
 
 export async function validateAvailabilityDraft(
   days: AvailabilityDayInput[],
-  fridayContract: boolean
+  fridayContract: boolean,
+  priorWeekNightCount = 0
 ) {
-  return validateAvailabilityDays(days, fridayContract);
+  return validateAvailabilityDays(days, fridayContract, priorWeekNightCount);
 }

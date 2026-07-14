@@ -49,5 +49,5 @@ setInterval(() => {
 
 app.listen(port, () => {
   console.log(`OPS-OS API running on http://localhost:${port}`);
-  console.log("Daily reports scheduled for 23:00 local time");
+  console.log("Daily reports scheduled for 08:00 local time (previous day)");
 });

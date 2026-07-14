@@ -90,6 +90,9 @@ export interface MapRecord {
   fieldWorkStatus: FieldWorkStatus;
   fieldProgressPercent: number;
   onHubStatusBoard: boolean;
+  /** null = N/A; false = completed without shift-leader approval (highlight) */
+  shiftLeaderApproved?: boolean | null;
+  returnVisitAt?: string | null;
   phase: MapPhase;
   inspectorStatus: InspectorStatus | null;
   supervisorStatus: SupervisorStatus | null;

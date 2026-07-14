@@ -1323,6 +1323,8 @@ export async function updateHubMap(
     assignedSupervisorId?: string | null;
     onHubStatusBoard?: boolean;
     opsManagerComment?: string | null;
+    shiftLeaderApproved?: boolean | null;
+    returnVisitAt?: string | null;
   },
   user: AuthUser
 ) {
@@ -1344,7 +1346,7 @@ export async function updateHubMap(
     );
   }
 
-  if (map.fieldWorkStatus === FieldWorkStatus.CANCELLED && !isOps) {
+  if (map.fieldWorkStatus === FieldWorkStatus.CANCELLED && !isOps && !data.returnVisitAt) {
     throw new Error("Only OPS manager can restore a cancelled map");
   }
 
@@ -1359,6 +1361,19 @@ export async function updateHubMap(
     throw new Error("Progress must be between 0 and 100");
   }
 
+  let returnVisitDate: Date | null | undefined = undefined;
+  if (data.returnVisitAt !== undefined) {
+    if (data.returnVisitAt === null || data.returnVisitAt === "") {
+      returnVisitDate = null;
+    } else {
+      const parsed = new Date(data.returnVisitAt);
+      if (Number.isNaN(parsed.getTime())) {
+        throw new Error("Invalid return visit date/time");
+      }
+      returnVisitDate = parsed;
+    }
+  }
+
   const patch: {
     fieldWorkStatus?: FieldWorkStatus;
     fieldProgressPercent?: number;
@@ -1367,10 +1382,20 @@ export async function updateHubMap(
     onHubStatusBoard?: boolean;
     fieldDate?: Date;
     opsManagerComment?: string | null;
+    shiftLeaderApproved?: boolean | null;
+    returnVisitAt?: Date | null;
   } = {};
 
   if (data.opsManagerComment !== undefined) {
     patch.opsManagerComment = data.opsManagerComment?.trim() || null;
+  }
+
+  if (data.shiftLeaderApproved !== undefined) {
+    patch.shiftLeaderApproved = data.shiftLeaderApproved;
+  }
+
+  if (returnVisitDate !== undefined) {
+    patch.returnVisitAt = returnVisitDate;
   }
 
   if (data.assignedSupervisorId !== undefined) {
@@ -1400,10 +1425,19 @@ export async function updateHubMap(
     if (data.fieldWorkStatus === FieldWorkStatus.COMPLETED) {
       patch.supervisorStatus = SupervisorStatus.DONE;
       patch.fieldProgressPercent = 100;
+      if (data.shiftLeaderApproved === undefined && !isShiftLeader && !isOps) {
+        // Supervisors must answer the SL-approval question
+        throw new Error("Confirm whether a shift leader approved this map");
+      }
+      if (isShiftLeader && data.shiftLeaderApproved === undefined) {
+        patch.shiftLeaderApproved = true;
+      }
     } else if (data.fieldWorkStatus === FieldWorkStatus.UNCOMPLETED) {
       patch.supervisorStatus = null;
+      patch.shiftLeaderApproved = null;
     } else if (data.fieldWorkStatus === FieldWorkStatus.CANCELLED) {
       patch.supervisorStatus = null;
+      patch.shiftLeaderApproved = null;
     }
   }
 
@@ -1411,12 +1445,36 @@ export async function updateHubMap(
     patch.onHubStatusBoard = data.onHubStatusBoard;
   }
 
+  // Return visit: schedule on that day as active field work (off status board)
+  if (returnVisitDate) {
+    patch.returnVisitAt = returnVisitDate;
+    patch.fieldDate = returnVisitDate;
+    patch.fieldWorkStatus = FieldWorkStatus.UNCOMPLETED;
+    patch.onHubStatusBoard = false;
+    patch.supervisorStatus = null;
+    patch.shiftLeaderApproved = null;
+    const hourLabel = returnVisitDate.toLocaleString(undefined, {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+    const base =
+      (data.opsManagerComment ?? map.opsManagerComment)?.trim() ||
+      (data.fieldWorkStatus === FieldWorkStatus.CANCELLED ? "Cancelled" : "Incomplete");
+    const returnNote = `Return visit: ${hourLabel}`;
+    patch.opsManagerComment = base.includes("Return visit:")
+      ? base
+      : `${base} — ${returnNote}`;
+  }
+
   if (data.fieldProgressPercent !== undefined) {
     patch.fieldProgressPercent = data.fieldProgressPercent;
     // Don't auto-complete when marking uncompleted (may still report 100% then incomplete)
     const markingIncomplete =
       data.fieldWorkStatus === FieldWorkStatus.UNCOMPLETED && data.onHubStatusBoard === true;
-    if (data.fieldProgressPercent === 100 && !markingIncomplete) {
+    if (data.fieldProgressPercent === 100 && !markingIncomplete && !returnVisitDate) {
       patch.fieldWorkStatus = FieldWorkStatus.COMPLETED;
       patch.supervisorStatus = SupervisorStatus.DONE;
       patch.onHubStatusBoard = true;
@@ -1431,19 +1489,27 @@ export async function updateHubMap(
     map.fieldWorkStatus !== FieldWorkStatus.COMPLETED;
   const becameCancelled =
     patch.fieldWorkStatus === FieldWorkStatus.CANCELLED &&
-    map.fieldWorkStatus !== FieldWorkStatus.CANCELLED;
+    map.fieldWorkStatus !== FieldWorkStatus.CANCELLED &&
+    !returnVisitDate;
   // Onto Uncompleted column (from active field or from another status) — not assign/progress-only
   const movedOntoUncompletedBoard =
     data.fieldWorkStatus === FieldWorkStatus.UNCOMPLETED &&
     patch.onHubStatusBoard === true &&
-    (!map.onHubStatusBoard || map.fieldWorkStatus !== FieldWorkStatus.UNCOMPLETED);
+    (!map.onHubStatusBoard || map.fieldWorkStatus !== FieldWorkStatus.UNCOMPLETED) &&
+    !returnVisitDate;
 
   if (becameCompleted) {
+    const slNote =
+      patch.shiftLeaderApproved === false
+        ? " — no shift leader approval"
+        : patch.shiftLeaderApproved === true
+          ? " — shift leader approved"
+          : "";
     await logEvent(
       mapId,
       user.id,
       "hub_completed",
-      `${mapLabel} field mapping complete — marked by ${actor}`
+      `${mapLabel} field mapping complete — marked by ${actor}${slNote}`
     );
   } else if (becameCancelled) {
     await logEvent(mapId, user.id, "hub_cancelled", `${actor} marked ${mapLabel} cancelled in hub`);
@@ -1464,6 +1530,13 @@ export async function updateHubMap(
       user.id,
       "hub_uncompleted",
       parts.length > 1 ? `${parts[0]} — ${parts.slice(1).join(" · ")}` : parts[0]!
+    );
+  } else if (returnVisitDate) {
+    await logEvent(
+      mapId,
+      user.id,
+      "hub_return_scheduled",
+      `${actor} scheduled return for ${mapLabel} at ${returnVisitDate.toISOString()}`
     );
   } else if (data.fieldProgressPercent !== undefined && !becameCompleted) {
     await logEvent(

@@ -10,10 +10,13 @@ import {
   HUB_DRAG_MIME,
   hubDropPayload,
   mapInHubZone,
+  needsShiftLeaderReview,
   poolMaps,
   shortName,
+  sortHubMaps,
   statusColumnMaps,
   supervisorMaps,
+  type HubDropExtras,
   type HubDropZone,
 } from "../../lib/hubDisplay";
 import { normalizeMapRecord } from "../../lib/mapSync";
@@ -29,6 +32,18 @@ interface Props {
   /** Sync maps table after hub changes */
   onMutate?: (updatedMap?: MapRecord) => void;
 }
+
+type HubDialog = {
+  kind: "complete" | "incomplete" | "cancelled";
+  mapId: string;
+  zone: HubDropZone;
+  reason: string;
+  percent: number;
+  shiftLeaderApproved: boolean | null;
+  knowReturn: boolean | null;
+  returnDate: string; // yyyy-mm-dd
+  returnTime: string; // HH:mm
+} | null;
 
 const STATUS_COLUMNS = [
   {
@@ -56,6 +71,20 @@ const STATUS_COLUMNS = [
 
 const PROGRESS_OPTIONS = [0, 25, 50, 75, 100];
 
+function tomorrowDateInput(): string {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+function buildReturnIso(date: string, time: string): string | null {
+  if (!date || !time) return null;
+  const [y, m, day] = date.split("-").map(Number);
+  const [hh, mm] = time.split(":").map(Number);
+  if (!y || !m || !day || hh == null || mm == null) return null;
+  return new Date(y, m - 1, day, hh, mm, 0, 0).toISOString();
+}
+
 /**
  * Who may drag a specific map:
  * - OPS manager → any map (including restoring cancelled)
@@ -69,10 +98,8 @@ export function canUserDragHubMap(
     currentUserId: string;
     isOpsManager: boolean;
     isShiftLeader: boolean;
-    savingMapId?: string | null;
   }
 ): boolean {
-  if (opts.savingMapId === map.id) return false;
   if (map.fieldWorkStatus === "CANCELLED") return opts.isOpsManager;
   if (opts.isOpsManager || opts.isShiftLeader) return true;
   return map.assignedSupervisor?.id === opts.currentUserId;
@@ -88,16 +115,12 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
   const [maps, setMaps] = useState<MapRecord[]>([]);
   const [supervisors, setSupervisors] = useState<HubSupervisor[]>([]);
   const [initialLoading, setInitialLoading] = useState(true);
-  const [savingMapId, setSavingMapId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [activeDropZone, setActiveDropZone] = useState<HubDropZone | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [incompleteDialog, setIncompleteDialog] = useState<{
-    mapId: string;
-    zone: HubDropZone;
-    reason: string;
-    percent: number;
-  } | null>(null);
+  const [hubDialog, setHubDialog] = useState<HubDialog>(null);
+  const [filterSupervisorId, setFilterSupervisorId] = useState<"all" | string>("all");
+  const [sortBy, setSortBy] = useState<"default" | "mapNumber" | "supervisor">("default");
   const [progressDraft, setProgressDraft] = useState<{ mapId: string; pct: number } | null>(
     null
   );
@@ -177,12 +200,19 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
     [maps, onShiftSupervisors, onShiftIds]
   );
 
+  function prepareMaps(list: MapRecord[]): MapRecord[] {
+    let next = list;
+    if (filterSupervisorId !== "all") {
+      next = next.filter((m) => m.assignedSupervisor?.id === filterSupervisorId);
+    }
+    return sortHubMaps(next, sortBy);
+  }
+
   function canDrag(map: MapRecord): boolean {
     return canUserDragHubMap(map, {
       currentUserId,
       isOpsManager,
       isShiftLeader,
-      savingMapId,
     });
   }
 
@@ -222,11 +252,27 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
     }, 0);
   }
 
-  async function commitDrop(
-    zone: HubDropZone,
-    mapId: string,
-    extras?: { opsManagerComment?: string | null; fieldProgressPercent?: number }
+  function openDialog(
+    kind: NonNullable<HubDialog>["kind"],
+    map: MapRecord,
+    zone: HubDropZone
   ) {
+    setHubDialog({
+      kind,
+      mapId: map.id,
+      zone,
+      reason: map.opsManagerComment?.trim() ?? "",
+      percent: Math.min(100, Math.max(0, map.fieldProgressPercent ?? 0)),
+      shiftLeaderApproved: null,
+      knowReturn: null,
+      returnDate: tomorrowDateInput(),
+      returnTime: "09:00",
+    });
+    setActiveDropZone(null);
+    setDraggingId(null);
+  }
+
+  async function commitDrop(zone: HubDropZone, mapId: string, extras?: HubDropExtras) {
     const map = maps.find((m) => m.id === mapId);
     if (!map) return;
     if (pendingDropRef.current.has(mapId)) return;
@@ -244,7 +290,7 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
     setError("");
     setActiveDropZone(null);
     setDraggingId(null);
-    setIncompleteDialog(null);
+    setHubDialog(null);
 
     try {
       const updated = await api.updateHubMap(mapId, dropPayload);
@@ -270,18 +316,21 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
     if (!canDropOn(zone)) return;
     if (mapInHubZone(map, zone)) return;
 
+    if (zone === "status:COMPLETED") {
+      openDialog("complete", map, zone);
+      return;
+    }
+
     const alreadyOnUncompletedBoard =
       map.onHubStatusBoard && map.fieldWorkStatus === "UNCOMPLETED";
 
     if (zone === "status:UNCOMPLETED" && !alreadyOnUncompletedBoard) {
-      setIncompleteDialog({
-        mapId,
-        zone,
-        reason: map.opsManagerComment?.trim() ?? "",
-        percent: Math.min(100, Math.max(0, map.fieldProgressPercent ?? 0)),
-      });
-      setActiveDropZone(null);
-      setDraggingId(null);
+      openDialog("incomplete", map, zone);
+      return;
+    }
+
+    if (zone === "status:CANCELLED") {
+      openDialog("cancelled", map, zone);
       return;
     }
 
@@ -292,7 +341,14 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
     if (!showHubProgressControl(map)) return;
     if (!canDrag(map)) return;
     if (pct === (map.fieldProgressPercent ?? 0)) return;
-    setSavingMapId(map.id);
+
+    const previous = map.fieldProgressPercent ?? 0;
+    // Optimistic: update UI immediately so the hub stays snappy at high map volume
+    const optimistic = normalizeMapRecord({ ...map, fieldProgressPercent: pct });
+    setMaps((prev) => prev.map((m) => (m.id === map.id ? optimistic : m)));
+    onMutateRef.current?.(optimistic);
+    setProgressDraft(null);
+
     try {
       const updated = await api.updateHubMap(map.id, { fieldProgressPercent: pct });
       const normalized = normalizeMapRecord({
@@ -303,9 +359,10 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
       setMaps((prev) => prev.map((m) => (m.id === map.id ? normalized : m)));
       onMutateRef.current?.(normalized);
     } catch (err) {
+      const rolled = normalizeMapRecord({ ...map, fieldProgressPercent: previous });
+      setMaps((prev) => prev.map((m) => (m.id === map.id ? rolled : m)));
+      onMutateRef.current?.(rolled);
       setError((err as Error).message);
-    } finally {
-      setSavingMapId(null);
     }
   }
 
@@ -324,11 +381,139 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
     if (mapId) void handleDrop(zone, mapId);
   }
 
+  function saveHubDialog() {
+    if (!hubDialog) return;
+
+    if (hubDialog.kind === "complete") {
+      if (hubDialog.shiftLeaderApproved === null) {
+        setError("Please confirm whether a shift leader approved this map.");
+        return;
+      }
+      void commitDrop(hubDialog.zone, hubDialog.mapId, {
+        shiftLeaderApproved: hubDialog.shiftLeaderApproved,
+      });
+      return;
+    }
+
+    if (hubDialog.kind === "incomplete") {
+      if (hubDialog.knowReturn === null) {
+        setError("Please answer whether you know when the mapper will come back.");
+        return;
+      }
+      const extras: HubDropExtras = {
+        fieldProgressPercent: hubDialog.percent,
+        opsManagerComment: hubDialog.reason.trim() || null,
+      };
+      if (hubDialog.knowReturn === true) {
+        const iso = buildReturnIso(hubDialog.returnDate, hubDialog.returnTime);
+        if (!iso) {
+          setError("Enter a return date and time.");
+          return;
+        }
+        extras.returnVisitAt = iso;
+      }
+      void commitDrop(hubDialog.zone, hubDialog.mapId, extras);
+      return;
+    }
+
+    // cancelled
+    if (hubDialog.knowReturn === null) {
+      setError("Please answer whether you know when the mapper will come back.");
+      return;
+    }
+    const extras: HubDropExtras = {
+      opsManagerComment: hubDialog.reason.trim() || null,
+    };
+    if (hubDialog.knowReturn === true) {
+      const iso = buildReturnIso(hubDialog.returnDate, hubDialog.returnTime);
+      if (!iso) {
+        setError("Enter a return date and time.");
+        return;
+      }
+      extras.returnVisitAt = iso;
+    }
+    void commitDrop(hubDialog.zone, hubDialog.mapId, extras);
+  }
+
+  function renderYesNo(
+    value: boolean | null,
+    onChange: (v: boolean) => void,
+    yesLabel = "Yes",
+    noLabel = "No"
+  ) {
+    return (
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={() => onChange(true)}
+          className={`flex-1 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ${
+            value === true
+              ? "border-brand-500 bg-brand-50 text-brand-900"
+              : "border-border bg-white text-slate-700 hover:border-brand-300"
+          }`}
+        >
+          {yesLabel}
+        </button>
+        <button
+          type="button"
+          onClick={() => onChange(false)}
+          className={`flex-1 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ${
+            value === false
+              ? "border-slate-500 bg-slate-100 text-slate-900"
+              : "border-border bg-white text-slate-700 hover:border-slate-400"
+          }`}
+        >
+          {noLabel}
+        </button>
+      </div>
+    );
+  }
+
+  function renderReturnVisitSection() {
+    if (!hubDialog) return null;
+    return (
+      <div className="space-y-2.5">
+        <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+          Do you know when the mapper will come back?
+        </span>
+        {renderYesNo(hubDialog.knowReturn, (v) =>
+          setHubDialog((d) => (d ? { ...d, knowReturn: v } : d))
+        )}
+        {hubDialog.knowReturn === true && (
+          <div className="grid grid-cols-2 gap-2 pt-1">
+            <label className="block space-y-1">
+              <span className="text-[11px] font-medium text-slate-600">Date</span>
+              <input
+                type="date"
+                value={hubDialog.returnDate}
+                onChange={(e) =>
+                  setHubDialog((d) => (d ? { ...d, returnDate: e.target.value } : d))
+                }
+                className="w-full border border-border rounded-lg px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400/40 focus:border-brand-400"
+              />
+            </label>
+            <label className="block space-y-1">
+              <span className="text-[11px] font-medium text-slate-600">Time</span>
+              <input
+                type="time"
+                value={hubDialog.returnTime}
+                onChange={(e) =>
+                  setHubDialog((d) => (d ? { ...d, returnTime: e.target.value } : d))
+                }
+                className="w-full border border-border rounded-lg px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400/40 focus:border-brand-400"
+              />
+            </label>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   function renderMapCard(map: MapRecord, showProgress?: boolean) {
     const draggable = canDrag(map);
-    const isSaving = savingMapId === map.id;
     const isDragging = draggingId === map.id;
     const assignedToMe = map.assignedSupervisor?.id === currentUserId;
+    const needsReview = needsShiftLeaderReview(map);
     const lockHint = !draggable
       ? map.fieldWorkStatus === "CANCELLED"
         ? "Cancelled — only OPS manager can restore"
@@ -343,6 +528,14 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
       progressDraft?.mapId === map.id ? progressDraft.pct : pct;
     const showProgressBar = showProgress && showHubProgressControl(map);
 
+    const baseClass = needsReview
+      ? "border-rose-400 bg-rose-50 ring-1 ring-rose-300"
+      : isDragging
+        ? "opacity-40 scale-[0.98] border-brand-300 shadow-lg ring-2 ring-brand-200"
+        : draggable
+          ? "bg-white border-slate-200 shadow-sm hover:border-brand-300 hover:shadow-md"
+          : "bg-slate-50 border-slate-200 shadow-none";
+
     return (
       <div
         key={map.id}
@@ -352,13 +545,9 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
         className={`group rounded-xl border px-3 py-2.5 text-sm transition-all ${
           draggable ? "cursor-grab active:cursor-grabbing" : "cursor-not-allowed opacity-85"
         } ${
-          isDragging
-            ? "opacity-40 scale-[0.98] border-brand-300 shadow-lg ring-2 ring-brand-200"
-            : isSaving
-              ? "opacity-70 border-brand-200 bg-brand-50/50"
-              : draggable
-                ? "bg-white border-slate-200 shadow-sm hover:border-brand-300 hover:shadow-md"
-                : "bg-slate-50 border-slate-200 shadow-none"
+          isDragging && needsReview
+            ? "opacity-40 scale-[0.98] border-rose-400 bg-rose-50 ring-2 ring-rose-300"
+            : baseClass
         }`}
       >
         <div className="flex items-start justify-between gap-2">
@@ -372,17 +561,32 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
               {map.mapNumber}
             </Link>
           </div>
-          {map.fieldDate && (
-            <span className="shrink-0 text-[10px] font-semibold tabular-nums bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-md">
-              {formatMapTime(map.fieldDate)}
-            </span>
-          )}
+          <div className="shrink-0 flex flex-col items-end gap-1">
+            {needsReview && (
+              <span className="text-[9px] font-bold uppercase tracking-wide bg-rose-100 text-rose-800 px-1.5 py-0.5 rounded-md">
+                No SL approval
+              </span>
+            )}
+            {map.fieldDate && (
+              <span className="text-[10px] font-semibold tabular-nums bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-md">
+                {formatMapTime(map.fieldDate)}
+              </span>
+            )}
+          </div>
         </div>
         {map.area && (
           <p className="text-[11px] text-muted mt-1 truncate">{map.area}</p>
         )}
         {map.mapperName && (
           <p className="text-[11px] text-muted mt-0.5 truncate">Mapper · {map.mapperName}</p>
+        )}
+        {map.opsManagerComment && (
+          <p className="text-[11px] text-slate-600 mt-1 line-clamp-2">{map.opsManagerComment}</p>
+        )}
+        {map.returnVisitAt && (
+          <p className="text-[10px] text-muted mt-1">
+            Return · {formatMapTime(map.returnVisitAt)}
+          </p>
         )}
         {lockHint && (
           <p className="text-[10px] text-amber-800 mt-1.5 leading-snug">{lockHint}</p>
@@ -391,9 +595,7 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
           <div className="mt-2.5 space-y-1" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between text-[10px] font-semibold text-amber-900">
               <span>Progress</span>
-              <span className="tabular-nums">
-                {isSaving && progressDraft?.mapId === map.id ? "Saving…" : `${displayPct}%`}
-              </span>
+              <span className="tabular-nums">{displayPct}%</span>
             </div>
             <input
               type="range"
@@ -401,7 +603,7 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
               max={100}
               step={25}
               value={displayPct}
-              disabled={isSaving || !draggable}
+              disabled={!draggable}
               onChange={(e) =>
                 setProgressDraft({ mapId: map.id, pct: Number(e.target.value) })
               }
@@ -432,6 +634,7 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
     showProgress = false,
     emptyLabel = "Drop maps here"
   ) {
+    const prepared = prepareMaps(mapList);
     const isTarget = activeDropZone === zone && draggingId !== null && canDropOn(zone);
     return (
       <div
@@ -450,9 +653,9 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
         } ${className}`}
       >
         <div className="space-y-2" onDragOver={(e) => onZoneDragOver(e, zone)}>
-          {mapList.map((m) => renderMapCard(m, showProgress))}
+          {prepared.map((m) => renderMapCard(m, showProgress))}
         </div>
-        {mapList.length === 0 && (
+        {prepared.length === 0 && (
           <p
             className={`text-xs text-center py-8 ${
               isTarget ? "text-brand-600 font-medium" : "text-muted"
@@ -474,9 +677,21 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
     );
   }
 
-  const dialogMap = incompleteDialog
-    ? maps.find((m) => m.id === incompleteDialog.mapId)
-    : null;
+  const dialogMap = hubDialog ? maps.find((m) => m.id === hubDialog.mapId) : null;
+
+  const dialogTitle =
+    hubDialog?.kind === "complete"
+      ? "Confirm completion"
+      : hubDialog?.kind === "cancelled"
+        ? "Cancel map"
+        : "Mark map incomplete";
+
+  const dialogSaveLabel =
+    hubDialog?.kind === "complete"
+      ? "Save"
+      : hubDialog?.kind === "cancelled"
+        ? "Save cancelled"
+        : "Save incomplete";
 
   return (
     <div className="space-y-5">
@@ -495,6 +710,39 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
             <div className="text-xs text-muted mt-0.5">{s.label}</div>
           </div>
         ))}
+      </div>
+
+      {/* Filter / sort bar */}
+      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-white px-3 py-2.5 shadow-sm">
+        <label className="flex items-center gap-2 text-xs text-slate-600">
+          <span className="font-semibold uppercase tracking-wide">Supervisor</span>
+          <select
+            value={filterSupervisorId}
+            onChange={(e) => setFilterSupervisorId(e.target.value)}
+            className="border border-border rounded-lg px-2 py-1.5 text-sm text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-brand-400/40"
+          >
+            <option value="all">All on shift</option>
+            {onShiftSupervisors.map((s) => (
+              <option key={s.id} value={s.id}>
+                {shortName(s.name)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex items-center gap-2 text-xs text-slate-600">
+          <span className="font-semibold uppercase tracking-wide">Sort</span>
+          <select
+            value={sortBy}
+            onChange={(e) =>
+              setSortBy(e.target.value as "default" | "mapNumber" | "supervisor")
+            }
+            className="border border-border rounded-lg px-2 py-1.5 text-sm text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-brand-400/40"
+          >
+            <option value="default">Default</option>
+            <option value="mapNumber">Map number</option>
+            <option value="supervisor">Supervisor name</option>
+          </select>
+        </label>
       </div>
 
       {error && (
@@ -585,7 +833,7 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
                             </div>
                           </div>
                           <span className="text-xs font-bold tabular-nums text-muted">
-                            {supMaps.length}
+                            {prepareMaps(supMaps).length}
                           </span>
                         </div>
                         <div className="p-2.5">
@@ -614,7 +862,7 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
                         <span className={`w-2 h-2 rounded-full ${dot}`} />
                         {label}
                         <span className="ml-auto text-xs font-bold tabular-nums opacity-80">
-                          {colMaps.length}
+                          {prepareMaps(colMaps).length}
                         </span>
                       </div>
                       <div className="p-2.5">
@@ -629,17 +877,17 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
         </div>
       </div>
 
-      {incompleteDialog && dialogMap && (
+      {hubDialog && dialogMap && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
           role="dialog"
           aria-modal="true"
-          aria-labelledby="incomplete-dialog-title"
+          aria-labelledby="hub-dialog-title"
         >
           <div className="w-full max-w-md rounded-2xl border border-border bg-white shadow-xl p-5 space-y-4">
             <div>
-              <h2 id="incomplete-dialog-title" className="text-lg font-bold text-slate-900">
-                Mark map incomplete
+              <h2 id="hub-dialog-title" className="text-lg font-bold text-slate-900">
+                {dialogTitle}
               </h2>
               <p className="text-sm text-muted mt-1">
                 <span className="font-mono text-brand-700">{dialogMap.mapNumber}</span>
@@ -648,50 +896,90 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
               </p>
             </div>
 
-            <label className="block space-y-1.5">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                How much was done?
-              </span>
-              <div className="grid grid-cols-5 gap-2">
-                {PROGRESS_OPTIONS.map((pct) => (
-                  <button
-                    key={pct}
-                    type="button"
-                    onClick={() =>
-                      setIncompleteDialog((d) => (d ? { ...d, percent: pct } : d))
-                    }
-                    className={`rounded-lg border px-2 py-2 text-sm font-semibold tabular-nums transition-colors ${
-                      incompleteDialog.percent === pct
-                        ? "border-amber-500 bg-amber-50 text-amber-950"
-                        : "border-border bg-white text-slate-700 hover:border-amber-300"
-                    }`}
-                  >
-                    {pct}%
-                  </button>
-                ))}
+            {hubDialog.kind === "complete" && (
+              <div className="space-y-2.5">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  Did a shift leader approve this map?
+                </span>
+                {renderYesNo(
+                  hubDialog.shiftLeaderApproved,
+                  (v) => setHubDialog((d) => (d ? { ...d, shiftLeaderApproved: v } : d))
+                )}
               </div>
-            </label>
+            )}
 
-            <label className="block space-y-1.5">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                Why incomplete?
-              </span>
-              <textarea
-                value={incompleteDialog.reason}
-                onChange={(e) =>
-                  setIncompleteDialog((d) => (d ? { ...d, reason: e.target.value } : d))
-                }
-                rows={3}
-                placeholder="e.g. Store closed early — partial coverage only"
-                className="w-full border border-border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400/40 focus:border-amber-400"
-                autoFocus
-              />
-            </label>
+            {hubDialog.kind === "incomplete" && (
+              <>
+                <label className="block space-y-1.5">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                    How much was done?
+                  </span>
+                  <div className="grid grid-cols-5 gap-2">
+                    {PROGRESS_OPTIONS.map((pct) => (
+                      <button
+                        key={pct}
+                        type="button"
+                        onClick={() =>
+                          setHubDialog((d) => (d ? { ...d, percent: pct } : d))
+                        }
+                        className={`rounded-lg border px-2 py-2 text-sm font-semibold tabular-nums transition-colors ${
+                          hubDialog.percent === pct
+                            ? "border-amber-500 bg-amber-50 text-amber-950"
+                            : "border-border bg-white text-slate-700 hover:border-amber-300"
+                        }`}
+                      >
+                        {pct}%
+                      </button>
+                    ))}
+                  </div>
+                </label>
+
+                <label className="block space-y-1.5">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                    Why incomplete?
+                  </span>
+                  <textarea
+                    value={hubDialog.reason}
+                    onChange={(e) =>
+                      setHubDialog((d) => (d ? { ...d, reason: e.target.value } : d))
+                    }
+                    rows={3}
+                    placeholder="e.g. Store closed early — partial coverage only"
+                    className="w-full border border-border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400/40 focus:border-amber-400"
+                    autoFocus
+                  />
+                </label>
+
+                {renderReturnVisitSection()}
+              </>
+            )}
+
+            {hubDialog.kind === "cancelled" && (
+              <>
+                <label className="block space-y-1.5">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                    Reason (optional)
+                  </span>
+                  <textarea
+                    value={hubDialog.reason}
+                    onChange={(e) =>
+                      setHubDialog((d) => (d ? { ...d, reason: e.target.value } : d))
+                    }
+                    rows={3}
+                    placeholder="e.g. Client cancelled visit"
+                    className="w-full border border-border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-400/40 focus:border-red-400"
+                    autoFocus
+                  />
+                </label>
+
+                {renderReturnVisitSection()}
+              </>
+            )}
 
             <div className="flex justify-end gap-2 pt-1">
               <button
                 type="button"
-                onClick={() => setIncompleteDialog(null)}
+                onClick={() => setHubDialog(null)}
                 className="px-3 py-2 text-sm text-muted hover:text-slate-900 rounded-lg hover:bg-slate-100"
               >
                 Cancel
@@ -699,15 +987,18 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
               <button
                 type="button"
                 onClick={() => {
-                  const trimmed = incompleteDialog.reason.trim();
-                  void commitDrop(incompleteDialog.zone, incompleteDialog.mapId, {
-                    fieldProgressPercent: incompleteDialog.percent,
-                    opsManagerComment: trimmed || null,
-                  });
+                  setError("");
+                  saveHubDialog();
                 }}
-                className="px-4 py-2 text-sm font-medium rounded-xl bg-amber-600 text-white hover:bg-amber-700"
+                className={`px-4 py-2 text-sm font-medium rounded-xl text-white ${
+                  hubDialog.kind === "complete"
+                    ? "bg-emerald-600 hover:bg-emerald-700"
+                    : hubDialog.kind === "cancelled"
+                      ? "bg-red-600 hover:bg-red-700"
+                      : "bg-amber-600 hover:bg-amber-700"
+                }`}
               >
-                Save incomplete
+                {dialogSaveLabel}
               </button>
             </div>
           </div>

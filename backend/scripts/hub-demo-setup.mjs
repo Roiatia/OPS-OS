@@ -22,7 +22,10 @@ run("npx", ["tsx", "prisma/seed.ts"]);
 run("npx", ["tsx", "prisma/reseed-demo-maps.ts"]);
 
 console.log("\n✓ Hub demo ready.");
-console.log("  OPS manager:  ops@ops-demo.local");
-console.log("  Supervisor:   supervisor@ops-demo.local (Alex)");
-console.log("  Shift leader: supervisor2@ops-demo.local (Dana)");
+console.log("  OPS manager:  ops@ops-demo.local / ops2@ops-demo.local");
+console.log("  On shift today:");
+console.log("    • supervisor@ops-demo.local  (Alex)");
+console.log("    • supervisor2@ops-demo.local (Dana — shift leader)");
+console.log("    • supervisor3@ops-demo.local (Noam)");
+console.log("  Off shift: supervisor4@ops-demo.local (Lior)");
 console.log("  Log out and log in again if you still see role errors.");

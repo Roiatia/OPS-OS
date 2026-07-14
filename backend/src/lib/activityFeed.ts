@@ -11,6 +11,7 @@ export const MILESTONE_ACTIONS = [
   "supervisor_field_done",
   "hub_uncompleted",
   "hub_cancelled",
+  "hub_return_scheduled",
 ] as const;
 
 export type MilestoneAction = (typeof MILESTONE_ACTIONS)[number];
@@ -27,6 +28,7 @@ const OPS_MILESTONES = new Set<string>([
   "supervisor_field_done",
   "hub_uncompleted",
   "hub_cancelled",
+  "hub_return_scheduled",
 ]);
 
 export function getActivityTeam(action: string): ActivityTeam {
@@ -45,6 +47,7 @@ export const ACTIVITY_LABELS: Record<string, string> = {
   supervisor_field_done: "Ready to accept — supervisor marked complete",
   hub_uncompleted: "Field mapping incomplete",
   hub_cancelled: "Map cancelled",
+  hub_return_scheduled: "Return visit scheduled",
 };
 
 export function getActivityLabel(action: string): string {

@@ -188,7 +188,14 @@ export function SupervisorMapsBoard({ maps, onRefresh }: Props) {
                 const saving = savingId === map.id;
 
                 return (
-                  <tr key={map.id} className="border-b border-border/70 hover:bg-slate-50/50 align-top">
+                  <tr
+                    key={map.id}
+                    className={`border-b border-border/70 align-top ${
+                      map.fieldWorkStatus === "COMPLETED" && map.shiftLeaderApproved === false
+                        ? "bg-rose-50/90 hover:bg-rose-50"
+                        : "hover:bg-slate-50/50"
+                    }`}
+                  >
                     <td className="px-3 py-3">
                       <Link
                         to={`/app/maps/${map.id}`}

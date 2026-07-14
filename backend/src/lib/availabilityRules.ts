@@ -15,6 +15,8 @@ export const AVAILABILITY_DAYS = [0, 1, 2, 3, 4, 5] as const;
 export const MIN_SHIFT_MINUTES = 6 * 60;
 export const MAX_SHIFT_MINUTES = 12 * 60;
 export const NIGHT_START_MINUTES = 23 * 60;
+export const MAX_NIGHT_SHIFTS_PER_TWO_WEEKS = 7;
+/** @deprecated use MAX_NIGHT_SHIFTS_PER_TWO_WEEKS */
 export const MAX_NIGHT_SHIFTS_PER_WEEK = 3;
 
 export const FRIDAY = 5;
@@ -27,8 +29,26 @@ export type AvailabilityDayInput = {
   allDay?: boolean;
   startMinutes?: number | null;
   endMinutes?: number | null;
+  startMinutes2?: number | null;
+  endMinutes2?: number | null;
   note?: string | null;
 };
+
+export type HourRange = { startMinutes: number; endMinutes: number };
+
+export const MIN_SEGMENT_MINUTES = 60;
+
+export function dayHourRanges(d: AvailabilityDayInput): HourRange[] {
+  if (!d.canWork || d.allDay) return [];
+  const ranges: HourRange[] = [];
+  if (d.startMinutes != null && d.endMinutes != null) {
+    ranges.push({ startMinutes: d.startMinutes, endMinutes: d.endMinutes });
+  }
+  if (d.startMinutes2 != null && d.endMinutes2 != null) {
+    ranges.push({ startMinutes: d.startMinutes2, endMinutes: d.endMinutes2 });
+  }
+  return ranges.sort((a, b) => a.startMinutes - b.startMinutes);
+}
 
 /** @deprecated use AvailabilityDayInput */
 export type AvailabilityShiftInput = {
@@ -42,19 +62,13 @@ export function hasWorkOnDay(days: AvailabilityDayInput[], day: number): boolean
 }
 
 export function daysToShiftInputs(days: AvailabilityDayInput[]): AvailabilityShiftInput[] {
-  return days
-    .filter(
-      (d) =>
-        d.canWork &&
-        !d.allDay &&
-        d.startMinutes != null &&
-        d.endMinutes != null
-    )
-    .map((d) => ({
-      dayOfWeek: d.dayOfWeek,
-      startMinutes: d.startMinutes!,
-      endMinutes: d.endMinutes!,
-    }));
+  const out: AvailabilityShiftInput[] = [];
+  for (const d of days) {
+    for (const r of dayHourRanges(d)) {
+      out.push({ dayOfWeek: d.dayOfWeek, startMinutes: r.startMinutes, endMinutes: r.endMinutes });
+    }
+  }
+  return out;
 }
 
 export function minutesToTime(m: number): string {
@@ -75,6 +89,60 @@ export function shiftDurationMinutes(startMinutes: number, endMinutes: number): 
   return 24 * 60 - startMinutes + endMinutes;
 }
 
+export function sameDayDurationMinutes(startMinutes: number, endMinutes: number): number {
+  if (endMinutes <= startMinutes) return 0;
+  return endMinutes - startMinutes;
+}
+
+export function contiguousWorkBlocks(
+  days: AvailabilityDayInput[]
+): { dayOfWeek: number; startMinutes: number; endMinutes: number; duration: number }[] {
+  type Seg = { dayOfWeek: number; startMinutes: number; endMinutes: number };
+  const segs: Seg[] = [];
+  for (const d of days) {
+    for (const r of dayHourRanges(d)) {
+      segs.push({ dayOfWeek: d.dayOfWeek, startMinutes: r.startMinutes, endMinutes: r.endMinutes });
+    }
+  }
+  segs.sort((a, b) => a.dayOfWeek - b.dayOfWeek || a.startMinutes - b.startMinutes);
+
+  const used = new Set<string>();
+  const blocks: { dayOfWeek: number; startMinutes: number; endMinutes: number; duration: number }[] =
+    [];
+  const key = (s: Seg) => `${s.dayOfWeek}:${s.startMinutes}:${s.endMinutes}`;
+
+  for (const seg of segs) {
+    if (used.has(key(seg))) continue;
+    let end = seg.endMinutes;
+    let duration = sameDayDurationMinutes(seg.startMinutes, end);
+    used.add(key(seg));
+
+    let cursorDay = seg.dayOfWeek;
+    while (end === 24 * 60) {
+      const nextDay = cursorDay === 5 ? -1 : cursorDay + 1;
+      if (nextDay < 0) break;
+      const next = segs.find(
+        (s) => s.dayOfWeek === nextDay && s.startMinutes === 0 && !used.has(key(s))
+      );
+      if (!next) break;
+      duration += sameDayDurationMinutes(next.startMinutes, next.endMinutes);
+      end = next.endMinutes;
+      used.add(key(next));
+      cursorDay = nextDay;
+      if (end < 24 * 60) break;
+    }
+
+    blocks.push({
+      dayOfWeek: seg.dayOfWeek,
+      startMinutes: seg.startMinutes,
+      endMinutes: end,
+      duration,
+    });
+  }
+
+  return blocks;
+}
+
 export function isNightShift(startMinutes: number, endMinutes: number): boolean {
   if (startMinutes < NIGHT_START_MINUTES) return false;
   return shiftDurationMinutes(startMinutes, endMinutes) >= MIN_SHIFT_MINUTES;
@@ -84,9 +152,30 @@ export function hasShiftOnDay(shifts: AvailabilityShiftInput[], day: number): bo
   return shifts.some((s) => s.dayOfWeek === day);
 }
 
+export function isNightShiftDay(day: {
+  canWork: boolean;
+  allDay?: boolean;
+  startMinutes?: number | null;
+  endMinutes?: number | null;
+  isNight?: boolean;
+}): boolean {
+  if (!day.canWork) return false;
+  if (day.isNight !== undefined) return day.isNight;
+  if (day.allDay) return false;
+  if (day.startMinutes == null || day.endMinutes == null) return false;
+  return day.startMinutes >= NIGHT_START_MINUTES;
+}
+
+export function countNightShiftsFromDays(days: AvailabilityDayInput[]): number {
+  return contiguousWorkBlocks(days).filter(
+    (b) => b.startMinutes >= NIGHT_START_MINUTES && b.duration >= MIN_SHIFT_MINUTES
+  ).length;
+}
+
 export function validateAvailabilityDays(
   days: AvailabilityDayInput[],
-  fridayContract: boolean
+  fridayContract: boolean,
+  priorWeekNightCount = 0
 ): string[] {
   const errors: string[] = [];
 
@@ -107,24 +196,75 @@ export function validateAvailabilityDays(
     if (d.allDay) continue;
     if (d.startMinutes == null || d.endMinutes == null) {
       errors.push(`${DAY_LABELS[d.dayOfWeek]}: enter start and end hours, or choose all day.`);
-      continue;
     }
-    const dur = shiftDurationMinutes(d.startMinutes, d.endMinutes);
-    if (dur < MIN_SHIFT_MINUTES) {
+  }
+
+  for (const d of days) {
+    if (!d.canWork || d.allDay) continue;
+    const ranges = dayHourRanges(d);
+    for (let i = 0; i < ranges.length; i++) {
+      const r = ranges[i]!;
+      if (sameDayDurationMinutes(r.startMinutes, r.endMinutes) <= 0) {
+        errors.push(`${DAY_LABELS[d.dayOfWeek]}: invalid hour range.`);
+      }
+      if (i > 0 && r.startMinutes < ranges[i - 1]!.endMinutes) {
+        errors.push(`${DAY_LABELS[d.dayOfWeek]}: hour blocks overlap.`);
+      }
+    }
+    if (ranges.length >= 2) {
+      const total = ranges.reduce(
+        (n, r) => n + sameDayDurationMinutes(r.startMinutes, r.endMinutes),
+        0
+      );
+      for (const r of ranges) {
+        const dur = sameDayDurationMinutes(r.startMinutes, r.endMinutes);
+        if (dur < MIN_SEGMENT_MINUTES) {
+          errors.push(`${DAY_LABELS[d.dayOfWeek]}: each block must be at least 1 hour.`);
+        }
+        if (dur > MAX_SHIFT_MINUTES) {
+          errors.push(
+            `${DAY_LABELS[d.dayOfWeek]}: a block cannot exceed 12 hours (got ${(dur / 60).toFixed(1)}h).`
+          );
+        }
+      }
+      if (total < MIN_SHIFT_MINUTES) {
+        errors.push(
+          `${DAY_LABELS[d.dayOfWeek]}: combined blocks must be at least 6 hours (got ${(total / 60).toFixed(1)}h).`
+        );
+      }
+    }
+  }
+
+  for (const b of contiguousWorkBlocks(days)) {
+    const day = days.find((d) => d.dayOfWeek === b.dayOfWeek);
+    const multi = day ? dayHourRanges(day).length >= 2 : false;
+    if (multi) continue;
+    if (b.duration < MIN_SHIFT_MINUTES) {
       errors.push(
-        `${DAY_LABELS[d.dayOfWeek]}: shift must be at least 6 hours (got ${(dur / 60).toFixed(1)}h).`
+        `${DAY_LABELS[b.dayOfWeek]}: shift must be at least 6 hours (got ${(b.duration / 60).toFixed(1)}h — include next morning if overnight).`
       );
     }
-    if (dur > MAX_SHIFT_MINUTES) {
+    if (b.duration > MAX_SHIFT_MINUTES) {
       errors.push(
-        `${DAY_LABELS[d.dayOfWeek]}: shift cannot exceed 12 hours (got ${(dur / 60).toFixed(1)}h).`
+        `${DAY_LABELS[b.dayOfWeek]}: shift cannot exceed 12 hours (got ${(b.duration / 60).toFixed(1)}h).`
       );
     }
   }
 
   const shifts = daysToShiftInputs(days);
-  const ruleErrors = validateAvailability(shifts, fridayContract, days);
-  return errors.concat(ruleErrors);
+  const ruleErrors = validateAvailability(shifts, fridayContract, days).filter(
+    (e) => !e.includes("at least 6 hours") && !e.includes("cannot exceed 12 hours")
+  );
+  errors.push(...ruleErrors);
+
+  const thisWeekNights = countNightShiftsFromDays(days);
+  if (priorWeekNightCount + thisWeekNights > MAX_NIGHT_SHIFTS_PER_TWO_WEEKS) {
+    errors.push(
+      `Maximum ${MAX_NIGHT_SHIFTS_PER_TWO_WEEKS} night shifts per 2 weeks (this week: ${thisWeekNights}, prior week: ${priorWeekNightCount}).`
+    );
+  }
+
+  return errors;
 }
 
 export function validateAvailability(
@@ -156,10 +296,10 @@ export function validateAvailability(
     days ? hasWorkOnDay(days, day) : hasShiftOnDay(shifts, day);
 
   if (fridayContract && workOn(SUNDAY)) {
-    errors.push("Friday contract: you can work Friday but not Sunday.");
+    errors.push("Friday form signed: you cannot work Sunday.");
   }
   if (!fridayContract && workOn(FRIDAY)) {
-    errors.push("No Friday contract: you can work Sunday but not Friday.");
+    errors.push("Without the Friday form: you cannot work Friday.");
   }
 
   const friFree = !workOn(FRIDAY);
@@ -169,12 +309,47 @@ export function validateAvailability(
     errors.push("You need 2 free days in a row: Friday+Saturday OR Saturday+Sunday.");
   }
 
-  const nightCount = shifts.filter((s) => isNightShift(s.startMinutes, s.endMinutes)).length;
-  if (nightCount > MAX_NIGHT_SHIFTS_PER_WEEK) {
-    errors.push(`Maximum ${MAX_NIGHT_SHIFTS_PER_WEEK} night shifts per week (starts 23:00, min 6h).`);
-  }
-
   return errors;
+}
+
+export type ShiftCoverageDay = {
+  dayOfWeek: number;
+  label: string;
+  supervisors: number;
+  shiftLeaders: number;
+  staffTotal: number;
+  active: boolean;
+  ok: boolean;
+};
+
+export function computeShiftCoverageByDay(
+  roster: {
+    user: { isShiftLeader: boolean };
+    submission: { days: { dayOfWeek: number; canWork: boolean }[] } | null;
+  }[]
+): ShiftCoverageDay[] {
+  return AVAILABILITY_DAYS.map((dayOfWeek, idx) => {
+    let supervisors = 0;
+    let shiftLeaders = 0;
+    for (const row of roster) {
+      const day = row.submission?.days.find((d) => d.dayOfWeek === dayOfWeek);
+      if (!day?.canWork) continue;
+      if (row.user.isShiftLeader) shiftLeaders += 1;
+      else supervisors += 1;
+    }
+    const staffTotal = supervisors + shiftLeaders;
+    const active = staffTotal > 0;
+    const ok = !active || (supervisors >= 1 && shiftLeaders >= 1);
+    return {
+      dayOfWeek,
+      label: DAY_LABELS[idx],
+      supervisors,
+      shiftLeaders,
+      staffTotal,
+      active,
+      ok,
+    };
+  });
 }
 
 /** Sunday that starts the week containing `date` */

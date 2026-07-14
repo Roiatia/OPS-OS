@@ -6,7 +6,7 @@ import * as dailyReport from "../services/dailyReport.js";
 const router = Router();
 
 router.use(authMiddleware);
-router.use(requireRoles(RoleName.OPS_ADMIN));
+router.use(requireRoles(RoleName.OPS_ADMIN, RoleName.OPS_MANAGER_2));
 
 router.get("/", async (req, res) => {
   try {
@@ -21,6 +21,20 @@ router.get("/", async (req, res) => {
 router.get("/:id", async (req, res) => {
   try {
     const report = await dailyReport.getOpsDailyReport(req.params.id);
+    if (!report) {
+      res.status(404).json({ error: "Report not found" });
+      return;
+    }
+    res.json(report);
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
+router.patch("/:id/note", async (req, res) => {
+  try {
+    const note = (req.body as { opsManagerNote?: string | null }).opsManagerNote ?? null;
+    const report = await dailyReport.updateOpsDailyReportNote(req.params.id, note);
     if (!report) {
       res.status(404).json({ error: "Report not found" });
       return;

@@ -23,12 +23,24 @@ export interface OpsDailyReportShiftMember {
   shiftStartedAt: string | null;
 }
 
+export interface OpsDailyReportTeamMember {
+  id: string;
+  name: string;
+  role: string;
+}
+
 export interface OpsDailyReportPayload {
   reportDate: string;
   shift: {
     members: OpsDailyReportShiftMember[];
     shiftLeaderCount: number;
     hadShiftLeader: boolean;
+  };
+  /** Everyone who worked that day — field ops shift + graphics + OPS managers active in CRM */
+  team: {
+    field: OpsDailyReportTeamMember[];
+    graphics: OpsDailyReportTeamMember[];
+    ops: OpsDailyReportTeamMember[];
   };
   field: {
     completed: OpsDailyReportMapItem[];
@@ -50,6 +62,8 @@ export interface OpsDailyReportPayload {
     approved: number;
   };
   alerts: string[];
+  /** Free-text OPS Manager note for future recall of this shift day */
+  opsManagerNote: string | null;
 }
 
 export interface OpsDailyReportListItem {
@@ -60,6 +74,7 @@ export interface OpsDailyReportListItem {
   generatedAt: string;
   fieldCompleted: number;
   fieldIncomplete: number;
+  fieldCancelled: number;
   shiftLeaderCount: number;
 }
 

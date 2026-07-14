@@ -93,25 +93,23 @@ async function seedUsers() {
       });
     }
 
-    if (demo.email === "supervisor@ops-demo.local") {
+    // Today's shift: Alex + Dana (SL) + Noam. Lior stays off.
+    if (
+      demo.email === "supervisor@ops-demo.local" ||
+      demo.email === "supervisor2@ops-demo.local" ||
+      demo.email === "supervisor3@ops-demo.local"
+    ) {
       const shiftStart = new Date();
-      shiftStart.setHours(8, 0, 0, 0);
+      if (demo.email === "supervisor2@ops-demo.local") shiftStart.setHours(7, 30, 0, 0);
+      else if (demo.email === "supervisor3@ops-demo.local") shiftStart.setHours(8, 15, 0, 0);
+      else shiftStart.setHours(8, 0, 0, 0);
       await prisma.user.update({
         where: { id: user.id },
         data: { shiftStartedAt: shiftStart },
       });
     }
 
-    if (demo.email === "supervisor2@ops-demo.local") {
-      const shiftStart = new Date();
-      shiftStart.setHours(7, 30, 0, 0);
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { shiftStartedAt: shiftStart },
-      });
-    }
-
-    if (demo.email === "supervisor3@ops-demo.local" || demo.email === "supervisor4@ops-demo.local") {
+    if (demo.email === "supervisor4@ops-demo.local") {
       await prisma.user.update({
         where: { id: user.id },
         data: { shiftStartedAt: null },

@@ -614,9 +614,11 @@ export function OpsMapsBoard({
                   <tr
                     key={map.id}
                     className={`align-top ${
-                      ready
-                        ? "bg-emerald-50/70 hover:bg-emerald-50 ring-1 ring-inset ring-emerald-200/60"
-                        : "hover:bg-slate-50/50"
+                      map.fieldWorkStatus === "COMPLETED" && map.shiftLeaderApproved === false
+                        ? "bg-rose-50/90 hover:bg-rose-50 ring-1 ring-inset ring-rose-300/70"
+                        : ready
+                          ? "bg-emerald-50/70 hover:bg-emerald-50 ring-1 ring-inset ring-emerald-200/60"
+                          : "hover:bg-slate-50/50"
                     }`}
                   >
                     <td className="px-3 py-3">
@@ -631,6 +633,11 @@ export function OpsMapsBoard({
                       <Link to={`/app/maps/${map.id}`} className="text-brand-600 hover:underline">
                         {map.mapNumber}
                       </Link>
+                      {map.fieldWorkStatus === "COMPLETED" && map.shiftLeaderApproved === false && (
+                        <span className="ml-2 inline-block text-[10px] font-semibold text-rose-800 bg-rose-100 rounded px-1.5 py-0.5">
+                          No SL approval
+                        </span>
+                      )}
                     </td>
                     <td className="px-3 py-3">{map.client}</td>
                     <td className="px-3 py-3">

@@ -85,15 +85,22 @@ export function hubDropPayload(zone: HubDropZone): {
   if (zone === "status:CANCELLED") {
     return { fieldWorkStatus: "CANCELLED", onHubStatusBoard: true };
   }
-  // Uncompleted — percent is set by the caller when collecting incomplete details
   return { fieldWorkStatus: "UNCOMPLETED", onHubStatusBoard: true };
 }
+
+export type HubDropExtras = {
+  fieldProgressPercent?: number;
+  opsManagerComment?: string | null;
+  shiftLeaderApproved?: boolean | null;
+  returnVisitAt?: string | null;
+  fieldDate?: string | null;
+};
 
 export function applyHubDropLocally(
   map: MapRecord,
   zone: HubDropZone,
   supervisors: Array<{ id: string; name: string; email: string }>,
-  extras?: { fieldProgressPercent?: number; opsManagerComment?: string | null }
+  extras?: HubDropExtras
 ): MapRecord {
   const payload = hubDropPayload(zone);
   const next: MapRecord = { ...map };
@@ -119,8 +126,23 @@ export function applyHubDropLocally(
   if (extras?.opsManagerComment !== undefined) {
     next.opsManagerComment = extras.opsManagerComment;
   }
+  if (extras?.shiftLeaderApproved !== undefined) {
+    next.shiftLeaderApproved = extras.shiftLeaderApproved;
+  }
+  if (extras?.returnVisitAt) {
+    next.returnVisitAt = extras.returnVisitAt;
+    next.fieldDate = extras.fieldDate ?? extras.returnVisitAt;
+    next.onHubStatusBoard = false;
+    next.fieldWorkStatus = "UNCOMPLETED";
+    next.shiftLeaderApproved = null;
+  }
 
   return next;
+}
+
+/** Completed without shift-leader approval — highlight on hub + maps table */
+export function needsShiftLeaderReview(map: MapRecord): boolean {
+  return map.fieldWorkStatus === "COMPLETED" && map.shiftLeaderApproved === false;
 }
 
 export function mapInHubZone(map: MapRecord, zone: HubDropZone): boolean {
@@ -130,6 +152,24 @@ export function mapInHubZone(map: MapRecord, zone: HubDropZone): boolean {
   }
   const status = zone.replace("status:", "") as FieldWorkStatus;
   return statusColumnMaps([map], status).length > 0;
+}
+
+export function sortHubMaps(
+  maps: MapRecord[],
+  sortBy: "default" | "mapNumber" | "supervisor"
+): MapRecord[] {
+  if (sortBy === "default") return maps;
+  const sorted = [...maps];
+  if (sortBy === "mapNumber") {
+    sorted.sort((a, b) => a.mapNumber.localeCompare(b.mapNumber, undefined, { numeric: true }));
+  } else {
+    sorted.sort(
+      (a, b) =>
+        (a.assignedSupervisor?.name ?? "").localeCompare(b.assignedSupervisor?.name ?? "") ||
+        a.mapNumber.localeCompare(b.mapNumber, undefined, { numeric: true })
+    );
+  }
+  return sorted;
 }
 
 export const HUB_DRAG_MIME = "application/x-oriient-map-id";

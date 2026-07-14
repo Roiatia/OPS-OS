@@ -24,6 +24,8 @@ export type DemoMapInput = {
   assignSupervisor?: boolean;
   /** Assign to Dana Weiss (supervisor2@ops-demo.local, shift leader) */
   assignSupervisor2?: boolean;
+  /** Assign to Noam Katz (supervisor3@ops-demo.local) */
+  assignSupervisor3?: boolean;
   supervisorStatus?: SupervisorStatus | null;
   fieldWorkStatus?: FieldWorkStatus;
   fieldDate?: string;
@@ -170,6 +172,45 @@ export const DEMO_MAPS: DemoMapInput[] = [
     mapperName: "Contractor C",
     opsManagerComment: "Could not finish aisle 4 — need return visit tomorrow",
   }),
+  mappingBase({
+    mapNumber: "MAP-2024-0116",
+    jiraTicketId: "OPS-4616",
+    client: "Market City",
+    area: "Holon",
+    description: "Mapping — assigned to Noam on shift",
+    assignSupervisor3: true,
+    fieldDate: todayAt(9, 45),
+    mapperName: "Field Team C",
+    fieldProgressPercent: 15,
+  }),
+  mappingBase({
+    mapNumber: "MAP-2024-0117",
+    jiraTicketId: "OPS-4617",
+    client: "Blue Box",
+    area: "Rishon",
+    description: "Mapping — hub intake pool",
+    fieldDate: todayAt(12, 0),
+  }),
+  mappingBase({
+    mapNumber: "MAP-2024-0118",
+    jiraTicketId: "OPS-4618",
+    client: "Green Grocer",
+    area: "Modiin",
+    description: "Mapping — hub intake pool",
+    fieldDate: todayAt(13, 15),
+  }),
+  mappingBase({
+    mapNumber: "MAP-2024-0119",
+    jiraTicketId: "OPS-4619",
+    client: "Express Mart",
+    area: "Bat Yam",
+    description: "Mapping — assigned to Dana (shift leader)",
+    assignSupervisor2: true,
+    onHubStatusBoard: true,
+    fieldDate: todayAt(11, 0),
+    mapperName: "Field Team B",
+    fieldProgressPercent: 70,
+  }),
   {
     mapNumber: "MAP-2024-0105",
     jiraTicketId: "OPS-4605",
@@ -238,8 +279,9 @@ export async function seedDemoMaps(prisma: PrismaClient) {
   const qa = await prisma.user.findUnique({ where: { email: "qa@ops-demo.local" } });
   const supervisor = await prisma.user.findUnique({ where: { email: "supervisor@ops-demo.local" } });
   const supervisor2 = await prisma.user.findUnique({ where: { email: "supervisor2@ops-demo.local" } });
+  const supervisor3 = await prisma.user.findUnique({ where: { email: "supervisor3@ops-demo.local" } });
 
-  if (!leader || !inspector || !qa || !supervisor || !supervisor2) {
+  if (!leader || !inspector || !qa || !supervisor || !supervisor2 || !supervisor3) {
     throw new Error("Demo users must exist before seeding maps. Run user seed first.");
   }
 
@@ -275,6 +317,9 @@ export async function seedDemoMaps(prisma: PrismaClient) {
       ...(demo.assignSupervisor ? { assignedSupervisor: { connect: { id: supervisor.id } } } : {}),
       ...(demo.assignSupervisor2
         ? { assignedSupervisor: { connect: { id: supervisor2.id } } }
+        : {}),
+      ...(demo.assignSupervisor3
+        ? { assignedSupervisor: { connect: { id: supervisor3.id } } }
         : {}),
     };
 

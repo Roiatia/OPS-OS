@@ -114,17 +114,34 @@ router.get("/hub/notifications", requireRoles(RoleName.OPS_ADMIN), async (req, r
 
 router.patch("/:id/hub", requireRoles(RoleName.OPS_ADMIN, RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (req, res) => {
   try {
-    const { fieldWorkStatus, fieldProgressPercent, assignedSupervisorId, onHubStatusBoard, opsManagerComment } =
-      req.body as {
-        fieldWorkStatus?: FieldWorkStatus;
-        fieldProgressPercent?: number;
-        assignedSupervisorId?: string | null;
-        onHubStatusBoard?: boolean;
-        opsManagerComment?: string | null;
-      };
+    const {
+      fieldWorkStatus,
+      fieldProgressPercent,
+      assignedSupervisorId,
+      onHubStatusBoard,
+      opsManagerComment,
+      shiftLeaderApproved,
+      returnVisitAt,
+    } = req.body as {
+      fieldWorkStatus?: FieldWorkStatus;
+      fieldProgressPercent?: number;
+      assignedSupervisorId?: string | null;
+      onHubStatusBoard?: boolean;
+      opsManagerComment?: string | null;
+      shiftLeaderApproved?: boolean | null;
+      returnVisitAt?: string | null;
+    };
     const map = await workflow.updateHubMap(
       req.params.id,
-      { fieldWorkStatus, fieldProgressPercent, assignedSupervisorId, onHubStatusBoard, opsManagerComment },
+      {
+        fieldWorkStatus,
+        fieldProgressPercent,
+        assignedSupervisorId,
+        onHubStatusBoard,
+        opsManagerComment,
+        shiftLeaderApproved,
+        returnVisitAt,
+      },
       (req as AuthedRequest).user
     );
     res.json(map);
