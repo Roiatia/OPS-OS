@@ -20,6 +20,7 @@ interface Props {
   maps: MapRecord[];
   role: "inspector" | "qa";
   onRefresh: () => void | Promise<void>;
+  onMapUpdated?: (maps: MapRecord[]) => void;
 }
 
 /** Formats a due date for inbox and active map tables. */
@@ -52,7 +53,11 @@ function statusSelectClass(displayState: string): string {
 }
 
 /** Shared inspector/QA table for updating status, notes, and station. */
-export function ActiveMapsTable({ maps, role, onRefresh }: Props) {
+export function ActiveMapsTable({ maps, role, onRefresh, onMapUpdated }: Props) {
+  async function commitMap(map: MapRecord) {
+    if (onMapUpdated) onMapUpdated([map]);
+    else await Promise.resolve(onRefresh());
+  }
   const [statusLoadingId, setStatusLoadingId] = useState<string | null>(null);
   const [noteLoadingId, setNoteLoadingId] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState<Record<string, string>>({});
@@ -72,11 +77,11 @@ export function ActiveMapsTable({ maps, role, onRefresh }: Props) {
     setError("");
     setStatusLoadingId(map.id);
     try {
-      await api.updateMapStatus(map.id, option.action.status, note, attachment);
+      const updated = await api.updateMapStatus(map.id, option.action.status, note, attachment);
       setNoteDraft((prev) => ({ ...prev, [map.id]: "" }));
       setExpandedNote(null);
       setFixModalMap(null);
-      await Promise.resolve(onRefresh());
+      await commitMap(updated);
     } catch (e) {
       setError((e as Error).message);
       await Promise.resolve(onRefresh());
@@ -110,10 +115,10 @@ export function ActiveMapsTable({ maps, role, onRefresh }: Props) {
     if (!body) return;
     setNoteLoadingId(mapId);
     try {
-      await api.addMapNote(mapId, body);
+      const updated = await api.addMapNote(mapId, body);
       setNoteDraft((prev) => ({ ...prev, [mapId]: "" }));
       setExpandedNote(null);
-      await Promise.resolve(onRefresh());
+      await commitMap(updated);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -202,7 +207,7 @@ export function ActiveMapsTable({ maps, role, onRefresh }: Props) {
                   <td className="px-3 py-2.5">
                     <StationSelect
                       map={map}
-                      onUpdated={onRefresh}
+                      onMapUpdated={(m) => void commitMap(m)}
                       onError={setError}
                     />
                   </td>

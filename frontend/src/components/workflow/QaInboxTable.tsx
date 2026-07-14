@@ -8,6 +8,7 @@ import { Badge } from "../Badge";
 interface Props {
   maps: MapRecord[];
   onRefresh: () => void;
+  onMapUpdated?: (maps: MapRecord[]) => void;
 }
 
 /** Formats a due date for the QA inbox table. */
@@ -20,7 +21,7 @@ function formatDate(iso: string) {
 }
 
 /** Table of new QA assignments awaiting acceptance. */
-export function QaInboxTable({ maps, onRefresh }: Props) {
+export function QaInboxTable({ maps, onRefresh, onMapUpdated }: Props) {
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [error, setError] = useState("");
 
@@ -29,8 +30,9 @@ export function QaInboxTable({ maps, onRefresh }: Props) {
     setError("");
     setLoadingId(map.id);
     try {
-      await api.acceptQaAssignment(map.id);
-      onRefresh();
+      const updated = await api.acceptQaAssignment(map.id);
+      if (onMapUpdated) onMapUpdated([updated]);
+      else onRefresh();
     } catch (e) {
       setError((e as Error).message);
     } finally {

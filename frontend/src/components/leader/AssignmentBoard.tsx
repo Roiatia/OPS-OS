@@ -51,6 +51,7 @@ interface Props {
   allMaps?: MapRecord[];
   team: TeamMember[];
   onRefresh: () => void;
+  onMapUpdated?: (maps: MapRecord[]) => void;
 }
 
 const QUEUE_TABS: { id: AssignmentQueue; label: string }[] = [
@@ -68,7 +69,11 @@ const filterInputClass =
  * `maps` = rows to show; `allMaps` = option source for column filters so
  * filter dropdowns still list clients/assignees from intake maps.
  */
-export function AssignmentBoard({ maps, allMaps, team, onRefresh }: Props) {
+export function AssignmentBoard({ maps, allMaps, team, onRefresh, onMapUpdated }: Props) {
+  function commitMaps(updated: MapRecord[]) {
+    if (onMapUpdated) onMapUpdated(updated);
+    else onRefresh();
+  }
   const [queue, setQueue] = useState<AssignmentQueue>("all");
   const [columnFilters, setColumnFilters] = useState<MapColumnFilters>(EMPTY_COLUMN_FILTERS);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -223,13 +228,13 @@ export function AssignmentBoard({ maps, allMaps, team, onRefresh }: Props) {
             phase: taskPhase,
           });
         }
+        onRefresh();
       } else {
-        await api.assignInspector(map.id, opts.inspectorId, opts.attachment);
+        commitMaps([await api.assignInspector(map.id, opts.inspectorId, opts.attachment)]);
       }
 
       setAssignInspectorMap(null);
       setSelected(new Set());
-      onRefresh();
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -242,9 +247,8 @@ export function AssignmentBoard({ maps, allMaps, team, onRefresh }: Props) {
     setError("");
     setLoading(true);
     try {
-      await api.unassignInspector(assignInspectorMap.id);
+      commitMaps([await api.unassignInspector(assignInspectorMap.id)]);
       setAssignInspectorMap(null);
-      onRefresh();
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -260,10 +264,9 @@ export function AssignmentBoard({ maps, allMaps, team, onRefresh }: Props) {
     setError("");
     setLoading(true);
     try {
-      await api.assignQa(assignQaMap.id, opts.qaId, opts.attachment);
+      commitMaps([await api.assignQa(assignQaMap.id, opts.qaId, opts.attachment)]);
       setAssignQaMap(null);
       setSelected(new Set());
-      onRefresh();
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -276,9 +279,8 @@ export function AssignmentBoard({ maps, allMaps, team, onRefresh }: Props) {
     setError("");
     setLoading(true);
     try {
-      await api.unassignQa(assignQaMap.id);
+      commitMaps([await api.unassignQa(assignQaMap.id)]);
       setAssignQaMap(null);
-      onRefresh();
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -307,12 +309,13 @@ export function AssignmentBoard({ maps, allMaps, team, onRefresh }: Props) {
     setError("");
     setLoading(true);
     try {
+      const updated: MapRecord[] = [];
       for (const map of assignableSelected) {
-        await api.assignInspector(map.id, bulkInspectorId);
+        updated.push(await api.assignInspector(map.id, bulkInspectorId));
       }
       setSelected(new Set());
       setBulkInspectorId("");
-      onRefresh();
+      commitMaps(updated);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -375,12 +378,13 @@ export function AssignmentBoard({ maps, allMaps, team, onRefresh }: Props) {
     setError("");
     setLoading(true);
     try {
+      const updated: MapRecord[] = [];
       for (const map of selectedNeedingQa) {
-        await api.assignQa(map.id, bulkQaId);
+        updated.push(await api.assignQa(map.id, bulkQaId));
       }
       setSelected(new Set());
       setBulkQaId("");
-      onRefresh();
+      commitMaps(updated);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -392,8 +396,7 @@ export function AssignmentBoard({ maps, allMaps, team, onRefresh }: Props) {
     setError("");
     setDueDateSaving(mapId);
     try {
-      await api.updateMapDueDate(mapId, value || null);
-      onRefresh();
+      commitMaps([await api.updateMapDueDate(mapId, value || null)]);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -746,7 +749,7 @@ export function AssignmentBoard({ maps, allMaps, team, onRefresh }: Props) {
                       <StationSelect
                         map={map}
                         disabled={loading}
-                        onUpdated={onRefresh}
+                        onMapUpdated={(m) => commitMaps([m])}
                         onError={setError}
                       />
                     </td>

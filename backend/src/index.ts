@@ -1,8 +1,10 @@
 import "dotenv/config";
+import http from "http";
 import express from "express";
 import cors from "cors";
 import authRoutes from "./routes/auth.js";
 import mapsRoutes from "./routes/maps.js";
+import { attachRealtime } from "./realtime.js";
 
 /** Express API entry: CORS, JSON body, health + auth/maps routers. */
 const app = express();
@@ -29,6 +31,10 @@ app.get("/api/health", (_req, res) => {
 app.use("/api/auth", authRoutes);
 app.use("/api/maps", mapsRoutes);
 
-app.listen(port, () => {
+const server = http.createServer(app);
+attachRealtime(server);
+
+server.listen(port, () => {
   console.log(`OPS-OS API running on http://localhost:${port}`);
+  console.log(`OPS-OS realtime on ws://localhost:${port}/api/ws`);
 });

@@ -10,7 +10,8 @@ import {
   isQaActive,
   isQaInbox,
 } from "../lib/activeMapsWorkflow";
-import { useMapsPolling } from "../lib/useMapsPolling";
+import { removeMapsById, upsertActiveMaps } from "../lib/mapState";
+import { useMapsRealtime } from "../lib/useMapsRealtime";
 import type { MapRecord } from "../types";
 
 /** Inspector dashboard: inbox for new assignments and active maps table. */
@@ -32,11 +33,21 @@ export function InspectorDashboardPage() {
       });
   }, []);
 
+  const applyUpsert = useCallback((incoming: MapRecord[]) => {
+    setMaps((prev) => upsertActiveMaps(prev, incoming));
+  }, []);
+
   useEffect(() => {
     load();
   }, [load]);
 
-  useMapsPolling(load);
+  useMapsRealtime({
+    onUpsert: applyUpsert,
+    onDeleted: (ids) => setMaps((prev) => removeMapsById(prev, ids)),
+    onInvalidate: () => {
+      void load({ soft: true });
+    },
+  });
 
   const softRefresh = useCallback(() => load({ soft: true }), [load]);
 
@@ -84,7 +95,11 @@ export function InspectorDashboardPage() {
               New pre-upload maps from the team leader. Click <strong>Accept</strong> to confirm you
               received the assignment. Once both you and QA accept, the map moves to pre-upload work.
             </p>
-            <InspectorInboxTable maps={inbox} onRefresh={softRefresh} />
+            <InspectorInboxTable
+              maps={inbox}
+              onRefresh={softRefresh}
+              onMapUpdated={applyUpsert}
+            />
           </section>
 
           <section>
@@ -97,7 +112,12 @@ export function InspectorDashboardPage() {
             <p className="text-sm text-muted mb-4">
               Shared workspace with QA — update status and leave notes like the team spreadsheet.
             </p>
-            <ActiveMapsTable maps={active} role="inspector" onRefresh={softRefresh} />
+            <ActiveMapsTable
+              maps={active}
+              role="inspector"
+              onRefresh={softRefresh}
+              onMapUpdated={applyUpsert}
+            />
           </section>
         </>
       )}
@@ -124,11 +144,21 @@ export function QaDashboardPage() {
       });
   }, []);
 
+  const applyUpsert = useCallback((incoming: MapRecord[]) => {
+    setMaps((prev) => upsertActiveMaps(prev, incoming));
+  }, []);
+
   useEffect(() => {
     load();
   }, [load]);
 
-  useMapsPolling(load);
+  useMapsRealtime({
+    onUpsert: applyUpsert,
+    onDeleted: (ids) => setMaps((prev) => removeMapsById(prev, ids)),
+    onInvalidate: () => {
+      void load({ soft: true });
+    },
+  });
 
   const softRefresh = useCallback(() => load({ soft: true }), [load]);
 
@@ -177,7 +207,7 @@ export function QaDashboardPage() {
               New pre-upload maps from the team leader. Click <strong>Accept</strong> to confirm you
               received the assignment — they move to Active maps below.
             </p>
-            <QaInboxTable maps={inbox} onRefresh={softRefresh} />
+            <QaInboxTable maps={inbox} onRefresh={softRefresh} onMapUpdated={applyUpsert} />
           </section>
 
           <section>
@@ -191,7 +221,12 @@ export function QaDashboardPage() {
               Maps you accepted plus anything in upload/polish review. Use the status dropdown to set{" "}
               <strong>Approved</strong> or <strong>Fix</strong> once the inspector marks work as Done.
             </p>
-            <ActiveMapsTable maps={active} role="qa" onRefresh={softRefresh} />
+            <ActiveMapsTable
+              maps={active}
+              role="qa"
+              onRefresh={softRefresh}
+              onMapUpdated={applyUpsert}
+            />
           </section>
         </>
       )}

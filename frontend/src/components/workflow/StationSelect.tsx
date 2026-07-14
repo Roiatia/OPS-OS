@@ -9,11 +9,19 @@ interface Props {
   disabled?: boolean;
   className?: string;
   onUpdated?: () => void | Promise<void>;
+  onMapUpdated?: (map: MapRecord) => void;
   onError?: (message: string) => void;
 }
 
 /** Dropdown to change a map's pipeline station with save feedback. */
-export function StationSelect({ map, disabled, className, onUpdated, onError }: Props) {
+export function StationSelect({
+  map,
+  disabled,
+  className,
+  onUpdated,
+  onMapUpdated,
+  onError,
+}: Props) {
   const [saving, setSaving] = useState(false);
   const value = getMapWorkflowPhaseTarget(map);
 
@@ -21,8 +29,9 @@ export function StationSelect({ map, disabled, className, onUpdated, onError }: 
     if (next === value || saving) return;
     setSaving(true);
     try {
-      await api.updateMapStation(map.id, next);
-      await Promise.resolve(onUpdated?.());
+      const updated = await api.updateMapStation(map.id, next);
+      if (onMapUpdated) onMapUpdated(updated);
+      else await Promise.resolve(onUpdated?.());
     } catch (e) {
       onError?.((e as Error).message);
     } finally {
