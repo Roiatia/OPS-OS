@@ -1,10 +1,41 @@
 import { Router } from "express";
+import type { Request, Response, NextFunction } from "express";
 import { MapPhase, MapStatus, RoleName, TaskStatus } from "@prisma/client";
 import { authMiddleware, requireRoles, type AuthedRequest } from "../middleware/auth.js";
 import * as workflow from "../services/workflow.js";
+import { broadcastMapsChanged } from "../lib/realtime.js";
 
 const router = Router();
 router.use(authMiddleware);
+
+/**
+ * Emit a Realtime "maps changed" broadcast after any successful mutation so
+ * other connected clients can refetch instead of waiting for the poll timer.
+ * We snoop the JSON response to pick up the affected map id (map responses use
+ * `id`, task responses carry `mapId`); list/bulk responses have neither, so
+ * subscribers just refresh their whole list.
+ */
+router.use((req: Request, res: Response, next: NextFunction) => {
+  const isMutation = req.method === "POST" || req.method === "PATCH" || req.method === "DELETE";
+  if (!isMutation) return next();
+
+  let mapId: string | undefined;
+  const originalJson = res.json.bind(res);
+  res.json = (body: unknown) => {
+    const record = body as { id?: unknown; mapId?: unknown } | null;
+    const candidate = record?.mapId ?? record?.id;
+    if (typeof candidate === "string") mapId = candidate;
+    return originalJson(body);
+  };
+
+  res.on("finish", () => {
+    if (res.statusCode >= 200 && res.statusCode < 400) {
+      broadcastMapsChanged({ mapId, source: req.originalUrl });
+    }
+  });
+
+  next();
+});
 
 /** Preview Sam's Club CSV parse without writing to the DB. */
 router.post(
