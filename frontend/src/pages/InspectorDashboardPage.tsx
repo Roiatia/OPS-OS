@@ -11,6 +11,7 @@ import {
   isQaInbox,
 } from "../lib/activeMapsWorkflow";
 import { useMapsPolling } from "../lib/useMapsPolling";
+import { useMapsRealtime } from "../lib/useMapsRealtime";
 import type { MapRecord } from "../types";
 
 /** Inspector dashboard: inbox for new assignments and active maps table. */
@@ -36,6 +37,7 @@ export function InspectorDashboardPage() {
     load();
   }, [load]);
 
+  useMapsRealtime(() => load({ soft: true }));
   useMapsPolling(load);
 
   const softRefresh = useCallback(() => load({ soft: true }), [load]);
@@ -128,6 +130,7 @@ export function QaDashboardPage() {
     load();
   }, [load]);
 
+  useMapsRealtime(() => load({ soft: true }));
   useMapsPolling(load);
 
   const softRefresh = useCallback(() => load({ soft: true }), [load]);

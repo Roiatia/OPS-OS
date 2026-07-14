@@ -10,6 +10,7 @@ import { SettingsPanel } from "../components/leader/SettingsPanel";
 import { TeamPanel } from "../components/leader/TeamPanel";
 import { getIdleInspectors } from "../lib/assignment";
 import { useMapsPolling } from "../lib/useMapsPolling";
+import { useMapsRealtime } from "../lib/useMapsRealtime";
 import { isNewMapForLeader, isPipelineMapForLeader, needsQaAssignment } from "../lib/mapDisplay";
 import type { MapRecord, TeamMember } from "../types";
 
@@ -94,7 +95,8 @@ export function LeaderDashboardPage() {
     load();
   }, []);
 
-  // Re-fetch every ~15s so assignment changes from other users show up.
+  // Live updates via Supabase Realtime; polling remains as a safety net.
+  useMapsRealtime(() => load({ soft: true }));
   useMapsPolling((opts) => load(opts));
 
   /** Manual "Add map from CS" → creates INTAKE map, then soft-refresh. */
