@@ -28,8 +28,8 @@ function compareRows(a: AvailabilityRosterEntry, b: AvailabilityRosterEntry, sor
     return a.user.name.localeCompare(b.user.name);
   }
   if (sort === "hagim") {
-    const aH = Boolean(a.submission?.hagimOk ?? a.user.hagimOk);
-    const bH = Boolean(b.submission?.hagimOk ?? b.user.hagimOk);
+    const aH = Boolean(a.submission?.fridayContract ?? a.user.fridayContract);
+    const bH = Boolean(b.submission?.fridayContract ?? b.user.fridayContract);
     if (aH !== bH) return aH ? -1 : 1;
     return a.user.name.localeCompare(b.user.name);
   }
@@ -246,7 +246,9 @@ export function OpsAvailabilityRoster() {
             </thead>
             <tbody className="divide-y divide-border">
               {rows.map(({ user, submission }) => {
-                const hagim = Boolean(submission?.hagimOk ?? user.hagimOk);
+                const hagim = Boolean(
+                  submission?.fridayContract ?? user.fridayContract
+                );
                 return (
                   <tr key={user.id} className="hover:bg-slate-50/50 align-top">
                     <td className="px-3 py-3 font-medium sticky left-0 bg-white">{user.name}</td>

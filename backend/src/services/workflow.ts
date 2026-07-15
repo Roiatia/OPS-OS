@@ -1,4 +1,4 @@
-import { MapPhase, InspectorStatus, SupervisorStatus, FieldWorkStatus, QaStatus, TaskStatus, RoleName } from "@prisma/client";
+import { MapPhase, InspectorStatus, SupervisorStatus, FieldWorkStatus, QaStatus, TaskStatus, RoleName, SlCheckStatus } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { mapListIncludes, mapDetailIncludes } from "../lib/mapIncludes.js";
 import { broadcastMapsInvalidate } from "../lib/realtimeBus.js";
@@ -1536,6 +1536,189 @@ export async function updateHubMap(
     data: patch,
     include: hubMapIncludes,
   });
+}
+
+async function assertOnShiftToday(userId: string) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { shiftStartedAt: true },
+  });
+  const start = user?.shiftStartedAt;
+  if (!start || start < startOfToday() || start > endOfToday()) {
+    throw new Error("You must be on today’s shift to do this");
+  }
+}
+
+/** Assigned supervisor asks on-shift shift leaders to check this map (ready, before status). */
+export async function requestSlCheck(mapId: string, user: AuthUser) {
+  const map = await prisma.map.findUnique({ where: { id: mapId } });
+  if (!map) throw new Error("Map not found");
+  if (map.phase !== MapPhase.FIELD) throw new Error("Only field maps");
+  if (map.assignedSupervisorId !== user.id && !isOpsManager(user)) {
+    throw new Error("Only the assigned supervisor can ask for SL check");
+  }
+  if (map.onHubStatusBoard) {
+    throw new Error("Ask for SL check before moving the map to a status column");
+  }
+  if ((map.fieldProgressPercent ?? 0) < 100) {
+    throw new Error("Map must be at 100% progress before asking for an SL check");
+  }
+  if (map.slCheckStatus === SlCheckStatus.OPEN || map.slCheckStatus === SlCheckStatus.CLAIMED) {
+    throw new Error("A shift-leader check is already in progress");
+  }
+
+  const updated = await prisma.map.update({
+    where: { id: mapId },
+    data: {
+      slCheckStatus: SlCheckStatus.OPEN,
+      slCheckRequestedById: user.id,
+      slCheckRequestedAt: new Date(),
+      slCheckClaimedById: null,
+      slCheckClaimedAt: null,
+      slCheckNote: null,
+    },
+    include: hubMapIncludes,
+  });
+
+  await logEvent(
+    mapId,
+    user.id,
+    "sl_check_requested",
+    `${user.name} asked shift leaders to check ${map.mapNumber}`
+  );
+
+  return updated;
+}
+
+/** First on-shift shift leader to claim wins. */
+export async function claimSlCheck(mapId: string, user: AuthUser) {
+  if (!userHasShiftLeaderRole(user)) {
+    throw new Error("Only shift leaders can claim a check");
+  }
+  await assertOnShiftToday(user.id);
+
+  const claimed = await prisma.map.updateMany({
+    where: { id: mapId, slCheckStatus: SlCheckStatus.OPEN },
+    data: {
+      slCheckStatus: SlCheckStatus.CLAIMED,
+      slCheckClaimedById: user.id,
+      slCheckClaimedAt: new Date(),
+    },
+  });
+  if (claimed.count === 0) {
+    const current = await prisma.map.findUnique({ where: { id: mapId } });
+    if (!current) throw new Error("Map not found");
+    if (current.slCheckStatus === SlCheckStatus.CLAIMED) {
+      throw new Error("This check was already taken by another shift leader");
+    }
+    throw new Error("No open SL check on this map");
+  }
+
+  await logEvent(mapId, user.id, "sl_check_claimed", `${user.name} claimed the SL check`);
+
+  return prisma.map.findUniqueOrThrow({
+    where: { id: mapId },
+    include: hubMapIncludes,
+  });
+}
+
+/** Claimed SL accepts the map or sends it back for corrections. */
+export async function resolveSlCheck(
+  mapId: string,
+  user: AuthUser,
+  decision: "accept" | "need_corrections",
+  note?: string | null
+) {
+  if (!userHasShiftLeaderRole(user)) {
+    throw new Error("Only shift leaders can resolve a check");
+  }
+
+  const map = await prisma.map.findUnique({ where: { id: mapId } });
+  if (!map) throw new Error("Map not found");
+  if (map.slCheckStatus !== SlCheckStatus.CLAIMED) {
+    throw new Error("This check is not claimed");
+  }
+  if (map.slCheckClaimedById !== user.id && !isOpsManager(user)) {
+    throw new Error("Only the shift leader who claimed this map can resolve it");
+  }
+
+  const cleanNote = note?.trim() || null;
+
+  if (decision === "accept") {
+    // Lightweight: SL says yes — supervisor still owns final status on the hub
+    const updated = await prisma.map.update({
+      where: { id: mapId },
+      data: {
+        slCheckStatus: SlCheckStatus.ACCEPTED,
+        slCheckNote: cleanNote,
+        shiftLeaderApproved: true,
+      },
+      include: hubMapIncludes,
+    });
+    await logEvent(
+      mapId,
+      user.id,
+      "sl_check_accepted",
+      `${user.name} accepted check on ${map.mapNumber}${cleanNote ? ` — ${cleanNote}` : ""}`
+    );
+    return updated;
+  }
+
+  if (!cleanNote) {
+    throw new Error("Add a short comment explaining why the check was not accepted");
+  }
+
+  const updated = await prisma.map.update({
+    where: { id: mapId },
+    data: {
+      slCheckStatus: SlCheckStatus.NEEDS_CORRECTIONS,
+      slCheckNote: cleanNote,
+      shiftLeaderApproved: false,
+      // Stay with the supervisor — they fix offline then can ask again
+      onHubStatusBoard: false,
+      fieldWorkStatus: FieldWorkStatus.UNCOMPLETED,
+      opsManagerComment: `SL not accepted: ${cleanNote}`,
+    },
+    include: hubMapIncludes,
+  });
+  await logEvent(
+    mapId,
+    user.id,
+    "sl_check_corrections",
+    `${user.name} did not accept ${map.mapNumber} — ${cleanNote}`
+  );
+  return updated;
+}
+
+/** Cancel an open/claimed check (requesting supervisor or OPS). */
+export async function cancelSlCheck(mapId: string, user: AuthUser) {
+  const map = await prisma.map.findUnique({ where: { id: mapId } });
+  if (!map) throw new Error("Map not found");
+  const isRequester = map.slCheckRequestedById === user.id || map.assignedSupervisorId === user.id;
+  if (!isRequester && !isOpsManager(user)) {
+    throw new Error("Not allowed to cancel this SL check");
+  }
+  if (
+    map.slCheckStatus !== SlCheckStatus.OPEN &&
+    map.slCheckStatus !== SlCheckStatus.CLAIMED
+  ) {
+    throw new Error("Nothing to cancel");
+  }
+
+  const updated = await prisma.map.update({
+    where: { id: mapId },
+    data: {
+      slCheckStatus: null,
+      slCheckRequestedById: null,
+      slCheckClaimedById: null,
+      slCheckRequestedAt: null,
+      slCheckClaimedAt: null,
+      slCheckNote: null,
+    },
+    include: hubMapIncludes,
+  });
+  await logEvent(mapId, user.id, "sl_check_cancelled", `${user.name} cancelled the SL check request`);
+  return updated;
 }
 
 /** Backfill phase history from map creation for maps missing entries */

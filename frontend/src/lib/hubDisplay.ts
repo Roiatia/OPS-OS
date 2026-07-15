@@ -25,9 +25,11 @@ export function formatShiftStart(iso: string | null | undefined): string {
 
 export function formatMapTime(iso: string | null): string {
   if (!iso) return "—";
-  return new Date(iso).toLocaleTimeString(undefined, {
-    hour: "numeric",
+  return new Date(iso).toLocaleTimeString("en-GB", {
+    timeZone: "Asia/Jerusalem",
+    hour: "2-digit",
     minute: "2-digit",
+    hourCycle: "h23",
   });
 }
 

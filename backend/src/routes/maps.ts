@@ -133,7 +133,7 @@ router.patch("/:id/hub", requireRoles(RoleName.OPS_ADMIN, RoleName.SUPERVISOR, R
       returnVisitAt?: string | null;
     };
     const map = await workflow.updateHubMap(
-      req.params.id,
+      req.params.id as string,
       {
         fieldWorkStatus,
         fieldProgressPercent,
@@ -150,6 +150,71 @@ router.patch("/:id/hub", requireRoles(RoleName.OPS_ADMIN, RoleName.SUPERVISOR, R
     res.status(400).json({ error: (e as Error).message });
   }
 });
+
+router.post(
+  "/:id/sl-check/request",
+  requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER, RoleName.OPS_ADMIN),
+  async (req, res) => {
+    try {
+      const map = await workflow.requestSlCheck(req.params.id as string, (req as AuthedRequest).user);
+      res.json(map);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+router.post(
+  "/:id/sl-check/claim",
+  requireRoles(RoleName.SUPERVISOR_SHIFT_LEADER, RoleName.OPS_ADMIN),
+  async (req, res) => {
+    try {
+      const map = await workflow.claimSlCheck(req.params.id as string, (req as AuthedRequest).user);
+      res.json(map);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+router.post(
+  "/:id/sl-check/resolve",
+  requireRoles(RoleName.SUPERVISOR_SHIFT_LEADER, RoleName.OPS_ADMIN),
+  async (req, res) => {
+    try {
+      const { decision, note } = req.body as {
+        decision?: "accept" | "need_corrections";
+        note?: string | null;
+      };
+      if (decision !== "accept" && decision !== "need_corrections") {
+        res.status(400).json({ error: "decision must be accept or need_corrections" });
+        return;
+      }
+      const map = await workflow.resolveSlCheck(
+        req.params.id as string,
+        (req as AuthedRequest).user,
+        decision,
+        note
+      );
+      res.json(map);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+router.post(
+  "/:id/sl-check/cancel",
+  requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER, RoleName.OPS_ADMIN),
+  async (req, res) => {
+    try {
+      const map = await workflow.cancelSlCheck(req.params.id as string, (req as AuthedRequest).user);
+      res.json(map);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
 
 router.get("/team-field", requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (req, res) => {
   try {

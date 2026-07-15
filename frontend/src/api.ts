@@ -6,18 +6,32 @@ function getToken() {
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getToken();
-  const res = await fetch(`${API}${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...options.headers,
-    },
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API}${path}`, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...options.headers,
+      },
+    });
+  } catch {
+    throw new Error("Cannot reach the API — is the backend running on port 3001?");
+  }
 
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error ?? `Request failed (${res.status})`);
+    const body = await res.json().catch(() => ({} as { error?: string }));
+    const message =
+      body.error ||
+      (res.status === 502 || res.status === 503 || res.status === 504
+        ? "API temporarily unavailable — retry in a moment"
+        : res.status === 500 && !body.error
+          ? "Server error (backend may have been restarting) — refresh and try again"
+          : `Request failed (${res.status})`);
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
   }
 
   return res.json();
@@ -113,6 +127,33 @@ export const api = {
     request<import("./types").MapRecord>(`/maps/${mapId}/hub`, {
       method: "PATCH",
       body: JSON.stringify(data),
+    }),
+
+  requestSlCheck: (mapId: string) =>
+    request<import("./types").MapRecord>(`/maps/${mapId}/sl-check/request`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+
+  claimSlCheck: (mapId: string) =>
+    request<import("./types").MapRecord>(`/maps/${mapId}/sl-check/claim`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+
+  resolveSlCheck: (
+    mapId: string,
+    body: { decision: "accept" | "need_corrections"; note?: string | null }
+  ) =>
+    request<import("./types").MapRecord>(`/maps/${mapId}/sl-check/resolve`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  cancelSlCheck: (mapId: string) =>
+    request<import("./types").MapRecord>(`/maps/${mapId}/sl-check/cancel`, {
+      method: "POST",
+      body: JSON.stringify({}),
     }),
 
   swapSupervisorMaps: (mapIds: string[], toSupervisorId: string) =>
@@ -328,6 +369,7 @@ export const api = {
   saveMyAvailability: (body: {
     weekStart?: string;
     fridayContract: boolean;
+    sundayOk?: boolean;
     hagimOk?: boolean;
     days: {
       dayOfWeek: number;
@@ -364,11 +406,22 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  autoGenerateShiftPlan: (weekStart?: string) =>
+  autoGenerateShiftPlan: (body?: {
+    weekStart?: string;
+    dayOfWeek?: number;
+    lockedAssignments?: import("./types/availability").ShiftPlanAssignment[];
+    variant?: number;
+    avoidUserIds?: string[];
+  }) =>
     request<import("./types/availability").ShiftPlanSaveResult>("/availability/plan/auto", {
       method: "POST",
-      body: JSON.stringify({ weekStart }),
+      body: JSON.stringify(body ?? {}),
     }),
+
+  getPublishedSchedule: (weekStart?: string) =>
+    request<import("./types/availability").PublishedScheduleView>(
+      `/availability/schedule${buildQuery({ weekStart })}`
+    ),
 };
 
 export function setAuthToken(token: string | null) {

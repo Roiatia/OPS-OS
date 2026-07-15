@@ -94,6 +94,12 @@ export interface MapRecord {
   /** null = N/A; false = completed without shift-leader approval (highlight) */
   shiftLeaderApproved?: boolean | null;
   returnVisitAt?: string | null;
+  slCheckStatus?: "OPEN" | "CLAIMED" | "ACCEPTED" | "NEEDS_CORRECTIONS" | null;
+  slCheckRequestedAt?: string | null;
+  slCheckClaimedAt?: string | null;
+  slCheckNote?: string | null;
+  slCheckRequestedBy?: { id: string; name: string } | null;
+  slCheckClaimedBy?: { id: string; name: string } | null;
   phase: MapPhase;
   inspectorStatus: InspectorStatus | null;
   supervisorStatus: SupervisorStatus | null;

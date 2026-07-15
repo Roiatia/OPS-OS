@@ -124,6 +124,11 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
   const [progressDraft, setProgressDraft] = useState<{ mapId: string; pct: number } | null>(
     null
   );
+  const [slNoteDialog, setSlNoteDialog] = useState<{
+    mapId: string;
+    note: string;
+  } | null>(null);
+  const [slBusyId, setSlBusyId] = useState<string | null>(null);
 
   const draggedMapIdRef = useRef<string | null>(null);
   const pendingDropRef = useRef<Set<string>>(new Set());
@@ -199,6 +204,99 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
     }),
     [maps, onShiftSupervisors, onShiftIds]
   );
+
+  const openSlChecks = useMemo(
+    () => maps.filter((m) => m.slCheckStatus === "OPEN"),
+    [maps]
+  );
+
+  function patchMap(updated: MapRecord) {
+    const normalized = normalizeMapRecord(updated);
+    setMaps((prev) => prev.map((m) => (m.id === normalized.id ? normalized : m)));
+    onMutateRef.current?.(normalized);
+  }
+
+  async function handleRequestSlCheck(map: MapRecord) {
+    setSlBusyId(map.id);
+    setError("");
+    try {
+      patchMap(await api.requestSlCheck(map.id));
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSlBusyId(null);
+    }
+  }
+
+  async function handleClaimSlCheck(map: MapRecord) {
+    setSlBusyId(map.id);
+    setError("");
+    try {
+      patchMap(await api.claimSlCheck(map.id));
+    } catch (err) {
+      setError((err as Error).message);
+      void load(true);
+    } finally {
+      setSlBusyId(null);
+    }
+  }
+
+  async function handleCancelSlCheck(map: MapRecord) {
+    setSlBusyId(map.id);
+    setError("");
+    try {
+      patchMap(await api.cancelSlCheck(map.id));
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSlBusyId(null);
+    }
+  }
+
+  async function submitSlReject() {
+    if (!slNoteDialog) return;
+    if (!slNoteDialog.note.trim()) {
+      setError("Add a short comment before rejecting.");
+      return;
+    }
+    const { mapId, note } = slNoteDialog;
+    setSlBusyId(mapId);
+    setError("");
+    try {
+      patchMap(
+        await api.resolveSlCheck(mapId, {
+          decision: "need_corrections",
+          note: note.trim(),
+        })
+      );
+      setSlNoteDialog(null);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSlBusyId(null);
+    }
+  }
+
+  async function handleSlAccept(map: MapRecord) {
+    setSlBusyId(map.id);
+    setError("");
+    try {
+      patchMap(await api.resolveSlCheck(map.id, { decision: "accept", note: null }));
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSlBusyId(null);
+    }
+  }
+
+  function canAskSlCheck(map: MapRecord): boolean {
+    if (!currentUserId || map.assignedSupervisor?.id !== currentUserId) return false;
+    if (map.onHubStatusBoard) return false;
+    if ((map.fieldProgressPercent ?? 0) < 100) return false;
+    if (map.fieldWorkStatus === "COMPLETED" || map.fieldWorkStatus === "CANCELLED") return false;
+    if (map.slCheckStatus === "OPEN" || map.slCheckStatus === "CLAIMED") return false;
+    return true;
+  }
 
   function prepareMaps(list: MapRecord[]): MapRecord[] {
     let next = list;
@@ -588,6 +686,104 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
             Return · {formatMapTime(map.returnVisitAt)}
           </p>
         )}
+        {map.slCheckStatus && (
+          <div className="mt-2 space-y-1.5" onClick={(e) => e.stopPropagation()}>
+            {map.slCheckStatus === "OPEN" && (
+              <p className="text-[10px] font-semibold text-indigo-800 bg-indigo-50 rounded-md px-2 py-1">
+                Waiting for a shift leader…
+              </p>
+            )}
+            {map.slCheckStatus === "CLAIMED" && (
+              <p className="text-[10px] font-semibold text-violet-900 bg-violet-50 rounded-md px-2 py-1">
+                {map.slCheckClaimedBy?.id === currentUserId
+                  ? "Your check — accept?"
+                  : `Taken by ${map.slCheckClaimedBy?.name ?? "SL"}`}
+              </p>
+            )}
+            {map.slCheckStatus === "NEEDS_CORRECTIONS" && (
+              <p className="text-[10px] font-semibold text-amber-900 bg-amber-50 rounded-md px-2 py-1">
+                Not accepted · {map.slCheckNote || "See comment"}
+              </p>
+            )}
+            {map.slCheckStatus === "ACCEPTED" && (
+              <p className="text-[10px] font-semibold text-emerald-900 bg-emerald-50 rounded-md px-2 py-1">
+                SL accepted — ready for status
+              </p>
+            )}
+            <div className="flex flex-wrap gap-1.5">
+              {canAskSlCheck(map) && (
+                <button
+                  type="button"
+                  disabled={slBusyId === map.id}
+                  onClick={() => void handleRequestSlCheck(map)}
+                  className="text-[10px] font-semibold px-2 py-1 rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  Ask SL check
+                </button>
+              )}
+              {assignedToMe &&
+                (map.slCheckStatus === "OPEN" || map.slCheckStatus === "CLAIMED") && (
+                  <button
+                    type="button"
+                    disabled={slBusyId === map.id}
+                    onClick={() => void handleCancelSlCheck(map)}
+                    className="text-[10px] font-semibold px-2 py-1 rounded-md border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    Cancel request
+                  </button>
+                )}
+              {isShiftLeader && map.slCheckStatus === "OPEN" && (
+                <button
+                  type="button"
+                  disabled={slBusyId === map.id}
+                  onClick={() => void handleClaimSlCheck(map)}
+                  className="text-[10px] font-semibold px-2 py-1 rounded-md bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50"
+                >
+                  Take check
+                </button>
+              )}
+              {isShiftLeader &&
+                map.slCheckStatus === "CLAIMED" &&
+                map.slCheckClaimedBy?.id === currentUserId && (
+                  <>
+                    <button
+                      type="button"
+                      disabled={slBusyId === map.id}
+                      onClick={() => void handleSlAccept(map)}
+                      className="text-[10px] font-semibold px-2 py-1 rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+                    >
+                      Yes
+                    </button>
+                    <button
+                      type="button"
+                      disabled={slBusyId === map.id}
+                      onClick={() =>
+                        setSlNoteDialog({
+                          mapId: map.id,
+                          note: "",
+                        })
+                      }
+                      className="text-[10px] font-semibold px-2 py-1 rounded-md bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50"
+                    >
+                      No
+                    </button>
+                  </>
+                )}
+            </div>
+          </div>
+        )}
+        {!map.slCheckStatus && canAskSlCheck(map) && (
+          <div className="mt-2" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              disabled={slBusyId === map.id}
+              onClick={() => void handleRequestSlCheck(map)}
+              className="text-[10px] font-semibold px-2 py-1 rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
+            >
+              Ask SL check
+            </button>
+          </div>
+        )}
         {lockHint && (
           <p className="text-[10px] text-amber-800 mt-1.5 leading-snug">{lockHint}</p>
         )}
@@ -711,6 +907,31 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
           </div>
         ))}
       </div>
+
+      {isShiftLeader && openSlChecks.length > 0 && (
+        <div className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 space-y-2">
+          <p className="text-sm font-semibold text-violet-950">
+            {openSlChecks.length} map{openSlChecks.length === 1 ? "" : "s"} waiting for SL check
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {openSlChecks.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                disabled={slBusyId === m.id}
+                onClick={() => void handleClaimSlCheck(m)}
+                className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50"
+              >
+                Take {m.mapNumber}
+                {m.assignedSupervisor ? ` · ${shortName(m.assignedSupervisor.name)}` : ""}
+              </button>
+            ))}
+          </div>
+          <p className="text-[11px] text-violet-800">
+            First shift leader to tap takes it. Accept or request corrections after you check.
+          </p>
+        </div>
+      )}
 
       {/* Search / filter bar — same idea as Updates */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border border-border bg-white px-3 py-2.5 shadow-sm">
@@ -1019,6 +1240,45 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
                 }`}
               >
                 {dialogSaveLabel}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {slNoteDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white shadow-xl border border-border p-5 space-y-4">
+            <div>
+              <h3 className="text-base font-semibold text-slate-900">Not accepted — add comment</h3>
+              <p className="text-xs text-muted mt-1">
+                Brief note for the supervisor (they check the work on another site).
+              </p>
+            </div>
+            <textarea
+              value={slNoteDialog.note}
+              onChange={(e) =>
+                setSlNoteDialog((d) => (d ? { ...d, note: e.target.value } : d))
+              }
+              rows={3}
+              placeholder="Why not accepted…"
+              className="w-full border border-border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400/40"
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setSlNoteDialog(null)}
+                className="px-3 py-2 text-sm text-muted hover:text-slate-900 rounded-lg hover:bg-slate-100"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={slBusyId === slNoteDialog.mapId || !slNoteDialog.note.trim()}
+                onClick={() => void submitSlReject()}
+                className="px-4 py-2 text-sm font-medium rounded-xl text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-50"
+              >
+                Send
               </button>
             </div>
           </div>

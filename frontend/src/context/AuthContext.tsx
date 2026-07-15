@@ -25,7 +25,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     api
       .getMe()
       .then(({ user }) => setUser(user))
-      .catch(() => setAuthToken(null))
+      .catch((err: Error & { status?: number }) => {
+        // Only clear session on auth failure — keep token if API was briefly down
+        if (err.status === 401 || err.status === 403) {
+          setAuthToken(null);
+          setUser(null);
+        }
+      })
       .finally(() => setLoading(false));
   }, []);
 

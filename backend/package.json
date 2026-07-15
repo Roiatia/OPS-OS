@@ -12,6 +12,7 @@
     "db:migrate:dev": "prisma migrate dev",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed/seed.ts",
+    "db:seed-shift-plan": "tsx prisma/seed/seed-shift-plan-demo.ts",
     "db:reseed-maps": "tsx prisma/seed/reseed-demo-maps.ts",
     "db:reseed-updates": "tsx prisma/seed/reseed-demo-updates.ts",
     "db:reseed-reports": "tsx prisma/seed/seed-demo-reports.ts",

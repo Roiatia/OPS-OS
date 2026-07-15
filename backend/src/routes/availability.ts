@@ -27,9 +27,10 @@ router.put(
   requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER),
   async (req, res) => {
     try {
-      const { weekStart, fridayContract, hagimOk, days, shifts } = req.body as {
+      const { weekStart, fridayContract, sundayOk, hagimOk, days, shifts } = req.body as {
         weekStart?: string;
         fridayContract?: boolean;
+        sundayOk?: boolean;
         hagimOk?: boolean;
         note?: string | null;
         days?: AvailabilityDayInput[];
@@ -39,6 +40,7 @@ router.put(
       const data = await availability.saveMyAvailability((req as AuthedRequest).user, {
         weekStart,
         fridayContract: Boolean(fridayContract),
+        sundayOk: sundayOk === undefined ? undefined : Boolean(sundayOk),
         hagimOk: Boolean(hagimOk),
         days: payloadDays,
       });
@@ -122,11 +124,48 @@ router.post(
   requireRoles(RoleName.OPS_ADMIN, RoleName.OPS_MANAGER_2),
   async (req, res) => {
     try {
-      const weekStart = (req.body as { weekStart?: string }).weekStart;
+      const body = req.body as {
+        weekStart?: string;
+        dayOfWeek?: number;
+        lockedAssignments?: {
+          dayOfWeek: number;
+          userId: string;
+          userName: string;
+          isShiftLeader: boolean;
+        }[];
+        variant?: number;
+        avoidUserIds?: string[];
+      };
       const data = await shiftPlan.autoGenerateShiftPlan(
         (req as AuthedRequest).user,
-        weekStart
+        body.weekStart,
+        {
+          dayOfWeek: body.dayOfWeek,
+          lockedAssignments: body.lockedAssignments,
+          variant: body.variant,
+          avoidUserIds: body.avoidUserIds,
+        }
       );
+      res.json(data);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+/** Published schedule — supervisors, shift leaders, and OPS */
+router.get(
+  "/schedule",
+  requireRoles(
+    RoleName.OPS_ADMIN,
+    RoleName.OPS_MANAGER_2,
+    RoleName.SUPERVISOR,
+    RoleName.SUPERVISOR_SHIFT_LEADER
+  ),
+  async (req, res) => {
+    try {
+      const weekStart = (req.query.weekStart as string) || undefined;
+      const data = await shiftPlan.getPublishedSchedule((req as AuthedRequest).user, weekStart);
       res.json(data);
     } catch (e) {
       res.status(400).json({ error: (e as Error).message });

@@ -22,6 +22,8 @@ type Props = {
   endMinutes: number;
   onChange: (startMinutes: number, endMinutes: number) => void;
   disabled?: boolean;
+  /** Cap selectable end hour (e.g. 16 for unsigned Friday / Shabbat enter). */
+  maxEndHour?: number;
 };
 
 /**
@@ -29,10 +31,17 @@ type Props = {
  * endMinutes may be 1440 = midnight end of day.
  * Overnight work = select late hours on day A + early hours on day B.
  */
-export function DayHourDragBar({ startMinutes, endMinutes, onChange, disabled }: Props) {
+export function DayHourDragBar({
+  startMinutes,
+  endMinutes,
+  onChange,
+  disabled,
+  maxEndHour = 24,
+}: Props) {
   const trackRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
   const dragOrigin = useRef<number | null>(null);
+  const endCap = clamp(maxEndHour, 1, 24);
 
   const startH = startMinutes / 60;
   const endH = endMinutes / 60;
@@ -43,7 +52,7 @@ export function DayHourDragBar({ startMinutes, endMinutes, onChange, disabled }:
     if (!el) return 0;
     const rect = el.getBoundingClientRect();
     const ratio = clamp((clientX - rect.left) / rect.width, 0, 1);
-    return snapHour(ratio * 24);
+    return clamp(snapHour(ratio * 24), 0, endCap);
   }
 
   function applyDrag(hour: number) {
