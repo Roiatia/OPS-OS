@@ -11,6 +11,8 @@ import {
   countInspectorActiveMaps,
   countQaActiveMaps,
   summarizeShufflePlan,
+  withOptimisticInspector,
+  withUnassignedInspector,
 } from "../../lib/assignment";
 import {
   DUE_DATE_CLASS,
@@ -75,6 +77,8 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
   const [shuffleOpen, setShuffleOpen] = useState(false);
   const [shuffleStep, setShuffleStep] = useState<"pick" | "preview">("pick");
   const [shuffleInspectorIds, setShuffleInspectorIds] = useState<Set<string>>(new Set());
+  const [shufflingCount, setShufflingCount] = useState(0);
+  const [unassigningCount, setUnassigningCount] = useState(0);
 
   const inspectors = team.filter((m) => m.roles.some((r) => r.role === "MAPPING_INSPECTOR"));
   const qaMembers = team.filter((m) => m.roles.some((r) => r.role === "GRAPHIC_QA"));
@@ -136,6 +140,14 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
     () =>
       filteredMaps.filter(
         (m) => selected.has(m.id) && needsQaAssignment(m)
+      ),
+    [filteredMaps, selected]
+  );
+
+  const selectedForUnassign = useMemo(
+    () =>
+      filteredMaps.filter(
+        (m) => selected.has(m.id) && m.phase === "PREP" && !!m.assignedInspector
       ),
     [filteredMaps, selected]
   );
@@ -287,20 +299,67 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
 
   async function handleShuffleAssign() {
     if (assignableSelected.length < 2 || shuffleInspectors.length === 0) return;
+
+    const plan = buildBalancedInspectorAssignments(assignableSelected, shuffleInspectors, maps);
+    const inspectorById = new Map(shuffleInspectors.map((m) => [m.id, m]));
+    const originals = assignableSelected;
+    const prevSelected = selected;
+
+    // Optimistically reflect the pending assignment so the UI feels instant
+    // even for large shuffles; the server's broadcastMapsInvalidate() triggers
+    // a realtime refetch that reconciles the true distribution.
+    for (const { mapId, inspectorId } of plan) {
+      const original = originals.find((m) => m.id === mapId);
+      const inspector = inspectorById.get(inspectorId);
+      if (original && inspector) patch(withOptimisticInspector(original, inspector));
+    }
+
     setError("");
+    setShuffleOpen(false);
+    setSelected(new Set());
+    setShufflingCount(originals.length);
     setLoading(true);
     try {
       await api.shuffleAssignMaps(
-        assignableSelected.map((m) => m.id),
+        originals.map((m) => m.id),
         shuffleInspectors.map((m) => m.id)
       );
-      setShuffleOpen(false);
-      setSelected(new Set());
       onRefresh();
     } catch (err) {
+      // Roll back the optimistic patches and restore the prior selection.
+      for (const original of originals) patch(original);
+      setSelected(prevSelected);
       setError((err as Error).message);
     } finally {
       setLoading(false);
+      setShufflingCount(0);
+    }
+  }
+
+  async function handleUnassignInspectors() {
+    const originals = selectedForUnassign;
+    if (originals.length === 0) return;
+    const prevSelected = selected;
+
+    // Optimistically send the maps back to the unassigned queue (PREP → INTAKE);
+    // the server's broadcastMapsInvalidate() reconciles via realtime.
+    for (const original of originals) patch(withUnassignedInspector(original));
+
+    setError("");
+    setSelected(new Set());
+    setUnassigningCount(originals.length);
+    setLoading(true);
+    try {
+      await api.unassignInspectors(originals.map((m) => m.id));
+      onRefresh();
+    } catch (err) {
+      // Roll back the optimistic patches and restore the prior selection.
+      for (const original of originals) patch(original);
+      setSelected(prevSelected);
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+      setUnassigningCount(0);
     }
   }
 
@@ -360,8 +419,12 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
   const allAssignableSelected =
     assignableInView.length > 0 && assignableInView.every((m) => selected.has(m.id));
 
+  function canUnassignInspector(map: MapRecord) {
+    return map.phase === "PREP" && !!map.assignedInspector;
+  }
+
   function canSelectMap(map: MapRecord) {
-    return needsInspectorAssignment(map) || needsQaAssignment(map);
+    return needsInspectorAssignment(map) || needsQaAssignment(map) || canUnassignInspector(map);
   }
 
   function canShowInspectorAssign(map: MapRecord) {
@@ -395,6 +458,20 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
 
       {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg p-3">{error}</p>}
 
+      {shufflingCount > 0 && (
+        <p className="text-sm text-brand-700 bg-brand-50 border border-brand-200 rounded-lg p-3 flex items-center gap-2">
+          <span className="inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-brand-200 border-t-brand-600" />
+          Assigning {shufflingCount} map{shufflingCount !== 1 ? "s" : ""}…
+        </p>
+      )}
+
+      {unassigningCount > 0 && (
+        <p className="text-sm text-brand-700 bg-brand-50 border border-brand-200 rounded-lg p-3 flex items-center gap-2">
+          <span className="inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-brand-200 border-t-brand-600" />
+          Unassigning {unassigningCount} map{unassigningCount !== 1 ? "s" : ""}…
+        </p>
+      )}
+
       <div className="flex flex-wrap gap-2">
         {QUEUE_TABS.map((tab) => (
           <button
@@ -417,8 +494,27 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
         ))}
       </div>
 
-      {(selectedForShuffle.length > 0 || selectedNeedingQa.length > 0) && (
+      {(selectedForShuffle.length > 0 ||
+        selectedNeedingQa.length > 0 ||
+        selectedForUnassign.length > 0) && (
         <div className="space-y-2">
+          {selectedForUnassign.length > 0 && (
+            <div className="flex flex-wrap items-center gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+              <span className="text-sm font-medium text-amber-800">
+                {selectedForUnassign.length} assigned map
+                {selectedForUnassign.length !== 1 ? "s" : ""} selected
+              </span>
+              <button
+                type="button"
+                disabled={loading}
+                onClick={handleUnassignInspectors}
+                className="px-4 py-1.5 text-sm font-semibold bg-amber-600 text-white rounded-lg hover:bg-amber-700 disabled:opacity-50"
+              >
+                Unassign
+              </button>
+            </div>
+          )}
+
           {selectedForShuffle.length > 0 && (
             <div className="flex flex-wrap items-center gap-3 bg-brand-50 border border-brand-200 rounded-xl px-4 py-3">
               <span className="text-sm font-medium text-brand-800">

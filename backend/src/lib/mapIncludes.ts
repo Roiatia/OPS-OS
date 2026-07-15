@@ -8,8 +8,10 @@
  *   and up to 50 events. Used by the single-map detail endpoint and mutation
  *   responses that flow to MapDetailPage (which renders attachments/notes).
  * - `mapListIncludes` — a lighter payload for lists and realtime broadcasts:
- *   attachment metadata only (NO base64 `data`) and events capped to 20. This
- *   keeps large base64 blobs out of every list query and every broadcast.
+ *   attachment metadata only (NO base64 `data`) and events capped low (events
+ *   aren't rendered from list/board records). This keeps large base64 blobs and
+ *   long event tails out of every list query and every broadcast. `notes` are
+ *   kept because the active-maps tables render note bodies from list data.
  */
 export const mapDetailIncludes = {
   assignedInspector: { select: { id: true, name: true, email: true } },
@@ -44,7 +46,8 @@ export const mapDetailIncludes = {
 /**
  * Lighter shape for list queries + realtime broadcasts. Attachments carry
  * metadata only (the base64 `data` @db.Text field is omitted) and events are
- * capped lower. Assignees, tasks, phaseHistory and notes are small enough to keep.
+ * capped low (not rendered in lists). Assignees, tasks, phaseHistory and notes
+ * are kept — the active-maps tables read note bodies straight from list data.
  */
 export const mapListIncludes = {
   assignedInspector: { select: { id: true, name: true, email: true } },
@@ -60,7 +63,9 @@ export const mapListIncludes = {
   events: {
     include: { user: { select: { id: true, name: true } } },
     orderBy: { createdAt: "desc" as const },
-    take: 20,
+    // Lists/boards + realtime broadcasts don't render per-map events (only the
+    // detail page does, via mapDetailIncludes). Keep a small recent slice.
+    take: 5,
   },
   phaseHistory: {
     include: { user: { select: { id: true, name: true } } },

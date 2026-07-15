@@ -16,6 +16,10 @@ import {
   countSupervisorActiveMaps,
   summarizeShufflePlan,
   summarizeSupervisorShufflePlan,
+  withOptimisticInspector,
+  withOptimisticSupervisor,
+  withUnassignedInspector,
+  withUnassignedSupervisor,
 } from "../../lib/assignment";
 import { memberIsSupervisor } from "../../lib/roles";
 import {
@@ -101,6 +105,8 @@ export function OpsMapsBoard({
   const [shuffleStep, setShuffleStep] = useState<"pick" | "preview">("pick");
   const [shuffleSupervisorIds, setShuffleSupervisorIds] = useState<Set<string>>(new Set());
   const [shuffleInspectorIds, setShuffleInspectorIds] = useState<Set<string>>(new Set());
+  const [shufflingCount, setShufflingCount] = useState(0);
+  const [unassigningCount, setUnassigningCount] = useState(0);
   const [internalReadyPanelOpen, setInternalReadyPanelOpen] = useState(false);
 
   const readyMaps = useMemo(() => getReadyToAcceptMaps(maps), [maps]);
@@ -206,6 +212,16 @@ export function OpsMapsBoard({
     [selectedMaps]
   );
 
+  const selectedForSupervisorUnassign = useMemo(
+    () => selectedMaps.filter((m) => m.phase === "FIELD" && !!m.assignedSupervisor),
+    [selectedMaps]
+  );
+
+  const selectedForInspectorUnassign = useMemo(
+    () => selectedMaps.filter((m) => m.phase === "PREP" && !!m.assignedInspector),
+    [selectedMaps]
+  );
+
   const shuffleSupervisors = supervisors.filter((m) => shuffleSupervisorIds.has(m.id));
   const shuffleInspectors = inspectors.filter((m) => shuffleInspectorIds.has(m.id));
 
@@ -307,22 +323,44 @@ export function OpsMapsBoard({
 
   async function confirmInspectorShuffle() {
     if (selectedForInspectorShuffle.length < 2 || shuffleInspectors.length === 0) return;
-    setLoading(true);
+
+    const plan = buildBalancedInspectorAssignments(
+      selectedForInspectorShuffle,
+      shuffleInspectors,
+      maps
+    );
+    const inspectorById = new Map(shuffleInspectors.map((m) => [m.id, m]));
+    const originals = selectedForInspectorShuffle;
+    const prevSelected = selected;
+
+    // Optimistically reflect the pending assignment so large shuffles feel
+    // instant; the server's broadcastMapsInvalidate() reconciles via realtime.
+    for (const { mapId, inspectorId } of plan) {
+      const original = originals.find((m) => m.id === mapId);
+      const inspector = inspectorById.get(inspectorId);
+      if (original && inspector) patch(withOptimisticInspector(original, inspector));
+    }
+
     setError("");
+    setInspectorShuffleOpen(false);
+    setShuffleStep("pick");
+    setShuffleInspectorIds(new Set());
+    setSelected(new Set());
+    setShufflingCount(originals.length);
+    setLoading(true);
     try {
       await api.shuffleAssignMaps(
-        selectedForInspectorShuffle.map((m) => m.id),
+        originals.map((m) => m.id),
         shuffleInspectors.map((m) => m.id)
       );
-      setInspectorShuffleOpen(false);
-      setShuffleStep("pick");
-      setShuffleInspectorIds(new Set());
-      setSelected(new Set());
       onRefresh();
     } catch (err) {
+      for (const original of originals) patch(original);
+      setSelected(prevSelected);
       setError((err as Error).message);
     } finally {
       setLoading(false);
+      setShufflingCount(0);
     }
   }
 
@@ -370,22 +408,96 @@ export function OpsMapsBoard({
 
   async function confirmShuffle() {
     if (selectedForShuffle.length === 0 || shuffleSupervisors.length === 0) return;
-    setLoading(true);
+
+    const plan = buildBalancedSupervisorAssignments(
+      selectedForShuffle,
+      shuffleSupervisors,
+      maps
+    );
+    const supervisorById = new Map(shuffleSupervisors.map((m) => [m.id, m]));
+    const originals = selectedForShuffle;
+    const prevSelected = selected;
+
+    // Optimistically reflect the pending assignment so large shuffles feel
+    // instant; the server's broadcastMapsInvalidate() reconciles via realtime.
+    for (const { mapId, supervisorId } of plan) {
+      const original = originals.find((m) => m.id === mapId);
+      const supervisor = supervisorById.get(supervisorId);
+      if (original && supervisor) patch(withOptimisticSupervisor(original, supervisor));
+    }
+
     setError("");
+    setShuffleOpen(false);
+    setShuffleStep("pick");
+    setShuffleSupervisorIds(new Set());
+    setSelected(new Set());
+    setShufflingCount(originals.length);
+    setLoading(true);
     try {
       await api.shuffleAssignSupervisors(
-        selectedForShuffle.map((m) => m.id),
+        originals.map((m) => m.id),
         shuffleSupervisors.map((m) => m.id)
       );
-      setShuffleOpen(false);
-      setShuffleStep("pick");
-      setShuffleSupervisorIds(new Set());
-      setSelected(new Set());
       onRefresh();
     } catch (err) {
+      for (const original of originals) patch(original);
+      setSelected(prevSelected);
       setError((err as Error).message);
     } finally {
       setLoading(false);
+      setShufflingCount(0);
+    }
+  }
+
+  async function handleUnassignInspectors() {
+    const originals = selectedForInspectorUnassign;
+    if (originals.length === 0) return;
+    const prevSelected = selected;
+
+    // Optimistically send the maps back to the unassigned queue (PREP → INTAKE);
+    // the server's broadcastMapsInvalidate() reconciles via realtime.
+    for (const original of originals) patch(withUnassignedInspector(original));
+
+    setError("");
+    setSelected(new Set());
+    setUnassigningCount(originals.length);
+    setLoading(true);
+    try {
+      await api.unassignInspectors(originals.map((m) => m.id));
+      onRefresh();
+    } catch (err) {
+      for (const original of originals) patch(original);
+      setSelected(prevSelected);
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+      setUnassigningCount(0);
+    }
+  }
+
+  async function handleUnassignSupervisors() {
+    const originals = selectedForSupervisorUnassign;
+    if (originals.length === 0) return;
+    const prevSelected = selected;
+
+    // Optimistically detach the supervisor (map stays in FIELD); the server's
+    // broadcastMapsInvalidate() reconciles via realtime.
+    for (const original of originals) patch(withUnassignedSupervisor(original));
+
+    setError("");
+    setSelected(new Set());
+    setUnassigningCount(originals.length);
+    setLoading(true);
+    try {
+      await api.unassignSupervisors(originals.map((m) => m.id));
+      onRefresh();
+    } catch (err) {
+      for (const original of originals) patch(original);
+      setSelected(prevSelected);
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+      setUnassigningCount(0);
     }
   }
 
@@ -394,6 +506,20 @@ export function OpsMapsBoard({
       {error && (
         <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
           {error}
+        </p>
+      )}
+
+      {shufflingCount > 0 && (
+        <p className="text-sm text-brand-700 bg-brand-50 border border-brand-200 rounded-lg px-3 py-2 flex items-center gap-2">
+          <span className="inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-brand-200 border-t-brand-600" />
+          Assigning {shufflingCount} map{shufflingCount !== 1 ? "s" : ""}…
+        </p>
+      )}
+
+      {unassigningCount > 0 && (
+        <p className="text-sm text-brand-700 bg-brand-50 border border-brand-200 rounded-lg px-3 py-2 flex items-center gap-2">
+          <span className="inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-brand-200 border-t-brand-600" />
+          Unassigning {unassigningCount} map{unassigningCount !== 1 ? "s" : ""}…
         </p>
       )}
 
@@ -451,6 +577,26 @@ export function OpsMapsBoard({
             className="px-3 py-1.5 text-sm font-medium rounded-lg bg-indigo-600 text-white hover:bg-indigo-700"
           >
             Shuffle ({selectedForInspectorShuffle.length})
+          </button>
+        )}
+        {selectedForInspectorUnassign.length > 0 && (
+          <button
+            type="button"
+            disabled={loading}
+            onClick={handleUnassignInspectors}
+            className="px-3 py-1.5 text-sm font-medium rounded-lg bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50"
+          >
+            Unassign inspector ({selectedForInspectorUnassign.length})
+          </button>
+        )}
+        {selectedForSupervisorUnassign.length > 0 && (
+          <button
+            type="button"
+            disabled={loading}
+            onClick={handleUnassignSupervisors}
+            className="px-3 py-1.5 text-sm font-medium rounded-lg bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50"
+          >
+            Unassign supervisor ({selectedForSupervisorUnassign.length})
           </button>
         )}
         {hasActiveFilters && (

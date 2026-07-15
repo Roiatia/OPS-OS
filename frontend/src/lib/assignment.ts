@@ -56,6 +56,39 @@ export function buildBalancedInspectorAssignments(
   return assignments;
 }
 
+/**
+ * Optimistic local copy of a map after an inspector is assigned. Mirrors the
+ * server transition (INTAKE → PREP with the inspector attached) so the table
+ * can reflect a shuffle instantly, before the realtime reconcile lands.
+ */
+export function withOptimisticInspector(
+  map: MapRecord,
+  inspector: Pick<TeamMember, "id" | "name" | "email">
+): MapRecord {
+  return {
+    ...map,
+    assignedInspector: { id: inspector.id, name: inspector.name, email: inspector.email },
+    phase: map.phase === "INTAKE" ? "PREP" : map.phase,
+    inspectorStatus: null,
+    qaStatus: null,
+  };
+}
+
+/**
+ * Optimistic local copy of a map after its inspector is removed. Mirrors the
+ * server transition (PREP → INTAKE with the inspector detached) so the map
+ * returns to the unassigned queue instantly, before the realtime reconcile.
+ */
+export function withUnassignedInspector(map: MapRecord): MapRecord {
+  return {
+    ...map,
+    assignedInspector: null,
+    phase: "INTAKE",
+    inspectorStatus: null,
+    qaStatus: null,
+  };
+}
+
 export function summarizeShufflePlan(
   plan: MapAssignment[],
   inspectors: Pick<TeamMember, "id" | "name">[],
@@ -201,6 +234,38 @@ export function buildBalancedSupervisorAssignments(
   }
 
   return assignments;
+}
+
+/**
+ * Optimistic local copy of a field map after a supervisor is assigned. The
+ * phase is unchanged (supervisors are assigned while the map is in FIELD); only
+ * the supervisor relation is attached so the table updates instantly.
+ */
+export function withOptimisticSupervisor(
+  map: MapRecord,
+  supervisor: Pick<TeamMember, "id" | "name" | "email">
+): MapRecord {
+  return {
+    ...map,
+    assignedSupervisor: {
+      id: supervisor.id,
+      name: supervisor.name,
+      email: supervisor.email,
+    },
+  };
+}
+
+/**
+ * Optimistic local copy of a field map after its supervisor is removed. The
+ * phase is unchanged (the map stays in FIELD); only the supervisor relation and
+ * status are detached so the table updates instantly.
+ */
+export function withUnassignedSupervisor(map: MapRecord): MapRecord {
+  return {
+    ...map,
+    assignedSupervisor: null,
+    supervisorStatus: null,
+  };
 }
 
 export function summarizeSupervisorShufflePlan(

@@ -135,6 +135,12 @@ export const api = {
       body: JSON.stringify({ mapIds, supervisorIds }),
     }),
 
+  unassignSupervisors: (mapIds: string[]) =>
+    request<{ unassigned: number }>("/maps/unassign-supervisors", {
+      method: "POST",
+      body: JSON.stringify({ mapIds }),
+    }),
+
   releaseToGraphics: (mapId: string) =>
     request<import("./types").MapRecord>(`/maps/${mapId}/release-to-graphics`, {
       method: "POST",
@@ -212,6 +218,12 @@ export const api = {
     }>("/maps/shuffle-assign", {
       method: "POST",
       body: JSON.stringify({ mapIds, inspectorIds }),
+    }),
+
+  unassignInspectors: (mapIds: string[]) =>
+    request<{ unassigned: number }>("/maps/unassign-inspectors", {
+      method: "POST",
+      body: JSON.stringify({ mapIds }),
     }),
 
   assignQa: (
