@@ -10,6 +10,7 @@ import { ConfluencePanel } from "../components/shared/ConfluencePanel";
 import { SupervisorAvailabilityForm } from "../components/availability/SupervisorAvailabilityForm";
 import { AvailabilityReminderModal } from "../components/availability/AvailabilityReminderModal";
 import { getSupervisorFieldStatus } from "../lib/supervisorDisplay";
+import { useMapsRealtime } from "../lib/useMapsRealtime";
 import { patchMapInList } from "../lib/mapSync";
 import { useAuth } from "../context/AuthContext";
 import { hasSupervisorRole } from "../lib/roles";
@@ -66,6 +67,8 @@ export function SupervisorDashboardPage() {
     const interval = setInterval(() => load(true), 20_000);
     return () => clearInterval(interval);
   }, [load]);
+
+  useMapsRealtime({ onInvalidate: () => load(true) });
 
   const handleHubMutate = useCallback(
     (updated?: MapRecord) => {

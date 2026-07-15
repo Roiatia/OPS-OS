@@ -18,6 +18,7 @@ import {
   matchesOpsQueue,
 } from "../lib/opsDisplay";
 import { getOpsWorkloadAlerts } from "../lib/opsWorkload";
+import { useMapsRealtime } from "../lib/useMapsRealtime";
 import { patchMapInList, normalizeMapRecord } from "../lib/mapSync";
 import { useOpsUpdates } from "../lib/useOpsUpdates";
 import { useAuth } from "../context/AuthContext";
@@ -115,6 +116,8 @@ export function OpsManagerDashboardPage() {
     const interval = setInterval(() => load(true), 20_000);
     return () => clearInterval(interval);
   }, [load]);
+
+  useMapsRealtime({ onInvalidate: () => load(true) });
 
   const opsUpdates = useOpsUpdates(() => load(true));
 

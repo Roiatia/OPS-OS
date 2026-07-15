@@ -1,10 +1,12 @@
 import "dotenv/config";
+import { createServer } from "http";
 import express from "express";
 import cors from "cors";
 import authRoutes from "./routes/auth.js";
 import mapsRoutes from "./routes/maps.js";
 import reportsRoutes from "./routes/reports.js";
 import availabilityRoutes from "./routes/availability.js";
+import { attachRealtime } from "./realtime.js";
 import {
   catchUpDailyReportIfNeeded,
   runDailyReportSchedulerTick,
@@ -47,7 +49,11 @@ setInterval(() => {
   });
 }, REPORT_SCHEDULER_MS);
 
-app.listen(port, () => {
+const server = createServer(app);
+attachRealtime(server);
+
+server.listen(port, () => {
   console.log(`OPS-OS API running on http://localhost:${port}`);
+  console.log(`Realtime WebSocket on ws://localhost:${port}/api/ws`);
   console.log("Daily reports scheduled for 08:00 local time (previous day)");
 });

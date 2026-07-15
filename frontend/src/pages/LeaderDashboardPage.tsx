@@ -9,6 +9,7 @@ import { SettingsPanel } from "../components/leader/SettingsPanel";
 import { TeamPanel } from "../components/leader/TeamPanel";
 import { getIdleInspectors } from "../lib/assignment";
 import { needsQaAssignment } from "../lib/mapDisplay";
+import { useMapsRealtime } from "../lib/useMapsRealtime";
 import type { MapRecord, TeamMember } from "../types";
 
 const SECTION_TITLES: Record<LeaderSection, { title: string; subtitle: string }> = {
@@ -72,6 +73,8 @@ export function LeaderDashboardPage() {
   useEffect(() => {
     load();
   }, []);
+
+  useMapsRealtime({ onInvalidate: () => load() });
 
   async function handleAddMap(e: React.FormEvent) {
     e.preventDefault();

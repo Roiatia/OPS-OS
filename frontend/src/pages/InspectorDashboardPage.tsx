@@ -8,6 +8,7 @@ import {
   isInspectorInbox,
   isQaActive,
 } from "../lib/activeMapsWorkflow";
+import { useMapsRealtime } from "../lib/useMapsRealtime";
 import type { MapRecord } from "../types";
 
 export function InspectorDashboardPage() {
@@ -23,6 +24,8 @@ export function InspectorDashboardPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useMapsRealtime({ onInvalidate: load });
 
   const inbox = useMemo(
     () => maps.filter((m) => isInspectorInbox(m, user!.id)),
@@ -90,6 +93,8 @@ export function QaDashboardPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useMapsRealtime({ onInvalidate: load });
 
   const active = useMemo(() => maps.filter(isQaActive), [maps]);
 
