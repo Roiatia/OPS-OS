@@ -56,6 +56,15 @@ export const api = {
 
   getMaps: () => request<import("./types").MapRecord[]>("/maps"),
 
+  /** One round-trip for a dashboard: maps + history + team + supervisor field maps. */
+  getDashboard: () =>
+    request<{
+      maps: import("./types").MapRecord[];
+      history: import("./types").MapRecord[];
+      team: import("./types").TeamMember[];
+      teamFieldMaps: import("./types").MapRecord[];
+    }>("/maps/dashboard"),
+
   getHistoryMaps: () => request<import("./types").MapRecord[]>("/maps/history"),
 
   syncSpreadsheet: (body: { csv?: string; sheetTab?: string } = {}) =>

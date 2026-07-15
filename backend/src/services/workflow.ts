@@ -1,5 +1,7 @@
 import { MapPhase, InspectorStatus, SupervisorStatus, FieldWorkStatus, QaStatus, TaskStatus, RoleName } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
+import { mapIncludes } from "../lib/mapIncludes.js";
+import { broadcastMapsInvalidate } from "../lib/realtimeBus.js";
 import { assertUploadCompleteForMapping } from "../lib/pipeline.js";
 import {
   getActivityLabel,
@@ -103,36 +105,6 @@ async function saveAttachment(
     },
   });
 }
-
-const mapIncludes = {
-  assignedInspector: { select: { id: true, name: true, email: true } },
-  assignedQa: { select: { id: true, name: true, email: true } },
-  assignedSupervisor: { select: { id: true, name: true, email: true } },
-  tasks: {
-    include: {
-      assignedTo: { select: { id: true, name: true } },
-      createdBy: { select: { id: true, name: true } },
-    },
-    orderBy: { createdAt: "asc" as const },
-  },
-  events: {
-    include: { user: { select: { id: true, name: true } } },
-    orderBy: { createdAt: "desc" as const },
-    take: 50,
-  },
-  phaseHistory: {
-    include: { user: { select: { id: true, name: true } } },
-    orderBy: { enteredAt: "asc" as const },
-  },
-  attachments: {
-    include: { uploadedBy: { select: { id: true, name: true } } },
-    orderBy: { createdAt: "desc" as const },
-  },
-  notes: {
-    include: { user: { select: { id: true, name: true } } },
-    orderBy: { createdAt: "asc" as const },
-  },
-};
 
 /** Hub board + PATCH /hub — no events/notes/tasks (much faster over remote DB) */
 const hubMapIncludes = {
@@ -368,6 +340,9 @@ export async function shuffleAssignSupervisors(
     }
   });
 
+  // Bulk change: tell clients to refetch (overrides any mid-transaction upserts).
+  broadcastMapsInvalidate();
+
   const distribution = supervisors.map((supervisor) => ({
     supervisorId: supervisor.id,
     supervisorName: supervisor.name,
@@ -597,6 +572,9 @@ export async function shuffleAssignInspectors(
       });
     }
   });
+
+  // Bulk change: tell clients to refetch (overrides any mid-transaction upserts).
+  broadcastMapsInvalidate();
 
   const distribution = inspectors.map((inspector) => ({
     inspectorId: inspector.id,

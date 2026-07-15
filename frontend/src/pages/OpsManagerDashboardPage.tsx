@@ -19,6 +19,7 @@ import {
 } from "../lib/opsDisplay";
 import { getOpsWorkloadAlerts } from "../lib/opsWorkload";
 import { useMapsRealtime } from "../lib/useMapsRealtime";
+import { applyMapUpsert, removeMapsById, useDebouncedCallback } from "../lib/mapsLive";
 import { patchMapInList, normalizeMapRecord } from "../lib/mapSync";
 import { useOpsUpdates } from "../lib/useOpsUpdates";
 import { useAuth } from "../context/AuthContext";
@@ -88,11 +89,12 @@ export function OpsManagerDashboardPage() {
 
   const load = useCallback((silent = false) => {
     if (!silent) setLoading(true);
-    return Promise.all([api.getMaps(), api.getHistoryMaps(), api.getTeam()])
-      .then(([m, h, t]) => {
-        setMaps(m);
-        setHistoryMaps(h);
-        setTeam(t);
+    return api
+      .getDashboard()
+      .then((d) => {
+        setMaps(d.maps);
+        setHistoryMaps(d.history);
+        setTeam(d.team);
       })
       .catch(() => {
         if (!silent) {
@@ -111,13 +113,27 @@ export function OpsManagerDashboardPage() {
     load();
   }, [load]);
 
-  /** Keep Maps table in sync with Hub — own actions + supervisors on shift */
+  /** Slow backstop only — realtime carries changes; polling covers missed events. */
   useEffect(() => {
-    const interval = setInterval(() => load(true), 20_000);
+    const interval = setInterval(() => load(true), 120_000);
     return () => clearInterval(interval);
   }, [load]);
 
-  useMapsRealtime({ onInvalidate: () => load(true) });
+  const reloadMaps = useDebouncedCallback(() => load(true));
+
+  useMapsRealtime({
+    onUpsert: (incoming) =>
+      setMaps((prev) => {
+        const { next, needReload } = applyMapUpsert(prev, incoming);
+        if (needReload) reloadMaps();
+        return next;
+      }),
+    onDeleted: (ids) => {
+      setMaps((prev) => removeMapsById(prev, ids));
+      setHistoryMaps((prev) => removeMapsById(prev, ids));
+    },
+    onInvalidate: reloadMaps,
+  });
 
   const opsUpdates = useOpsUpdates(() => load(true));
 

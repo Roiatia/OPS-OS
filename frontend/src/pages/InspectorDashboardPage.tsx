@@ -9,6 +9,7 @@ import {
   isQaActive,
 } from "../lib/activeMapsWorkflow";
 import { useMapsRealtime } from "../lib/useMapsRealtime";
+import { applyMapUpsertReplaceOnly, removeMapsById, useDebouncedCallback } from "../lib/mapsLive";
 import type { MapRecord } from "../types";
 
 export function InspectorDashboardPage() {
@@ -25,7 +26,18 @@ export function InspectorDashboardPage() {
     load();
   }, [load]);
 
-  useMapsRealtime({ onInvalidate: load });
+  useEffect(() => {
+    const interval = setInterval(load, 60_000);
+    return () => clearInterval(interval);
+  }, [load]);
+
+  const reload = useDebouncedCallback(load);
+
+  useMapsRealtime({
+    onUpsert: (incoming) => setMaps((prev) => applyMapUpsertReplaceOnly(prev, incoming)),
+    onDeleted: (ids) => setMaps((prev) => removeMapsById(prev, ids)),
+    onInvalidate: reload,
+  });
 
   const inbox = useMemo(
     () => maps.filter((m) => isInspectorInbox(m, user!.id)),
@@ -94,7 +106,18 @@ export function QaDashboardPage() {
     load();
   }, [load]);
 
-  useMapsRealtime({ onInvalidate: load });
+  useEffect(() => {
+    const interval = setInterval(load, 60_000);
+    return () => clearInterval(interval);
+  }, [load]);
+
+  const reload = useDebouncedCallback(load);
+
+  useMapsRealtime({
+    onUpsert: (incoming) => setMaps((prev) => applyMapUpsertReplaceOnly(prev, incoming)),
+    onDeleted: (ids) => setMaps((prev) => removeMapsById(prev, ids)),
+    onInvalidate: reload,
+  });
 
   const active = useMemo(() => maps.filter(isQaActive), [maps]);
 

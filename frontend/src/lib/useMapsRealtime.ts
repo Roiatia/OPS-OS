@@ -1,18 +1,24 @@
 import { useEffect, useRef } from "react";
+import type { MapRecord } from "../types";
 
 type Handlers = {
+  /** Fully-shaped changed maps — patch them into local state (no refetch). */
+  onUpsert?: (maps: MapRecord[]) => void;
+  /** Ids of deleted maps — remove them from local state. */
+  onDeleted?: (mapIds: string[]) => void;
+  /** Coarse signal (bulk/ambiguous change) — refetch. */
   onInvalidate?: () => void;
 };
 
 type ServerMessage =
-  | { type: "maps:upsert"; maps: unknown[] }
+  | { type: "maps:upsert"; maps: MapRecord[] }
   | { type: "maps:deleted"; mapIds: string[] }
   | { type: "maps:invalidate" };
 
 /**
- * Live map updates over WebSocket. Augments interval polling: the server
- * sends an "invalidate" signal after any Map write so the page refreshes
- * immediately. Reconnects with backoff if the socket drops.
+ * Live map updates over WebSocket. Server pushes the exact changed rows
+ * (upsert/deleted) so pages patch state without refetching; "invalidate" is a
+ * fallback for bulk writes. Reconnects with backoff if the socket drops.
  */
 export function useMapsRealtime(handlers: Handlers) {
   const handlersRef = useRef(handlers);
@@ -40,12 +46,15 @@ export function useMapsRealtime(handlers: Handlers) {
       ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(String(event.data)) as ServerMessage;
-          if (
-            msg.type === "maps:invalidate" ||
-            msg.type === "maps:upsert" ||
-            msg.type === "maps:deleted"
-          ) {
-            handlersRef.current.onInvalidate?.();
+          const h = handlersRef.current;
+          if (msg.type === "maps:upsert") {
+            if (h.onUpsert) h.onUpsert(msg.maps);
+            else h.onInvalidate?.();
+          } else if (msg.type === "maps:deleted") {
+            if (h.onDeleted) h.onDeleted(msg.mapIds);
+            else h.onInvalidate?.();
+          } else if (msg.type === "maps:invalidate") {
+            h.onInvalidate?.();
           }
         } catch {
           /* ignore malformed payloads */

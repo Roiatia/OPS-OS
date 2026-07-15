@@ -10,6 +10,7 @@ import { TeamPanel } from "../components/leader/TeamPanel";
 import { getIdleInspectors } from "../lib/assignment";
 import { needsQaAssignment } from "../lib/mapDisplay";
 import { useMapsRealtime } from "../lib/useMapsRealtime";
+import { applyMapUpsert, removeMapsById, useDebouncedCallback } from "../lib/mapsLive";
 import type { MapRecord, TeamMember } from "../types";
 
 const SECTION_TITLES: Record<LeaderSection, { title: string; subtitle: string }> = {
@@ -55,11 +56,12 @@ export function LeaderDashboardPage() {
 
   function load() {
     setLoading(true);
-    Promise.all([api.getMaps(), api.getHistoryMaps(), api.getTeam()])
-      .then(([m, h, t]) => {
-        setMaps(m);
-        setHistoryMaps(h);
-        setTeam(t);
+    api
+      .getDashboard()
+      .then((d) => {
+        setMaps(d.maps);
+        setHistoryMaps(d.history);
+        setTeam(d.team);
       })
       .catch(() => {
         Promise.all([api.getMaps(), api.getTeam()]).then(([m, t]) => {
@@ -74,7 +76,21 @@ export function LeaderDashboardPage() {
     load();
   }, []);
 
-  useMapsRealtime({ onInvalidate: () => load() });
+  const reload = useDebouncedCallback(() => load());
+
+  useMapsRealtime({
+    onUpsert: (incoming) =>
+      setMaps((prev) => {
+        const { next, needReload } = applyMapUpsert(prev, incoming);
+        if (needReload) reload();
+        return next;
+      }),
+    onDeleted: (ids) => {
+      setMaps((prev) => removeMapsById(prev, ids));
+      setHistoryMaps((prev) => removeMapsById(prev, ids));
+    },
+    onInvalidate: reload,
+  });
 
   async function handleAddMap(e: React.FormEvent) {
     e.preventDefault();

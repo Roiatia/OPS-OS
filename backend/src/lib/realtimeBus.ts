@@ -20,6 +20,7 @@ export function removeClient(ws: WebSocket) {
 }
 
 export function broadcast(msg: RealtimeMessage) {
+  if (clients.size === 0) return;
   const data = JSON.stringify(msg);
   for (const ws of clients) {
     // 1 === WebSocket.OPEN
@@ -27,6 +28,18 @@ export function broadcast(msg: RealtimeMessage) {
   }
 }
 
+/** Push fully-shaped changed maps so clients can patch state without refetching. */
+export function broadcastMapsUpsert(maps: unknown[]) {
+  if (maps.length === 0) return;
+  broadcast({ type: "maps:upsert", maps });
+}
+
+export function broadcastMapsDeleted(mapIds: string[]) {
+  if (mapIds.length === 0) return;
+  broadcast({ type: "maps:deleted", mapIds });
+}
+
+/** Coarse signal: clients should refetch (used for bulk / ambiguous writes). */
 export function broadcastMapsInvalidate() {
   broadcast({ type: "maps:invalidate" });
 }

@@ -190,6 +190,24 @@ router.get("/team", requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMI
   res.json(team);
 });
 
+// Combined dashboard payload — one round-trip instead of 3 (maps + history +
+// team + supervisor field maps). Sub-lists the caller may not access resolve
+// to []. Realtime keeps this fresh after the initial load.
+router.get("/dashboard", async (req, res) => {
+  const user = (req as AuthedRequest).user;
+  try {
+    const [maps, history, team, teamFieldMaps] = await Promise.all([
+      workflow.listMapsForUser(user),
+      workflow.listHistoryMaps(user).catch(() => []),
+      workflow.listTeamMembers().catch(() => []),
+      workflow.listTeamFieldMaps(user).catch(() => []),
+    ]);
+    res.json({ maps, history, team, teamFieldMaps });
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
 router.post(
   "/",
   requireRoles(RoleName.OPS_ADMIN, RoleName.GRAPHIC_TEAM_LEADER),

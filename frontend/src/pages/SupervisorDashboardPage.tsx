@@ -11,6 +11,7 @@ import { SupervisorAvailabilityForm } from "../components/availability/Superviso
 import { AvailabilityReminderModal } from "../components/availability/AvailabilityReminderModal";
 import { getSupervisorFieldStatus } from "../lib/supervisorDisplay";
 import { useMapsRealtime } from "../lib/useMapsRealtime";
+import { applyMapUpsert, removeMapsById, useDebouncedCallback } from "../lib/mapsLive";
 import { patchMapInList } from "../lib/mapSync";
 import { useAuth } from "../context/AuthContext";
 import { hasSupervisorRole } from "../lib/roles";
@@ -47,11 +48,12 @@ export function SupervisorDashboardPage() {
 
   const load = useCallback((silent = false) => {
     if (!silent) setLoading(true);
-    return Promise.all([api.getMaps(), api.getTeamFieldMaps(), api.getTeam()])
-      .then(([m, tf, t]) => {
-        setMaps(m);
-        setTeamFieldMaps(tf);
-        setTeam(t);
+    return api
+      .getDashboard()
+      .then((d) => {
+        setMaps(d.maps);
+        setTeamFieldMaps(d.teamFieldMaps);
+        setTeam(d.team);
       })
       .catch(() => api.getMaps().then(setMaps))
       .finally(() => {
@@ -63,12 +65,33 @@ export function SupervisorDashboardPage() {
     load();
   }, [load]);
 
+  /** Slow backstop — realtime carries changes; poll catches newly in-scope maps. */
   useEffect(() => {
-    const interval = setInterval(() => load(true), 20_000);
+    const interval = setInterval(() => load(true), 60_000);
     return () => clearInterval(interval);
   }, [load]);
 
-  useMapsRealtime({ onInvalidate: () => load(true) });
+  const reloadMaps = useDebouncedCallback(() => load(true));
+
+  useMapsRealtime({
+    onUpsert: (incoming) => {
+      setMaps((prev) => {
+        const { next, needReload } = applyMapUpsert(prev, incoming);
+        if (needReload) reloadMaps();
+        return next;
+      });
+      setTeamFieldMaps((prev) => {
+        const { next, needReload } = applyMapUpsert(prev, incoming);
+        if (needReload) reloadMaps();
+        return next;
+      });
+    },
+    onDeleted: (ids) => {
+      setMaps((prev) => removeMapsById(prev, ids));
+      setTeamFieldMaps((prev) => removeMapsById(prev, ids));
+    },
+    onInvalidate: reloadMaps,
+  });
 
   const handleHubMutate = useCallback(
     (updated?: MapRecord) => {
