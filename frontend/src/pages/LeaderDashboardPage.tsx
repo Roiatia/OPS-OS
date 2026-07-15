@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { AssignmentBoard } from "../components/leader/AssignmentBoard";
 import { CompanyDashboardPanel } from "../components/leader/CompanyDashboardPanel";
+import { CsvImportPanel } from "../components/leader/CsvImportPanel";
 import { HistoryPanel } from "../components/leader/HistoryPanel";
 import { LeaderSidebar, type LeaderSection } from "../components/leader/LeaderSidebar";
 import { SettingsPanel } from "../components/leader/SettingsPanel";
@@ -39,6 +40,7 @@ export function LeaderDashboardPage() {
   const [team, setTeam] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddMap, setShowAddMap] = useState(false);
+  const [showCsvImport, setShowCsvImport] = useState(false);
   const [error, setError] = useState("");
   const [activeSection, setActiveSection] = useState<LeaderSection>("maps");
   const [form, setForm] = useState({
@@ -128,13 +130,22 @@ export function LeaderDashboardPage() {
               <p className="text-muted mt-1">{subtitle}</p>
             </div>
             {activeSection === "maps" && (
-              <button
-                type="button"
-                onClick={() => setShowAddMap(!showAddMap)}
-                className="px-4 py-2.5 bg-brand-600 text-white text-sm font-medium rounded-xl hover:bg-brand-700 shadow-sm shadow-brand-600/20 transition-colors"
-              >
-                + Add map from CS
-              </button>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowCsvImport((v) => !v)}
+                  className="px-4 py-2.5 border border-border text-sm font-medium rounded-xl hover:bg-slate-50 transition-colors"
+                >
+                  Import CSV
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowAddMap(!showAddMap)}
+                  className="px-4 py-2.5 bg-brand-600 text-white text-sm font-medium rounded-xl hover:bg-brand-700 shadow-sm shadow-brand-600/20 transition-colors"
+                >
+                  + Add map from CS
+                </button>
+              </div>
             )}
           </div>
 
@@ -160,6 +171,13 @@ export function LeaderDashboardPage() {
                       </div>
                     ))}
                   </div>
+
+                  {showCsvImport && (
+                    <CsvImportPanel
+                      onImported={load}
+                      onCancel={() => setShowCsvImport(false)}
+                    />
+                  )}
 
                   {showAddMap && (
                     <form

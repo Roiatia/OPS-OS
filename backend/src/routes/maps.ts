@@ -4,6 +4,7 @@ import { authMiddleware, requireRoles, type AuthedRequest } from "../middleware/
 import { userHasOpsManagerRole } from "../lib/roles.js";
 import * as workflow from "../services/workflow.js";
 import { syncMapsFromSpreadsheet } from "../services/spreadsheetSync.js";
+import { importSamsClubCsv, previewSamsClubCsv } from "../services/csvImport.js";
 
 const router = Router();
 router.use(authMiddleware);
@@ -196,6 +197,49 @@ router.post(
     try {
       const map = await workflow.createMapFromJira(req.body, (req as AuthedRequest).user);
       res.status(201).json(map);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+router.post(
+  "/import-csv/preview",
+  requireRoles(RoleName.OPS_ADMIN, RoleName.GRAPHIC_TEAM_LEADER),
+  async (req, res) => {
+    try {
+      const { csv } = req.body as { csv?: string };
+      if (!csv?.trim()) {
+        res.status(400).json({ error: "csv is required" });
+        return;
+      }
+      const preview = await previewSamsClubCsv(csv);
+      res.json(preview);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+router.post(
+  "/import-csv",
+  requireRoles(RoleName.OPS_ADMIN, RoleName.GRAPHIC_TEAM_LEADER),
+  async (req, res) => {
+    try {
+      const { csv, clearExisting, defaultClient } = req.body as {
+        csv?: string;
+        clearExisting?: boolean;
+        defaultClient?: string;
+      };
+      if (!csv?.trim()) {
+        res.status(400).json({ error: "csv is required" });
+        return;
+      }
+      const result = await importSamsClubCsv(csv, (req as AuthedRequest).user, {
+        clearExisting,
+        defaultClient,
+      });
+      res.json(result);
     } catch (e) {
       res.status(400).json({ error: (e as Error).message });
     }
