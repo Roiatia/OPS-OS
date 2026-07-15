@@ -25,7 +25,7 @@ const SECTION_TITLES: Record<SupervisorSection, { title: string; subtitle: strin
     title: "Availability",
     subtitle: "Submit your weekly shifts — due every Sunday",
   },
-  confluence: { title: "Confluence", subtitle: "" },
+  confluence: { title: "Confluence", subtitle: "Coming soon" },
   settings: { title: "Settings", subtitle: "Workspace preferences" },
 };
 

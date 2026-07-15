@@ -58,7 +58,7 @@ const SECTION_TITLES: Record<OpsSection, { title: string; subtitle: string }> = 
   },
   confluence: {
     title: "Confluence",
-    subtitle: "",
+    subtitle: "Coming soon",
   },
   settings: {
     title: "Settings",

@@ -69,6 +69,15 @@ export function SupervisorSidebar({
                 <path strokeLinecap="round" strokeLinejoin="round" d={item.icon} />
               </svg>
               <span className="text-sm font-medium">{item.label}</span>
+              {item.id === "confluence" && (
+                <span
+                  className={`ml-auto text-[10px] font-semibold uppercase tracking-wide ${
+                    active ? "text-white/80" : "text-muted"
+                  }`}
+                >
+                  Coming soon
+                </span>
+              )}
               {item.id === "maps" && activeMapCount > 0 && (
                 <span
                   className={`ml-auto text-[10px] font-bold tabular-nums px-1.5 py-0.5 rounded-full ${
