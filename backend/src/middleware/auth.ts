@@ -4,8 +4,9 @@ import { RoleName } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { isOpsManagerRole, OPS_MANAGER_ROLE_NAMES } from "../domain/roles.js";
 import type { AuthUser } from "../lib/types.js";
+import { env } from "../lib/env.js";
 
-const JWT_SECRET = process.env.JWT_SECRET ?? "dev-secret";
+const JWT_SECRET = env.JWT_SECRET;
 
 export type AuthedRequest = Request & { user: AuthUser };
 

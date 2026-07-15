@@ -85,6 +85,48 @@ router.post(
   }
 );
 
+router.post(
+  "/unassign-inspectors",
+  requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN),
+  async (req, res) => {
+    try {
+      const { mapIds } = req.body as { mapIds?: string[] };
+      if (!mapIds?.length) {
+        res.status(400).json({ error: "mapIds required" });
+        return;
+      }
+      const result = await workflow.unassignInspectors(
+        mapIds,
+        (req as AuthedRequest).user
+      );
+      res.json(result);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+router.post(
+  "/unassign-supervisors",
+  requireRoles(RoleName.OPS_ADMIN),
+  async (req, res) => {
+    try {
+      const { mapIds } = req.body as { mapIds?: string[] };
+      if (!mapIds?.length) {
+        res.status(400).json({ error: "mapIds required" });
+        return;
+      }
+      const result = await workflow.unassignSupervisors(
+        mapIds,
+        (req as AuthedRequest).user
+      );
+      res.json(result);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
 router.get("/hub", requireRoles(RoleName.OPS_ADMIN, RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (req, res) => {
   try {
     const user = (req as AuthedRequest).user;

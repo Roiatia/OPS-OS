@@ -199,6 +199,13 @@ model Map {
   notes           MapNote[]
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
+
+  @@index([phase])
+  @@index([updatedAt])
+  @@index([assignedInspectorId])
+  @@index([assignedQaId])
+  @@index([assignedSupervisorId])
+  @@index([phase, fieldWorkStatus])
 }
 
 model MapPhaseHistory {
@@ -225,6 +232,8 @@ model MapAttachment {
   uploadedById String
   uploadedBy   User     @relation(fields: [uploadedById], references: [id])
   createdAt    DateTime @default(now())
+
+  @@index([mapId])
 }
 
 model Task {
@@ -241,6 +250,9 @@ model Task {
   assignedTo   User?     @relation(fields: [assignedToId], references: [id])
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
+
+  @@index([mapId])
+  @@index([assignedToId])
 }
 
 model MapNote {
@@ -265,6 +277,9 @@ model MapEvent {
   note      String?
   metadata  String?
   createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([mapId, createdAt])
 }
 
 model OpsDailyReport {
