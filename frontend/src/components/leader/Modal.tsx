@@ -1,4 +1,3 @@
-/** Centered modal overlay with title and close control. */
 export function Modal({
   title,
   onClose,

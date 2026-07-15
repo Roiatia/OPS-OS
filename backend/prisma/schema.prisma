@@ -12,7 +12,10 @@ enum RoleName {
   GRAPHIC_TEAM_LEADER
   MAPPING_INSPECTOR
   GRAPHIC_QA
+  SUPERVISOR
+  SUPERVISOR_SHIFT_LEADER
   OPS_ADMIN
+  OPS_MANAGER_2
 }
 
 enum MapPhase {
@@ -26,10 +29,25 @@ enum MapPhase {
   CANCELLED
 }
 
-enum MapStatus {
+enum InspectorStatus {
   ACCEPTED
   PROCESSING
   DONE
+}
+
+enum SupervisorStatus {
+  ACCEPTED
+  PROCESSING
+  DONE
+}
+
+enum FieldWorkStatus {
+  UNCOMPLETED
+  COMPLETED
+  CANCELLED
+}
+
+enum QaStatus {
   FIX
   FIX_DONE
   APPROVED
@@ -44,28 +62,28 @@ enum TaskStatus {
   FIX_DONE
 }
 
-enum WorkflowPhaseTarget {
-  PRE_UPLOAD
-  UPLOADED
-  POLISH
-  POLISHED
-}
-
 model User {
   id        String     @id @default(cuid())
   email     String     @unique
   name      String
   avatarUrl String?
   googleId  String?    @unique
+  shiftStartedAt DateTime?
+  fridayContract   Boolean  @default(false)
+  hagimOk          Boolean  @default(false)
   roles     UserRole[]
   assignedMapsAsInspector Map[]  @relation("InspectorMaps")
   assignedMapsAsQa      Map[]  @relation("QaMaps")
+  assignedMapsAsSupervisor Map[] @relation("SupervisorMaps")
   assignedTasks           Task[]
   createdTasks            Task[] @relation("TaskCreator")
   events                  MapEvent[]
   phaseHistory            MapPhaseHistory[]
   attachments             MapAttachment[]
   notes                   MapNote[]
+  availabilitySubmissions AvailabilitySubmission[]
+  shiftPlansCreated       ShiftPlan[]           @relation("ShiftPlansCreated")
+  shiftPlanAssignments    ShiftPlanAssignment[]
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
 }
@@ -87,41 +105,31 @@ model Map {
   area            String?
   description     String?
   dueDate         DateTime?
+  fieldDate       DateTime?
+  loomDone        Boolean          @default(false)
+  positioning     Boolean          @default(false)
+  mapperName      String?
+  opsManagerComment String?
+  fieldWorkStatus FieldWorkStatus  @default(UNCOMPLETED)
+  fieldProgressPercent Int          @default(0)
+  onHubStatusBoard  Boolean          @default(false)
+  /** null = N/A; true = SL approved complete; false = completed without SL approval */
+  shiftLeaderApproved Boolean?
+  /** Scheduled return when incomplete/cancelled and mapper will continue later */
+  returnVisitAt   DateTime?
   phase           MapPhase         @default(INTAKE)
-  status          MapStatus?
-  inspectorAssignAccepted Boolean @default(false)
-  qaAssignAccepted        Boolean @default(false)
-  releasedToPipeline      Boolean @default(false)
-  workflowPhaseTarget     WorkflowPhaseTarget @default(PRE_UPLOAD)
+  inspectorStatus InspectorStatus?
+  supervisorStatus SupervisorStatus?
+  qaStatus        QaStatus?
   uploadApproved  Boolean          @default(false)
+  uploadCompletedAt DateTime?
+  releasedToGraphics Boolean       @default(false)
   assignedInspectorId String?
   assignedInspector   User?        @relation("InspectorMaps", fields: [assignedInspectorId], references: [id])
   assignedQaId        String?
   assignedQa          User?        @relation("QaMaps", fields: [assignedQaId], references: [id])
-  /** Spreadsheet import fields (Sam's Club / field ops CSV) — stored, not required in UI tables */
-  batch                   String?
-  building                String?
-  address                 String?
-  mapReceived             String?
-  setupStage              String?
-  mapperSource            String?
-  mapperName              String?
-  scheduleDate            String?
-  mappingDate             String?
-  postMappingDate         String?
-  sentToStudio            String?
-  receivedFromStudio      String?
-  graphicsPolishAssignee  String?
-  graphicsPolishStatus    String?
-  polishQaAssignee        String?
-  conversion              String?
-  polishStage             String?
-  activation              String?
-  remappingDate           String?
-  dashboardDate           String?
-  maintDate               String?
-  commentExternal         String?  @db.Text
-  commentInternal         String?  @db.Text
+  assignedSupervisorId String?
+  assignedSupervisor   User?       @relation("SupervisorMaps", fields: [assignedSupervisorId], references: [id])
   tasks           Task[]
   events          MapEvent[]
   phaseHistory    MapPhaseHistory[]
@@ -129,12 +137,6 @@ model Map {
   notes           MapNote[]
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
-
-  @@index([phase])
-  @@index([assignedInspectorId])
-  @@index([assignedQaId])
-  @@index([updatedAt])
-  @@index([releasedToPipeline])
 }
 
 model MapPhaseHistory {
@@ -161,8 +163,6 @@ model MapAttachment {
   uploadedById String
   uploadedBy   User     @relation(fields: [uploadedById], references: [id])
   createdAt    DateTime @default(now())
-
-  @@index([mapId])
 }
 
 model Task {
@@ -179,8 +179,6 @@ model Task {
   assignedTo   User?     @relation(fields: [assignedToId], references: [id])
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
-
-  @@index([mapId])
 }
 
 model MapNote {
@@ -205,6 +203,76 @@ model MapEvent {
   note      String?
   metadata  String?
   createdAt DateTime @default(now())
+}
 
-  @@index([mapId])
+model OpsDailyReport {
+  id          String   @id @default(cuid())
+  reportDate  DateTime @db.Date @unique
+  title       String
+  summary     String   @db.Text
+  payload     Json
+  generatedAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  @@index([reportDate(sort: Desc)])
+}
+
+model AvailabilitySubmission {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  weekStart      DateTime @db.Date
+  fridayContract Boolean  @default(false)
+  hagimOk        Boolean  @default(false)
+  note           String?
+  submittedAt    DateTime?
+  days           AvailabilityDay[]
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([userId, weekStart])
+  @@index([weekStart])
+}
+
+model ShiftPlan {
+  id          String                @id @default(cuid())
+  weekStart   DateTime              @db.Date
+  createdById String?
+  createdBy   User?                 @relation("ShiftPlansCreated", fields: [createdById], references: [id], onDelete: SetNull)
+  assignments ShiftPlanAssignment[]
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+
+  @@unique([weekStart])
+  @@index([weekStart])
+}
+
+model ShiftPlanAssignment {
+  id        String    @id @default(cuid())
+  planId    String
+  plan      ShiftPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  dayOfWeek Int
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, dayOfWeek, userId])
+  @@index([planId])
+  @@index([userId])
+}
+model AvailabilityDay {
+  id           String   @id @default(cuid())
+  submissionId String
+  submission   AvailabilitySubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  dayOfWeek    Int
+  canWork      Boolean
+  allDay       Boolean  @default(false)
+  startMinutes Int?
+  endMinutes   Int?
+  /** Optional second block same day (e.g. 9–15 then 16–20) */
+  startMinutes2 Int?
+  endMinutes2   Int?
+  note         String?
+
+  @@unique([submissionId, dayOfWeek])
+  @@index([submissionId])
 }

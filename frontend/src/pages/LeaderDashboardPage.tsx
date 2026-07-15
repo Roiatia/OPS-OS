@@ -1,21 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { AssignmentBoard } from "../components/leader/AssignmentBoard";
-import { NewMapsPanel } from "../components/leader/NewMapsPanel";
-import { CsvImportPanel } from "../components/leader/CsvImportPanel";
 import { CompanyDashboardPanel } from "../components/leader/CompanyDashboardPanel";
 import { HistoryPanel } from "../components/leader/HistoryPanel";
 import { LeaderSidebar, type LeaderSection } from "../components/leader/LeaderSidebar";
 import { SettingsPanel } from "../components/leader/SettingsPanel";
 import { TeamPanel } from "../components/leader/TeamPanel";
 import { getIdleInspectors } from "../lib/assignment";
-import {
-  removeMapsById,
-  upsertActiveMaps,
-  upsertHistoryMaps,
-} from "../lib/mapState";
-import { useMapsRealtime } from "../lib/useMapsRealtime";
-import { isNewMapForLeader, isPipelineMapForLeader, needsQaAssignment } from "../lib/mapDisplay";
+import { needsQaAssignment } from "../lib/mapDisplay";
 import type { MapRecord, TeamMember } from "../types";
 
 const SECTION_TITLES: Record<LeaderSection, { title: string; subtitle: string }> = {
@@ -41,22 +33,12 @@ const SECTION_TITLES: Record<LeaderSection, { title: string; subtitle: string }>
   },
 };
 
-/**
- * Leader shell: sidebar sections + Maps (new box + pipeline), Team, History, etc.
- * All sections share one maps/team fetch; History uses a separate archived list.
- */
 export function LeaderDashboardPage() {
   const [maps, setMaps] = useState<MapRecord[]>([]);
-  /** Approved/cancelled only — loaded with active maps (not filtered client-side). */
   const [historyMaps, setHistoryMaps] = useState<MapRecord[]>([]);
   const [team, setTeam] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
-  /** Soft refresh (poll / after mutation): keep UI visible, show "Updating…" instead of skeleton. */
-  const [refreshing, setRefreshing] = useState(false);
   const [showAddMap, setShowAddMap] = useState(false);
-  const [showCsvImport, setShowCsvImport] = useState(false);
-  /** Full-screen overlay while CSV import writes to DB (can take a while). */
-  const [csvImportBusy, setCsvImportBusy] = useState(false);
   const [error, setError] = useState("");
   const [activeSection, setActiveSection] = useState<LeaderSection>("maps");
   const [form, setForm] = useState({
@@ -68,62 +50,32 @@ export function LeaderDashboardPage() {
     dueDate: "",
   });
 
-  /**
-   * soft=false → blocking skeleton (first paint).
-   * soft=true → poll/mutation refresh without unmounting tables.
-   * History fetch can 403 for non-leaders; fall back to maps+team only.
-   */
-  const load = useCallback((opts?: { soft?: boolean }) => {
-    if (opts?.soft) setRefreshing(true);
-    else setLoading(true);
-    return Promise.all([api.getMaps(), api.getHistoryMaps(), api.getTeam()])
+  function load() {
+    setLoading(true);
+    Promise.all([api.getMaps(), api.getHistoryMaps(), api.getTeam()])
       .then(([m, h, t]) => {
         setMaps(m);
         setHistoryMaps(h);
         setTeam(t);
       })
-      .catch(() =>
-        // History is leader-only; keep Maps/Team usable if that call fails.
+      .catch(() => {
         Promise.all([api.getMaps(), api.getTeam()]).then(([m, t]) => {
           setMaps(m);
           setTeam(t);
-        })
-      )
-      .finally(() => {
-        setLoading(false);
-        setRefreshing(false);
-      });
-  }, []);
-
-  const applyUpsert = useCallback((incoming: MapRecord[]) => {
-    setMaps((prev) => upsertActiveMaps(prev, incoming));
-    setHistoryMaps((prev) => upsertHistoryMaps(prev, incoming));
-  }, []);
-
-  const applyDeleted = useCallback((mapIds: string[]) => {
-    setMaps((prev) => removeMapsById(prev, mapIds));
-    setHistoryMaps((prev) => removeMapsById(prev, mapIds));
-  }, []);
+        });
+      })
+      .finally(() => setLoading(false));
+  }
 
   useEffect(() => {
     load();
-  }, [load]);
+  }, []);
 
-  // Live updates so assignment changes from other users show up.
-  useMapsRealtime({
-    onUpsert: applyUpsert,
-    onDeleted: applyDeleted,
-    onInvalidate: () => {
-      void load({ soft: true });
-    },
-  });
-
-  /** Manual "Add map from CS" → creates INTAKE map, then soft-refresh. */
   async function handleAddMap(e: React.FormEvent) {
     e.preventDefault();
     setError("");
     try {
-      const map = await api.createMap({
+      await api.createMap({
         mapNumber: form.mapNumber,
         jiraTicketId: form.jiraTicketId || undefined,
         client: form.client,
@@ -133,37 +85,28 @@ export function LeaderDashboardPage() {
       });
       setShowAddMap(false);
       setForm({ mapNumber: "", jiraTicketId: "", client: "", area: "", description: "", dueDate: "" });
-      applyUpsert([map]);
+      load();
     } catch (err) {
       setError((err as Error).message);
     }
   }
 
-  // Split active maps: unreleased intake → NewMapsPanel; rest → AssignmentBoard.
-  const newMaps = useMemo(() => maps.filter(isNewMapForLeader), [maps]);
-  const pipelineMaps = useMemo(() => maps.filter(isPipelineMapForLeader), [maps]);
-
-  /** Header stat cards — counts derived from the same `maps` payload. */
   const stats = {
     total: maps.length,
-    newMaps: newMaps.length,
     qa: maps.filter((m) => ["UPLOAD_REVIEW", "QA_REVIEW"].includes(m.phase)).length,
-    needsQa: maps.filter((m) => needsQaAssignment(m) && isPipelineMapForLeader(m)).length,
-    inProgress: maps.filter((m) => ["PREP", "POLISH"].includes(m.phase)).length,
-    onDashboard: maps.filter((m) => m.phase === "FIELD").length,
+    needsQa: maps.filter((m) => needsQaAssignment(m)).length,
+    inProgress: maps.filter((m) => ["PREP", "POLISH", "FIELD"].includes(m.phase)).length,
+    intake: maps.filter((m) => m.phase === "INTAKE").length,
   };
 
-  // Sidebar badges (idle / needs QA / new maps).
   const idleInspectorCount = useMemo(
     () => getIdleInspectors(team, maps).length,
     [team, maps]
   );
 
-  const newMapsCount = newMaps.length;
-
   const needsQaCount = useMemo(
-    () => pipelineMaps.filter((m) => needsQaAssignment(m)).length,
-    [pipelineMaps]
+    () => maps.filter((m) => needsQaAssignment(m)).length,
+    [maps]
   );
 
   const { title, subtitle } = SECTION_TITLES[activeSection];
@@ -175,86 +118,37 @@ export function LeaderDashboardPage() {
         onSectionChange={setActiveSection}
         idleInspectorCount={idleInspectorCount}
         needsQaCount={needsQaCount}
-        newMapsCount={newMapsCount}
       />
 
-      <div className="flex-1 min-w-0 px-6 py-6 overflow-y-auto relative">
-        {csvImportBusy && (
-          <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-4 bg-slate-900/40 backdrop-blur-[1px]">
-            <div className="bg-white rounded-2xl shadow-xl border border-border px-10 py-8 flex flex-col items-center gap-4 max-w-sm mx-4">
-              <span
-                className="w-12 h-12 border-[3px] border-brand-600 border-t-transparent rounded-full animate-spin"
-                aria-hidden
-              />
-              <div className="text-center space-y-1">
-                <p className="font-semibold text-slate-900">Loading maps…</p>
-                <p className="text-sm text-muted">
-                  Saving to the database and refreshing the Maps page. Please wait.
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
+      <div className="flex-1 min-w-0 px-6 py-6 overflow-y-auto">
         <div className="space-y-6">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <h1 className="text-2xl font-bold">{title}</h1>
               <p className="text-muted mt-1">{subtitle}</p>
             </div>
-            <div className="flex items-center gap-3">
-              {refreshing && (
-                <span className="text-xs font-medium text-brand-700 bg-brand-100 px-2.5 py-1 rounded-full animate-pulse">
-                  Updating…
-                </span>
-              )}
-              {activeSection === "maps" && (
-                <>
-                  <button
-                    type="button"
-                    disabled={csvImportBusy}
-                    onClick={() => {
-                      setShowCsvImport((v) => !v);
-                      setShowAddMap(false);
-                    }}
-                    className="px-4 py-2.5 border border-border bg-white text-sm font-medium rounded-xl hover:bg-slate-50 transition-colors disabled:opacity-50"
-                  >
-                    Import CSV
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowAddMap(!showAddMap);
-                      setShowCsvImport(false);
-                    }}
-                    className="px-4 py-2.5 bg-brand-600 text-white text-sm font-medium rounded-xl hover:bg-brand-700 shadow-sm shadow-brand-600/20 transition-colors"
-                  >
-                    + Add map from CS
-                  </button>
-                </>
-              )}
-            </div>
+            {activeSection === "maps" && (
+              <button
+                type="button"
+                onClick={() => setShowAddMap(!showAddMap)}
+                className="px-4 py-2.5 bg-brand-600 text-white text-sm font-medium rounded-xl hover:bg-brand-700 shadow-sm shadow-brand-600/20 transition-colors"
+              >
+                + Add map from CS
+              </button>
+            )}
           </div>
 
           {loading ? (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-                {Array.from({ length: 6 }).map((_, i) => (
-                  <div key={i} className="h-20 rounded-2xl bg-slate-100 animate-pulse" />
-                ))}
-              </div>
-              <div className="h-40 rounded-xl bg-slate-100 animate-pulse" />
-              <div className="h-64 rounded-xl bg-slate-100 animate-pulse" />
-            </div>
+            <p className="text-muted">Loading...</p>
           ) : (
             <>
               {activeSection === "maps" && (
                 <>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                     {[
                       { label: "All maps", value: stats.total },
-                      { label: "New maps", value: stats.newMaps, highlight: stats.newMaps > 0 },
-                      { label: "Inspector work", value: stats.inProgress },
-                      { label: "On dashboard", value: stats.onDashboard },
+                      { label: "Awaiting assign", value: stats.intake },
+                      { label: "In progress", value: stats.inProgress },
                       { label: "In QA", value: stats.qa },
                       { label: "Needs QA assign", value: stats.needsQa, highlight: stats.needsQa > 0 },
                     ].map((s) => (
@@ -266,19 +160,6 @@ export function LeaderDashboardPage() {
                       </div>
                     ))}
                   </div>
-
-                  {showCsvImport && (
-                    <CsvImportPanel
-                      onBusyChange={setCsvImportBusy}
-                      onImported={async () => {
-                        await load({ soft: true });
-                        setShowCsvImport(false);
-                      }}
-                      onCancel={() => {
-                        if (!csvImportBusy) setShowCsvImport(false);
-                      }}
-                    />
-                  )}
 
                   {showAddMap && (
                     <form
@@ -346,30 +227,15 @@ export function LeaderDashboardPage() {
                     </form>
                   )}
 
-                  <NewMapsPanel
-                    maps={maps}
-                    team={team}
-                    onRefresh={() => load({ soft: true })}
-                    onMapUpdated={applyUpsert}
-                  />
-
-                  <AssignmentBoard
-                    maps={pipelineMaps}
-                    allMaps={maps}
-                    team={team}
-                    onRefresh={() => load({ soft: true })}
-                    onMapUpdated={applyUpsert}
-                  />
+                  <AssignmentBoard maps={maps} team={team} onRefresh={load} />
                 </>
               )}
 
               {activeSection === "team" && (
-                <TeamPanel team={team} maps={maps} onRefresh={() => load({ soft: true })} />
+                <TeamPanel team={team} maps={maps} onRefresh={load} />
               )}
 
-              {activeSection === "history" && (
-                <HistoryPanel maps={historyMaps} onRefresh={() => load({ soft: true })} />
-              )}
+              {activeSection === "history" && <HistoryPanel maps={historyMaps} />}
 
               {activeSection === "company-dashboard" && <CompanyDashboardPanel />}
 

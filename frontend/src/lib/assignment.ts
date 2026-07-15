@@ -6,11 +6,6 @@ export interface MapAssignment {
   inspectorId: string;
 }
 
-export interface QaAssignment {
-  mapId: string;
-  qaId: string;
-}
-
 export interface ShufflePreviewRow {
   inspectorId: string;
   inspectorName: string;
@@ -31,9 +26,8 @@ export function countInspectorActiveMaps(maps: MapRecord[], userId: string): num
 }
 
 /**
- * Greedy least-loaded assignment (client-side shuffle preview).
- * For each map: pick the inspector with the lowest current count (name as tiebreak),
- * then bump their count so the next map spreads across the pool.
+ * Balanced distribution: each map goes to the inspector with the fewest total
+ * active maps (existing workload + maps already assigned in this batch).
  */
 export function buildBalancedInspectorAssignments(
   mapsToAssign: MapRecord[],
@@ -62,60 +56,6 @@ export function buildBalancedInspectorAssignments(
   return assignments;
 }
 
-/** Assigns maps to QA reviewers using least-loaded balanced distribution. */
-export function buildBalancedQaAssignments(
-  mapsToAssign: MapRecord[],
-  qaMembers: Pick<TeamMember, "id" | "name">[],
-  allMaps: MapRecord[]
-): QaAssignment[] {
-  if (qaMembers.length === 0 || mapsToAssign.length === 0) return [];
-
-  const workload = new Map<string, number>();
-  for (const member of qaMembers) {
-    workload.set(member.id, countQaActiveMaps(allMaps, member.id));
-  }
-
-  const assignments: QaAssignment[] = [];
-  for (const map of mapsToAssign) {
-    const sorted = [...qaMembers].sort((a, b) => {
-      const diff = (workload.get(a.id) ?? 0) - (workload.get(b.id) ?? 0);
-      return diff !== 0 ? diff : a.name.localeCompare(b.name);
-    });
-    const pick = sorted[0]!;
-    workload.set(pick.id, (workload.get(pick.id) ?? 0) + 1);
-    assignments.push({ mapId: map.id, qaId: pick.id });
-  }
-
-  return assignments;
-}
-
-/** Summarizes a QA shuffle plan with per-member workload totals. */
-export function summarizeQaShufflePlan(
-  plan: QaAssignment[],
-  qaMembers: Pick<TeamMember, "id" | "name">[],
-  allMaps: MapRecord[]
-): ShufflePreviewRow[] {
-  const receiving = new Map<string, number>();
-  for (const { qaId } of plan) {
-    receiving.set(qaId, (receiving.get(qaId) ?? 0) + 1);
-  }
-
-  return qaMembers
-    .map((member) => {
-      const currentActive = countQaActiveMaps(allMaps, member.id);
-      const add = receiving.get(member.id) ?? 0;
-      return {
-        inspectorId: member.id,
-        inspectorName: member.name,
-        currentActive,
-        receiving: add,
-        totalAfter: currentActive + add,
-      };
-    })
-    .sort((a, b) => a.totalAfter - b.totalAfter || a.inspectorName.localeCompare(b.inspectorName));
-}
-
-/** Summarizes an inspector shuffle plan with per-member workload totals. */
 export function summarizeShufflePlan(
   plan: MapAssignment[],
   inspectors: Pick<TeamMember, "id" | "name">[],
@@ -141,7 +81,6 @@ export function summarizeShufflePlan(
     .sort((a, b) => a.totalAfter - b.totalAfter || a.inspectorName.localeCompare(b.inspectorName));
 }
 
-/** Picks the inspector with the fewest active maps from the given IDs. */
 export function pickLeastLoadedInspector(
   inspectorIds: string[],
   allMaps: MapRecord[]
@@ -186,7 +125,6 @@ export function countQaActiveMaps(maps: MapRecord[], userId: string): number {
   return countQaWorkload(maps, userId);
 }
 
-/** Picks the QA member with the fewest active maps from the given IDs. */
 export function pickLeastLoadedQa(qaIds: string[], allMaps: MapRecord[]): string | null {
   if (qaIds.length === 0) return null;
 
@@ -214,4 +152,80 @@ export function getIdleQaMembers(team: TeamMember[], maps: MapRecord[]): IdleTea
     }))
     .filter(({ activeCount }) => activeCount <= IDLE_THRESHOLD)
     .sort((a, b) => a.activeCount - b.activeCount);
+}
+
+export interface SupervisorAssignment {
+  mapId: string;
+  supervisorId: string;
+}
+
+export interface SupervisorShufflePreviewRow {
+  supervisorId: string;
+  supervisorName: string;
+  currentActive: number;
+  receiving: number;
+  totalAfter: number;
+}
+
+/** Active FIELD maps assigned to a supervisor (not yet completed). */
+export function countSupervisorActiveMaps(maps: MapRecord[], userId: string): number {
+  return maps.filter(
+    (m) =>
+      m.phase === "FIELD" &&
+      m.assignedSupervisor?.id === userId &&
+      m.fieldWorkStatus === "UNCOMPLETED"
+  ).length;
+}
+
+export function buildBalancedSupervisorAssignments(
+  mapsToAssign: MapRecord[],
+  supervisors: Pick<TeamMember, "id" | "name">[],
+  allMaps: MapRecord[]
+): SupervisorAssignment[] {
+  if (supervisors.length === 0 || mapsToAssign.length === 0) return [];
+
+  const workload = new Map<string, number>();
+  for (const supervisor of supervisors) {
+    workload.set(supervisor.id, countSupervisorActiveMaps(allMaps, supervisor.id));
+  }
+
+  const assignments: SupervisorAssignment[] = [];
+  for (const map of mapsToAssign) {
+    const sorted = [...supervisors].sort((a, b) => {
+      const diff = (workload.get(a.id) ?? 0) - (workload.get(b.id) ?? 0);
+      return diff !== 0 ? diff : a.name.localeCompare(b.name);
+    });
+    const pick = sorted[0]!;
+    workload.set(pick.id, (workload.get(pick.id) ?? 0) + 1);
+    assignments.push({ mapId: map.id, supervisorId: pick.id });
+  }
+
+  return assignments;
+}
+
+export function summarizeSupervisorShufflePlan(
+  plan: SupervisorAssignment[],
+  supervisors: Pick<TeamMember, "id" | "name">[],
+  allMaps: MapRecord[]
+): SupervisorShufflePreviewRow[] {
+  const receiving = new Map<string, number>();
+  for (const { supervisorId } of plan) {
+    receiving.set(supervisorId, (receiving.get(supervisorId) ?? 0) + 1);
+  }
+
+  return supervisors
+    .map((supervisor) => {
+      const currentActive = countSupervisorActiveMaps(allMaps, supervisor.id);
+      const add = receiving.get(supervisor.id) ?? 0;
+      return {
+        supervisorId: supervisor.id,
+        supervisorName: supervisor.name,
+        currentActive,
+        receiving: add,
+        totalAfter: currentActive + add,
+      };
+    })
+    .sort(
+      (a, b) => a.totalAfter - b.totalAfter || a.supervisorName.localeCompare(b.supervisorName)
+    );
 }

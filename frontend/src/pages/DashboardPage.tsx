@@ -1,12 +1,17 @@
 import { useAuth, hasRole } from "../context/AuthContext";
+import { hasOpsManagerRole, hasSupervisorRole } from "../lib/roles";
 import { LeaderDashboardPage } from "./LeaderDashboardPage";
+import { OpsManagerDashboardPage } from "./OpsManagerDashboardPage";
 import { InspectorDashboardPage, QaDashboardPage } from "./InspectorDashboardPage";
+import { SupervisorDashboardPage } from "./SupervisorDashboardPage";
 
-/** Routes the signed-in user to the dashboard for their role. */
 export function DashboardPage() {
   const { user } = useAuth();
 
-  if (hasRole(user!, "GRAPHIC_TEAM_LEADER", "OPS_ADMIN")) {
+  if (hasOpsManagerRole(user)) {
+    return <OpsManagerDashboardPage />;
+  }
+  if (hasRole(user!, "GRAPHIC_TEAM_LEADER")) {
     return <LeaderDashboardPage />;
   }
   if (hasRole(user!, "MAPPING_INSPECTOR")) {
@@ -14,6 +19,9 @@ export function DashboardPage() {
   }
   if (hasRole(user!, "GRAPHIC_QA")) {
     return <QaDashboardPage />;
+  }
+  if (hasSupervisorRole(user)) {
+    return <SupervisorDashboardPage />;
   }
 
   return (

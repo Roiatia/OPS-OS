@@ -1,9 +1,9 @@
 import { Outlet, Link, useNavigate } from "react-router-dom";
+import { hasSupervisorRole } from "../lib/roles";
 import { useAuth, hasRole } from "../context/AuthContext";
 import { OriientLogo } from "./OriientLogo";
 import { ROLE_LABELS } from "../types";
 
-/** Authenticated app shell with header navigation and role-aware layout. */
 export function Layout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -11,13 +11,15 @@ export function Layout() {
   if (!user) return null;
 
   const primaryRole = user.roles[0];
-  const isLeader = hasRole(user, "GRAPHIC_TEAM_LEADER", "OPS_ADMIN");
+  const isLeader = hasRole(user, "GRAPHIC_TEAM_LEADER", "OPS_ADMIN", "OPS_MANAGER_2");
+  const isSupervisor = hasSupervisorRole(user);
+  const useFullWidth = isLeader || isSupervisor;
 
   return (
     <div className="min-h-screen flex flex-col bg-surface">
       <header className="bg-white border-b border-border sticky top-0 z-10 shadow-sm">
         <div
-          className={`${isLeader ? "w-full" : "max-w-6xl mx-auto"} px-5 h-16 flex items-center justify-between`}
+          className={`${useFullWidth ? "w-full" : "max-w-6xl mx-auto"} px-5 h-16 flex items-center justify-between`}
         >
           <Link to="/app" className="hover:opacity-90 transition-opacity">
             <OriientLogo size="md" />
@@ -45,10 +47,10 @@ export function Layout() {
         </div>
       </header>
       <main className="flex-1 w-full">
-        {isLeader ? (
+        {useFullWidth ? (
           <Outlet context={{ user, hasRole: (...r: string[]) => hasRole(user, ...r) }} />
         ) : (
-          <div className={`${isLeader ? "w-full" : "max-w-[1400px] mx-auto"} px-5 py-6`}>
+          <div className="max-w-[1400px] mx-auto px-5 py-6">
             <Outlet context={{ user, hasRole: (...r: string[]) => hasRole(user, ...r) }} />
           </div>
         )}

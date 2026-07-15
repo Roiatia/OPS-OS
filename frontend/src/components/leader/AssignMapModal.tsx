@@ -21,7 +21,6 @@ interface Props {
   }) => void;
 }
 
-/** Modal for assigning an inspector individually or to a whole shift. */
 export function AssignMapModal({ map, team, maps, loading, onClose, onAssign }: Props) {
   const [mode, setMode] = useState<AssignMode>("individual");
   const [shiftId, setShiftId] = useState<ShiftId>("morning");
@@ -185,7 +184,6 @@ export function AssignMapModal({ map, team, maps, loading, onClose, onAssign }: 
   );
 }
 
-/** Reads an attachment file as base64 for map assignment upload. */
 function readFileAsBase64(file: File) {
   return new Promise<{ fileName: string; mimeType: string; data: string }>((resolve, reject) => {
     const reader = new FileReader();

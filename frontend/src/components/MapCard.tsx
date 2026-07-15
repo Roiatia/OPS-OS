@@ -1,9 +1,9 @@
 import { Link } from "react-router-dom";
 import type { MapRecord } from "../types";
-import { getMapDisplayState, getWorkflowTimelineLabel, workflowStateTone, workflowTimelineTone, getWorkflowTimelinePhase } from "../lib/mapDisplay";
+import { PHASE_LABELS } from "../types";
+import { getMapDisplayState, workflowStateTone } from "../lib/mapDisplay";
 import { Badge } from "./Badge";
 
-/** Summary card linking to a map's detail page. */
 export function MapCard({ map }: { map: MapRecord }) {
   const state = getMapDisplayState(map);
 
@@ -20,10 +20,7 @@ export function MapCard({ map }: { map: MapRecord }) {
             {map.area ? ` · ${map.area}` : ""}
           </div>
         </div>
-        <Badge
-          label={getWorkflowTimelineLabel(map.phase)}
-          tone={workflowTimelineTone(getWorkflowTimelinePhase(map.phase))}
-        />
+        <Badge label={PHASE_LABELS[map.phase]} tone={map.phase} />
       </div>
       <div className="flex flex-wrap gap-2 mt-3">
         {map.jiraTicketId && <Badge label={map.jiraTicketId} />}

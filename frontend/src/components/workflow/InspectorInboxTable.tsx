@@ -8,10 +8,8 @@ import { Badge } from "../Badge";
 interface Props {
   maps: MapRecord[];
   onRefresh: () => void;
-  onMapUpdated?: (maps: MapRecord[]) => void;
 }
 
-/** Formats a due date for the inspector inbox table. */
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString(undefined, {
     day: "numeric",
@@ -20,22 +18,16 @@ function formatDate(iso: string) {
   });
 }
 
-/** Table of new inspector assignments awaiting acceptance. */
-export function InspectorInboxTable({ maps, onRefresh, onMapUpdated }: Props) {
+export function InspectorInboxTable({ maps, onRefresh }: Props) {
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [error, setError] = useState("");
 
-  /** Accepts a new inspector assignment via the API. */
   async function accept(map: MapRecord) {
     setError("");
     setLoadingId(map.id);
     try {
-      const updated =
-        map.phase === "INTAKE"
-          ? await api.acceptInspectorAssignment(map.id)
-          : await api.updateMapStatus(map.id, "ACCEPTED");
-      if (onMapUpdated) onMapUpdated([updated]);
-      else onRefresh();
+      await api.updateInspectorStatus(map.id, "ACCEPTED");
+      onRefresh();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -98,9 +90,9 @@ export function InspectorInboxTable({ maps, onRefresh, onMapUpdated }: Props) {
                       type="button"
                       disabled={loadingId === map.id}
                       onClick={() => accept(map)}
-                      className="px-3 py-1.5 text-xs font-medium bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:opacity-50 min-w-[72px]"
+                      className="px-3 py-1.5 text-xs font-medium bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:opacity-50"
                     >
-                      {loadingId === map.id ? "Accepting…" : "Accept"}
+                      Accept
                     </button>
                   </td>
                 </tr>

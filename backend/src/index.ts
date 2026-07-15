@@ -1,12 +1,15 @@
 import "dotenv/config";
-import http from "http";
 import express from "express";
 import cors from "cors";
 import authRoutes from "./routes/auth.js";
 import mapsRoutes from "./routes/maps.js";
-import { attachRealtime } from "./realtime.js";
+import reportsRoutes from "./routes/reports.js";
+import availabilityRoutes from "./routes/availability.js";
+import {
+  catchUpDailyReportIfNeeded,
+  runDailyReportSchedulerTick,
+} from "./services/dailyReport.js";
 
-/** Express API entry: CORS, JSON body, health + auth/maps routers. */
 const app = express();
 const port = Number(process.env.PORT) || 3001;
 
@@ -23,18 +26,28 @@ app.use(
 );
 app.use(express.json({ limit: "10mb" }));
 
-/** Liveness check; also reports whether demo login is enabled. */
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, demoMode: process.env.DEMO_MODE === "true" });
 });
 
 app.use("/api/auth", authRoutes);
 app.use("/api/maps", mapsRoutes);
+app.use("/api/reports", reportsRoutes);
+app.use("/api/availability", availabilityRoutes);
 
-const server = http.createServer(app);
-attachRealtime(server);
+const REPORT_SCHEDULER_MS = 60_000;
 
-server.listen(port, () => {
+void catchUpDailyReportIfNeeded().catch((err) => {
+  console.error("Daily report catch-up failed:", err);
+});
+
+setInterval(() => {
+  void runDailyReportSchedulerTick().catch((err) => {
+    console.error("Daily report scheduler failed:", err);
+  });
+}, REPORT_SCHEDULER_MS);
+
+app.listen(port, () => {
   console.log(`OPS-OS API running on http://localhost:${port}`);
-  console.log(`OPS-OS realtime on ws://localhost:${port}/api/ws`);
+  console.log("Daily reports scheduled for 08:00 local time (previous day)");
 });

@@ -76,9 +76,16 @@ ORDER BY u.name;
 
 ## Troubleshooting
 
-**`Can't reach database server`** — Check password, project ref, and that IP allowlist allows your connection (Supabase: Database → Network restrictions).
+**`Can't reach database server` (P1001)**
 
-**Migration fails with pooler** — Ensure `DIRECT_URL` uses port **5432** (direct), not the pooler port.
+1. **SSL / certificate errors** — Append `?uselibpqcompat=true&sslmode=require` to both `DATABASE_URL` and `DIRECT_URL`. Quick check: `npm run db:check`
+2. **Use the Session pooler host** from Supabase → Settings → Database (e.g. `aws-1-ap-northeast-1.pooler.supabase.com`, not `db.xxx.supabase.co` if that hostname does not resolve).
+3. **Auto-detect pooler region** — from `backend`: `npm run db:find-pooler`
+4. **Project paused** — free-tier Supabase projects pause after inactivity; open the dashboard and **Restore project**.
+5. **Network restrictions** — Supabase → Database → Network → allow your IP (or disable restrictions for dev).
+6. **Local fallback** — from `backend`: `npm run db:local:setup` (Docker Postgres on `localhost:5432`).
+
+**Migration fails with pooler** — Ensure `DIRECT_URL` uses port **5432** (session pooler), not port 6543 (transaction pooler).
 
 **Re-seed users only** — Safe to run `npm run db:seed` again; users are upserted by email.
 

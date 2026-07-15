@@ -1,4 +1,3 @@
-/** Placeholder workspace settings panel for leaders. */
 export function SettingsPanel() {
   return (
     <section className="space-y-6">
@@ -16,8 +15,8 @@ export function SettingsPanel() {
           },
           {
             title: "Auto-assign QA",
-            description: "Automatically assign QA (least loaded) when you assign an inspector",
-            enabled: true,
+            description: "Automatically assign QA when an inspector marks a map as done",
+            enabled: false,
           },
           {
             title: "Default view",
@@ -46,7 +45,7 @@ export function SettingsPanel() {
       </div>
 
       <p className="text-sm text-muted">
-        Settings are placeholders for now — CSV import is on the Maps page.
+        Settings are placeholders for now — toggles will be wired up as the platform grows.
       </p>
     </section>
   );

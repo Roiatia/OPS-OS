@@ -1,21 +1,24 @@
 import { RoleName } from "@prisma/client";
+import { isOpsManagerRole } from "./roles.js";
 
-export const ROLE_LABELS: Record<RoleName, string> = {
+export const ROLE_LABELS: Record<string, string> = {
   GRAPHIC_TEAM_LEADER: "Field Ops Graphic Team Leader",
   MAPPING_INSPECTOR: "Mapping Inspector",
   GRAPHIC_QA: "Graphic QA",
-  OPS_ADMIN: "OPS Admin",
+  SUPERVISOR: "Supervisor",
+  SUPERVISOR_SHIFT_LEADER: "Supervisor Shift Leader",
+  OPS_ADMIN: "OPS Manager",
+  OPS_MANAGER_2: "OPS Manager 2",
 };
 
 export const PHASE_LABELS: Record<string, string> = {
-  INTAKE: "Pre-upload · Awaiting assign",
-  PREP: "Pre-upload · Inspector",
-  UPLOAD_REVIEW: "Pre-upload · QA",
-  FIELD: "Uploaded to dashboard",
-  POLISH: "Polish · Inspector",
-  QA_REVIEW: "Polish · QA",
+  INTAKE: "Intake (from Jira)",
+  PREP: "Initial Prep",
+  UPLOAD_REVIEW: "Upload Approval (QA)",
+  FIELD: "Field Work (Supervisors)",
+  POLISH: "Polish",
+  QA_REVIEW: "QA Review",
   APPROVED: "Approved",
-  CANCELLED: "Cancelled",
 };
 
 export type AuthUser = {
@@ -26,12 +29,14 @@ export type AuthUser = {
   roles: RoleName[];
 };
 
-/** True if the user has at least one of the given roles. */
 export function hasRole(user: AuthUser, ...roles: RoleName[]) {
   return roles.some((r) => user.roles.includes(r));
 }
 
-/** True if the user is a graphic team leader or OPS admin. */
+export function isOpsManager(user: AuthUser) {
+  return user.roles.some((r) => isOpsManagerRole(r));
+}
+
 export function isLeaderOrAdmin(user: AuthUser) {
-  return hasRole(user, RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN);
+  return hasRole(user, RoleName.GRAPHIC_TEAM_LEADER) || isOpsManager(user);
 }

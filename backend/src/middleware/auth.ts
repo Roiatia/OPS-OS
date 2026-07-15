@@ -2,13 +2,13 @@ import jwt from "jsonwebtoken";
 import type { Request, Response, NextFunction } from "express";
 import { RoleName } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
+import { isOpsManagerRole, OPS_MANAGER_ROLE_NAMES } from "../lib/roles.js";
 import type { AuthUser } from "../lib/types.js";
 
 const JWT_SECRET = process.env.JWT_SECRET ?? "dev-secret";
 
 export type AuthedRequest = Request & { user: AuthUser };
 
-/** Create a JWT for the signed-in user (7-day expiry). */
 export function signToken(user: AuthUser) {
   return jwt.sign(
     { id: user.id, email: user.email, name: user.name, roles: user.roles },
@@ -17,7 +17,6 @@ export function signToken(user: AuthUser) {
   );
 }
 
-/** Decode and validate a JWT; returns null if invalid/expired. */
 export function verifyToken(token: string): AuthUser | null {
   try {
     const payload = jwt.verify(token, JWT_SECRET) as AuthUser;
@@ -27,7 +26,6 @@ export function verifyToken(token: string): AuthUser | null {
   }
 }
 
-/** Require Bearer JWT and attach a fresh user (with roles) to the request. */
 export async function authMiddleware(req: Request, res: Response, next: NextFunction) {
   const header = req.headers.authorization;
   if (!header?.startsWith("Bearer ")) {
@@ -63,12 +61,21 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
   next();
 }
 
-/** Middleware factory: allow the request only if the user has one of the given roles. */
+/** Expand OPS_ADMIN → all OPS manager roles so Manager 2 has the same access */
+function expandAllowedRoles(roles: RoleName[]): RoleName[] {
+  const expanded = new Set<RoleName>(roles);
+  if (roles.some((r) => isOpsManagerRole(r) || r === RoleName.OPS_ADMIN)) {
+    for (const r of OPS_MANAGER_ROLE_NAMES) expanded.add(r);
+  }
+  return [...expanded];
+}
+
 export function requireRoles(...roles: RoleName[]) {
+  const allowed = expandAllowedRoles(roles);
   return (req: Request, res: Response, next: NextFunction) => {
     const user = (req as AuthedRequest).user;
-    if (!roles.some((r) => user.roles.includes(r))) {
-      res.status(403).json({ error: "Forbidden — leader or admin role required" });
+    if (!allowed.some((r) => user.roles.includes(r))) {
+      res.status(403).json({ error: "Forbidden" });
       return;
     }
     next();

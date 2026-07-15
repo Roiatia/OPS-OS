@@ -9,7 +9,6 @@ const HEIGHTS = {
   lg: "h-10",
 };
 
-/** Renders the Oriient logo at sm, md, or lg size. */
 export function OriientLogo({ className = "", size = "md" }: Props) {
   return (
     <img

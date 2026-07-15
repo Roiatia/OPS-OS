@@ -5,13 +5,36 @@ import { api } from "../api";
 import { useAuth } from "../context/AuthContext";
 import { OriientLogo } from "../components/OriientLogo";
 
-const KNOWN_DEMO_EMAILS = [
-  { email: "leader@ops-demo.local", label: "Graphic Team Leader" },
-  { email: "inspector@ops-demo.local", label: "Mapping Inspector" },
-  { email: "qa@ops-demo.local", label: "Graphic QA" },
+/** Fallback when /auth/demo-users is unavailable — keep in sync with prisma/seed.ts */
+const KNOWN_DEMO_USERS = [
+  { email: "leader@ops-demo.local", name: "Sarah Cohen", label: "Graphic Team Leader" },
+  { email: "inspector@ops-demo.local", name: "David Levi", label: "Mapping Inspector" },
+  { email: "inspector2@ops-demo.local", name: "Yossi Barak", label: "Mapping Inspector" },
+  { email: "inspector3@ops-demo.local", name: "Noa Mizrahi", label: "Mapping Inspector" },
+  { email: "inspector4@ops-demo.local", name: "Amir Goldberg", label: "Mapping Inspector" },
+  { email: "qa@ops-demo.local", name: "Maya Rosen", label: "Graphic QA" },
+  { email: "qa2@ops-demo.local", name: "Rina Shalev", label: "Graphic QA" },
+  { email: "qa3@ops-demo.local", name: "Tomer Avivi", label: "Graphic QA" },
+  { email: "supervisor@ops-demo.local", name: "Alex Ben-Ami", label: "Supervisor" },
+  { email: "supervisor2@ops-demo.local", name: "Dana Weiss", label: "Supervisor Shift Leader" },
+  { email: "supervisor3@ops-demo.local", name: "Noam Katz", label: "Supervisor" },
+  { email: "supervisor4@ops-demo.local", name: "Lior Hadad", label: "Supervisor" },
+  { email: "ops@ops-demo.local", name: "Rachel Ops", label: "OPS Manager" },
+  { email: "ops2@ops-demo.local", name: "Miriam Levy", label: "OPS Manager 2" },
 ];
 
-/** Sign-in page with demo and Google OAuth options. */
+type DemoHint = { email: string; name: string; label: string };
+
+function roleRank(label: string): number {
+  if (label.includes("Leader") && label.includes("Graphic")) return 0;
+  if (label.includes("OPS Manager")) return 1;
+  if (label.includes("Inspector")) return 2;
+  if (label.includes("QA")) return 3;
+  if (label.includes("Shift Leader")) return 4;
+  if (label.includes("Supervisor")) return 5;
+  return 6;
+}
+
 export function LoginPage() {
   const { user, loginDemo, loginGoogle } = useAuth();
   const navigate = useNavigate();
@@ -48,9 +71,20 @@ export function LoginPage() {
     }
   }
 
-  const hints = demoUsers.length > 0
-    ? demoUsers.map((u) => ({ email: u.email, label: u.roles.map((r) => r.label).join(" · ") }))
-    : KNOWN_DEMO_EMAILS;
+  const hints: DemoHint[] = (
+    demoUsers.length > 0
+      ? demoUsers.map((u) => ({
+          email: u.email,
+          name: u.name,
+          label: u.roles.map((r) => r.label).join(" · ") || "Demo user",
+        }))
+      : KNOWN_DEMO_USERS
+  ).slice().sort((a, b) => {
+    const byRole = roleRank(a.label) - roleRank(b.label);
+    return byRole !== 0 ? byRole : a.name.localeCompare(b.name);
+  });
+
+  const showDemoAccounts = config?.demoMode === true;
 
   return (
     <div className="min-h-screen flex items-center justify-center p-6 bg-gradient-to-br from-brand-50 via-white to-orange-50">
@@ -70,12 +104,23 @@ export function LoginPage() {
               <input
                 type="email"
                 required
+                list={showDemoAccounts ? "demo-user-emails" : undefined}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@ops-demo.local"
                 autoFocus
+                autoComplete="username"
                 className="mt-1 w-full border border-border rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20"
               />
+              {showDemoAccounts && (
+                <datalist id="demo-user-emails">
+                  {hints.map((h) => (
+                    <option key={h.email} value={h.email}>
+                      {h.name} — {h.label}
+                    </option>
+                  ))}
+                </datalist>
+              )}
             </label>
             <button
               type="submit"
@@ -90,19 +135,24 @@ export function LoginPage() {
             <p className="mt-4 text-sm text-red-600 bg-red-50 rounded-lg p-3">{error}</p>
           )}
 
-          {config?.demoMode && (
+          {showDemoAccounts && (
             <div className="mt-6 pt-6 border-t border-border">
-              <p className="text-xs text-muted mb-2">Demo accounts — click to fill:</p>
-              <div className="space-y-1.5">
+              <p className="text-xs text-muted mb-2">
+                Demo accounts ({hints.length}) — click to fill:
+              </p>
+              <div className="space-y-1.5 max-h-72 overflow-y-auto pr-1">
                 {hints.map((h) => (
                   <button
                     key={h.email}
                     type="button"
                     onClick={() => setEmail(h.email)}
-                    className="w-full flex items-center justify-between text-left text-sm px-3 py-2.5 rounded-xl hover:bg-brand-50 transition border border-transparent hover:border-brand-100"
+                    className="w-full flex items-center justify-between gap-3 text-left text-sm px-3 py-2.5 rounded-xl hover:bg-brand-50 transition border border-transparent hover:border-brand-100"
                   >
-                    <span className="font-medium text-slate-700">{h.email}</span>
-                    <span className="text-muted text-xs">{h.label}</span>
+                    <span className="min-w-0">
+                      <span className="block font-medium text-slate-800 truncate">{h.name}</span>
+                      <span className="block text-xs text-slate-500 truncate">{h.email}</span>
+                    </span>
+                    <span className="text-muted text-xs shrink-0 text-right">{h.label}</span>
                   </button>
                 ))}
               </div>

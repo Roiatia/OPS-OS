@@ -1,23 +1,15 @@
 const API = "/api";
 
-/** Reads the stored auth token from localStorage. */
 function getToken() {
   return localStorage.getItem("ops_token");
 }
 
-/** Sends an authenticated JSON request to the backend API. */
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getToken();
-  const method = options.method ?? "GET";
-  const sendsJson = method === "POST" || method === "PUT" || method === "PATCH";
-  const body = options.body ?? (sendsJson ? "{}" : undefined);
-
   const res = await fetch(`${API}${path}`, {
     ...options,
-    method,
-    body,
     headers: {
-      ...(sendsJson ? { "Content-Type": "application/json" } : {}),
+      "Content-Type": "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options.headers,
     },
@@ -31,7 +23,15 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return res.json();
 }
 
-/** Typed client for all backend REST endpoints. */
+function buildQuery(params: Record<string, string | undefined>): string {
+  const qs = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value) qs.set(key, value);
+  }
+  const s = qs.toString();
+  return s ? `?${s}` : "";
+}
+
 export const api = {
   getConfig: () => request<{ demoMode: boolean; googleClientId: string | null }>("/auth/config"),
 
@@ -58,12 +58,78 @@ export const api = {
 
   getHistoryMaps: () => request<import("./types").MapRecord[]>("/maps/history"),
 
+  syncSpreadsheet: (body: { csv?: string; sheetTab?: string } = {}) =>
+    request<{
+      imported: number;
+      updated: number;
+      skipped: number;
+      history: number;
+      todayHub: number;
+      errors: string[];
+    }>("/maps/sync-spreadsheet", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
   getMap: (id: string) => request<import("./types").MapRecord>(`/maps/${id}`),
 
-  getAttachment: (attachmentId: string) =>
-    request<import("./types").MapAttachment>(`/maps/attachments/${attachmentId}`),
-
   getTeam: () => request<import("./types").TeamMember[]>("/maps/team"),
+
+  getTeamFieldMaps: () => request<import("./types").MapRecord[]>("/maps/team-field"),
+
+  getHub: () =>
+    request<{
+      maps: import("./types").MapRecord[];
+      supervisors: import("./types").HubSupervisor[];
+    }>("/maps/hub"),
+
+  getHubNotifications: (since?: string, q?: string) =>
+    request<{
+      feed: import("./types/activity").OpsActivityMessage[];
+      alerts: import("./types/activity").OpsShiftAlert[];
+    }>(`/maps/hub/notifications${buildQuery({ since, q })}`),
+
+  updateHubMap: (
+    mapId: string,
+    data: {
+      fieldWorkStatus?: import("./types").FieldWorkStatus;
+      fieldProgressPercent?: number;
+      assignedSupervisorId?: string | null;
+      onHubStatusBoard?: boolean;
+      opsManagerComment?: string | null;
+      shiftLeaderApproved?: boolean | null;
+      returnVisitAt?: string | null;
+    }
+  ) =>
+    request<import("./types").MapRecord>(`/maps/${mapId}/hub`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  swapSupervisorMaps: (mapIds: string[], toSupervisorId: string) =>
+    request<{ swapped: number }>("/maps/swap-supervisor", {
+      method: "POST",
+      body: JSON.stringify({ mapIds, toSupervisorId }),
+    }),
+
+  shuffleAssignSupervisors: (mapIds: string[], supervisorIds: string[]) =>
+    request<{
+      assigned: number;
+      distribution: {
+        supervisorId: string;
+        supervisorName: string;
+        assigned: number;
+        totalAfter: number;
+      }[];
+    }>("/maps/shuffle-supervisors", {
+      method: "POST",
+      body: JSON.stringify({ mapIds, supervisorIds }),
+    }),
+
+  releaseToGraphics: (mapId: string) =>
+    request<import("./types").MapRecord>(`/maps/${mapId}/release-to-graphics`, {
+      method: "POST",
+    }),
 
   createMap: (data: {
     mapNumber: string;
@@ -78,60 +144,10 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
-  previewCsvImport: (csv: string) =>
-    request<{
-      headerRowIndex: number;
-      totalRows: number;
-      cancelledRows: number;
-      activeRows: number;
-      samples: {
-        mapNumber: string | null;
-        building: string | null;
-        batch: string | null;
-        address: string | null;
-        polishAssignee: string | null;
-      }[];
-    }>("/maps/import-csv/preview", {
-      method: "POST",
-      body: JSON.stringify({ csv }),
-    }),
-
-  importCsv: (csv: string, opts?: { clearExisting?: boolean; defaultClient?: string }) =>
-    request<{
-      created: number;
-      updated: number;
-      skipped: number;
-      cleared: number;
-      errors: { row: number; message: string }[];
-      sampleMapNumbers: string[];
-    }>("/maps/import-csv", {
-      method: "POST",
-      body: JSON.stringify({
-        csv,
-        clearExisting: opts?.clearExisting ?? false,
-        defaultClient: opts?.defaultClient,
-      }),
-    }),
-
   updateMapDueDate: (mapId: string, dueDate: string | null) =>
     request<import("./types").MapRecord>(`/maps/${mapId}/due-date`, {
       method: "PATCH",
       body: JSON.stringify({ dueDate }),
-    }),
-
-  updateMapWorkflowPhaseTarget: (
-    mapId: string,
-    workflowPhaseTarget: import("./types").WorkflowPhaseTarget
-  ) =>
-    request<import("./types").MapRecord>(`/maps/${mapId}/workflow-phase-target`, {
-      method: "PATCH",
-      body: JSON.stringify({ workflowPhaseTarget }),
-    }),
-
-  updateMapStation: (mapId: string, station: import("./types").WorkflowPhaseTarget) =>
-    request<import("./types").MapRecord>(`/maps/${mapId}/station`, {
-      method: "PATCH",
-      body: JSON.stringify({ station }),
     }),
 
   assignInspector: (
@@ -168,82 +184,10 @@ export const api = {
       body: JSON.stringify({ qaId, attachment }),
     }),
 
-  acceptInspectorAssignment: (mapId: string) =>
-    request<import("./types").MapRecord>(`/maps/${mapId}/accept-assignment`, {
-      method: "POST",
-    }),
-
-  acceptQaAssignment: (mapId: string) =>
-    request<import("./types").MapRecord>(`/maps/${mapId}/accept-qa-assignment`, {
-      method: "POST",
-    }),
-
-  unassignInspector: (mapId: string) =>
-    request<import("./types").MapRecord>(`/maps/${mapId}/unassign`, {
-      method: "POST",
-    }),
-
-  releaseMapToPipeline: (mapId: string) =>
-    request<import("./types").MapRecord>(`/maps/${mapId}/release-to-pipeline`, {
-      method: "POST",
-    }),
-
-  unassignQa: (mapId: string) =>
-    request<import("./types").MapRecord>(`/maps/${mapId}/unassign-qa`, {
-      method: "POST",
-    }),
-
   cancelMap: (mapId: string, note?: string) =>
     request<import("./types").MapRecord>(`/maps/${mapId}/cancel`, {
       method: "POST",
       body: JSON.stringify({ note }),
-    }),
-
-  deleteMap: (mapId: string) =>
-    request<{ ok: true }>(`/maps/${mapId}`, { method: "DELETE" }),
-
-  deleteMaps: (mapIds: string[]) =>
-    request<{ ok: true; deleted: number }>("/maps/bulk-delete", {
-      method: "POST",
-      body: JSON.stringify({ mapIds }),
-    }),
-
-  bulkUnassignNewMaps: (mapIds: string[]) =>
-    request<{ ok: true; unassigned: number }>("/maps/bulk-unassign-new", {
-      method: "POST",
-      body: JSON.stringify({ mapIds }),
-    }),
-
-  shuffleAssignNewMaps: (mapIds: string[], inspectorIds: string[], qaIds?: string[]) =>
-    request<{
-      inspectorAssigned: number;
-      qaAssigned: number;
-      inspectorDistribution: {
-        userId: string;
-        userName: string;
-        assigned: number;
-        totalAfter: number;
-      }[];
-      qaDistribution: {
-        userId: string;
-        userName: string;
-        assigned: number;
-        totalAfter: number;
-      }[];
-    }>("/maps/shuffle-assign-new", {
-      method: "POST",
-      body: JSON.stringify({ mapIds, inspectorIds, qaIds: qaIds ?? [] }),
-    }),
-
-  updateMapStatus: (
-    mapId: string,
-    status: import("./types").MapStatus,
-    note?: string,
-    attachment?: { fileName: string; mimeType: string; data: string }
-  ) =>
-    request<import("./types").MapRecord>(`/maps/${mapId}/status`, {
-      method: "PATCH",
-      body: JSON.stringify({ status, note, attachment }),
     }),
 
   updateInspectorStatus: (mapId: string, status: string, note?: string) =>
@@ -252,21 +196,48 @@ export const api = {
       body: JSON.stringify({ status, note }),
     }),
 
+  updateSupervisorStatus: (mapId: string, status: string, note?: string) =>
+    request<import("./types").MapRecord>(`/maps/${mapId}/supervisor-status`, {
+      method: "PATCH",
+      body: JSON.stringify({ status, note }),
+    }),
+
+  updateSupervisorField: (
+    mapId: string,
+    data: {
+      loomDone?: boolean;
+      positioning?: boolean;
+      mapperName?: string | null;
+      fieldDate?: string | null;
+      opsManagerComment?: string | null;
+      fieldWorkStatus?: import("./types").FieldWorkStatus;
+    }
+  ) =>
+    request<import("./types").MapRecord>(`/maps/${mapId}/supervisor-field`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  assignSupervisor: (
+    mapId: string,
+    supervisorId: string,
+    attachment?: { fileName: string; mimeType: string; data: string }
+  ) =>
+    request<import("./types").MapRecord>(`/maps/${mapId}/assign-supervisor`, {
+      method: "POST",
+      body: JSON.stringify({ supervisorId, attachment }),
+    }),
+
   addMapNote: (mapId: string, body: string) =>
     request<import("./types").MapRecord>(`/maps/${mapId}/notes`, {
       method: "POST",
       body: JSON.stringify({ body }),
     }),
 
-  uploadReview: (
-    mapId: string,
-    approved: boolean,
-    note?: string,
-    attachment?: { fileName: string; mimeType: string; data: string }
-  ) =>
+  uploadReview: (mapId: string, approved: boolean, note?: string) =>
     request<import("./types").MapRecord>(`/maps/${mapId}/upload-review`, {
       method: "POST",
-      body: JSON.stringify({ approved, note, attachment }),
+      body: JSON.stringify({ approved, note }),
     }),
 
   fieldComplete: (mapId: string) =>
@@ -274,15 +245,10 @@ export const api = {
       method: "POST",
     }),
 
-  qaReview: (
-    mapId: string,
-    status: "fix" | "fix_done" | "approved",
-    note?: string,
-    attachment?: { fileName: string; mimeType: string; data: string }
-  ) =>
+  qaReview: (mapId: string, status: "fix" | "fix_done" | "approved", note?: string) =>
     request<import("./types").MapRecord>(`/maps/${mapId}/qa-review`, {
       method: "POST",
-      body: JSON.stringify({ status, note, attachment }),
+      body: JSON.stringify({ status, note }),
     }),
 
   createTask: (
@@ -299,9 +265,72 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ status }),
     }),
+
+  getReports: (q?: string) =>
+    request<import("./types/report").OpsDailyReportListItem[]>(
+      `/reports${buildQuery({ q })}`
+    ),
+
+  getReport: (id: string) =>
+    request<import("./types/report").OpsDailyReportDetail>(`/reports/${id}`),
+
+  updateReportNote: (id: string, opsManagerNote: string | null) =>
+    request<import("./types/report").OpsDailyReportDetail>(`/reports/${id}/note`, {
+      method: "PATCH",
+      body: JSON.stringify({ opsManagerNote }),
+    }),
+
+  getMyAvailability: (weekStart?: string) =>
+    request<import("./types/availability").AvailabilitySubmission>(
+      `/availability/mine${buildQuery({ weekStart })}`
+    ),
+
+  saveMyAvailability: (body: {
+    weekStart?: string;
+    fridayContract: boolean;
+    hagimOk?: boolean;
+    days: {
+      dayOfWeek: number;
+      canWork: boolean;
+      allDay?: boolean;
+      startMinutes?: number | null;
+      endMinutes?: number | null;
+      startMinutes2?: number | null;
+      endMinutes2?: number | null;
+      note?: string | null;
+    }[];
+  }) =>
+    request<import("./types/availability").AvailabilitySubmission>("/availability/mine", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+
+  getAvailabilityRoster: (weekStart?: string) =>
+    request<import("./types/availability").AvailabilityRoster>(
+      `/availability/roster${buildQuery({ weekStart })}`
+    ),
+
+  getShiftPlan: (weekStart?: string) =>
+    request<import("./types/availability").ShiftPlanView>(
+      `/availability/plan${buildQuery({ weekStart })}`
+    ),
+
+  saveShiftPlan: (body: {
+    weekStart?: string;
+    assignments: import("./types/availability").ShiftPlanAssignment[];
+  }) =>
+    request<import("./types/availability").ShiftPlanSaveResult>("/availability/plan", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+
+  autoGenerateShiftPlan: (weekStart?: string) =>
+    request<import("./types/availability").ShiftPlanSaveResult>("/availability/plan/auto", {
+      method: "POST",
+      body: JSON.stringify({ weekStart }),
+    }),
 };
 
-/** Persists or clears the JWT used for API requests. */
 export function setAuthToken(token: string | null) {
   if (token) localStorage.setItem("ops_token", token);
   else localStorage.removeItem("ops_token");

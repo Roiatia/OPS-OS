@@ -1,32 +1,22 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { api } from "../../api";
 import type { MapRecord } from "../../types";
+import { PHASE_LABELS } from "../../types";
+import { Badge } from "../Badge";
 import {
-  getWorkflowTimelineLabel,
-  workflowTimelineTone,
-  getWorkflowTimelinePhase,
-  canDeleteMap,
-  getBulkDeleteConfirmMessage,
   getInspectorLabel,
   getMapDisplayState,
   getQaLabel,
   workflowStateTone,
 } from "../../lib/mapDisplay";
-import { Badge } from "../Badge";
 
 interface Props {
   maps: MapRecord[];
-  onRefresh: () => void;
 }
 
-/** Searchable archive of approved and cancelled maps. */
-export function HistoryPanel({ maps, onRefresh }: Props) {
+export function HistoryPanel({ maps }: Props) {
   const [search, setSearch] = useState("");
   const [outcomeFilter, setOutcomeFilter] = useState<"all" | "APPROVED" | "CANCELLED">("all");
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
 
   const filtered = useMemo(() => {
     return maps.filter((map) => {
@@ -41,54 +31,8 @@ export function HistoryPanel({ maps, onRefresh }: Props) {
     });
   }, [maps, search, outcomeFilter]);
 
-  const deletableFiltered = useMemo(
-    () => filtered.filter(canDeleteMap),
-    [filtered]
-  );
-
-  const selectedDeletable = useMemo(
-    () => deletableFiltered.filter((m) => selected.has(m.id)),
-    [deletableFiltered, selected]
-  );
-
-  const allDeletableSelected =
-    deletableFiltered.length > 0 && deletableFiltered.every((m) => selected.has(m.id));
-
   const approvedCount = maps.filter((m) => m.phase === "APPROVED").length;
   const cancelledCount = maps.filter((m) => m.phase === "CANCELLED").length;
-
-  function toggleSelect(id: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
-  function toggleSelectAll() {
-    if (allDeletableSelected) {
-      setSelected(new Set());
-    } else {
-      setSelected(new Set(deletableFiltered.map((m) => m.id)));
-    }
-  }
-
-  async function handleBulkDelete() {
-    if (selectedDeletable.length === 0) return;
-    if (!confirm(getBulkDeleteConfirmMessage(selectedDeletable.length))) return;
-    setError("");
-    setLoading(true);
-    try {
-      await api.deleteMaps(selectedDeletable.map((m) => m.id));
-      setSelected(new Set());
-      onRefresh();
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }
 
   return (
     <section className="space-y-4">
@@ -106,31 +50,6 @@ export function HistoryPanel({ maps, onRefresh }: Props) {
           <div className="text-sm text-muted">Cancelled</div>
         </div>
       </div>
-
-      {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg p-3">{error}</p>}
-
-      {selectedDeletable.length > 0 && (
-        <div className="flex flex-wrap items-center gap-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
-          <span className="text-sm font-medium text-red-800">
-            {selectedDeletable.length} selected
-          </span>
-          <button
-            type="button"
-            disabled={loading}
-            onClick={handleBulkDelete}
-            className="px-4 py-1.5 text-sm font-semibold text-red-700 bg-white border border-red-200 rounded-lg hover:bg-red-100 disabled:opacity-50"
-          >
-            Delete selected
-          </button>
-          <button
-            type="button"
-            onClick={() => setSelected(new Set())}
-            className="text-sm text-muted hover:text-slate-900 ml-auto"
-          >
-            Clear selection
-          </button>
-        </div>
-      )}
 
       <div className="flex flex-wrap gap-3">
         <input
@@ -160,16 +79,6 @@ export function HistoryPanel({ maps, onRefresh }: Props) {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-slate-50 text-left text-muted border-b border-border">
-                <th className="px-3 py-2 w-10">
-                  {deletableFiltered.length > 0 && (
-                    <input
-                      type="checkbox"
-                      checked={allDeletableSelected}
-                      onChange={toggleSelectAll}
-                      title="Select deletable maps"
-                    />
-                  )}
-                </th>
                 <th className="px-3 py-2 font-medium">Map</th>
                 <th className="px-3 py-2 font-medium">Client</th>
                 <th className="px-3 py-2 font-medium">Outcome</th>
@@ -185,20 +94,9 @@ export function HistoryPanel({ maps, onRefresh }: Props) {
                 const archivedEntry =
                   map.phaseHistory.find((h) => h.phase === map.phase) ??
                   map.phaseHistory[map.phaseHistory.length - 1];
-                const selectable = canDeleteMap(map);
 
                 return (
                   <tr key={map.id} className="hover:bg-slate-50/60">
-                    <td className="px-3 py-3 w-10">
-                      {selectable ? (
-                        <input
-                          type="checkbox"
-                          checked={selected.has(map.id)}
-                          onChange={() => toggleSelect(map.id)}
-                          aria-label={`Select ${map.mapNumber}`}
-                        />
-                      ) : null}
-                    </td>
                     <td className="px-3 py-3">
                       <Link
                         to={`/app/maps/${map.id}`}
@@ -209,10 +107,7 @@ export function HistoryPanel({ maps, onRefresh }: Props) {
                     </td>
                     <td className="px-3 py-3 text-muted">{map.client}</td>
                     <td className="px-3 py-3">
-                      <Badge
-                        label={getWorkflowTimelineLabel(map.phase)}
-                        tone={workflowTimelineTone(getWorkflowTimelinePhase(map.phase))}
-                      />
+                      <Badge label={PHASE_LABELS[map.phase]} tone={map.phase} />
                     </td>
                     <td className="px-3 py-3">
                       {state !== "—" ? (

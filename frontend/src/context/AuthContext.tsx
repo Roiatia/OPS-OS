@@ -12,12 +12,10 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-/** Provides auth state and login/logout actions to the app. */
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // On mount: restore session from localStorage JWT, or clear a stale token.
   useEffect(() => {
     const token = localStorage.getItem("ops_token");
     if (!token) {
@@ -27,7 +25,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     api
       .getMe()
       .then(({ user }) => setUser(user))
-      .catch(() => setAuthToken(null)) // expired / revoked → force re-login
+      .catch(() => setAuthToken(null))
       .finally(() => setLoading(false));
   }, []);
 
@@ -55,14 +53,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 }
 
-/** Returns the auth context; throws if used outside AuthProvider. */
 export function useAuth() {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error("useAuth must be used within AuthProvider");
   return ctx;
 }
 
-/** Returns true if the user has any of the given roles. */
 export function hasRole(user: User, ...roles: string[]) {
   return roles.some((r) => user.roles.includes(r as User["roles"][number]));
 }

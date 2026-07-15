@@ -1,8 +1,10 @@
 import {
   PrismaClient,
   MapPhase,
-  MapStatus,
-  WorkflowPhaseTarget,
+  InspectorStatus,
+  SupervisorStatus,
+  FieldWorkStatus,
+  QaStatus,
   type Prisma,
 } from "@prisma/client";
 
@@ -12,83 +14,50 @@ export type DemoMapInput = {
   client: string;
   area?: string;
   description?: string;
-  dueDate?: string;
   phase: MapPhase;
-  status?: MapStatus | null;
+  inspectorStatus?: InspectorStatus | null;
+  qaStatus?: QaStatus | null;
   uploadApproved?: boolean;
   assignInspector?: boolean;
   assignQa?: boolean;
-  inspectorAssignAccepted?: boolean;
-  qaAssignAccepted?: boolean;
-  releasedToPipeline?: boolean;
-  workflowPhaseTarget?: WorkflowPhaseTarget;
+  /** Assign to Alex Ben-Ami (supervisor@ops-demo.local) */
+  assignSupervisor?: boolean;
+  /** Assign to Dana Weiss (supervisor2@ops-demo.local, shift leader) */
+  assignSupervisor2?: boolean;
+  /** Assign to Noam Katz (supervisor3@ops-demo.local) */
+  assignSupervisor3?: boolean;
+  supervisorStatus?: SupervisorStatus | null;
+  fieldWorkStatus?: FieldWorkStatus;
+  fieldDate?: string;
+  fieldProgressPercent?: number;
+  onHubStatusBoard?: boolean;
+  mapperName?: string;
+  opsManagerComment?: string | null;
+  loomDone?: boolean;
+  positioning?: boolean;
+  releasedToGraphics?: boolean;
 };
 
-const NEW_INTAKE_CLIENTS: { client: string; area: string }[] = [
-  { client: "FreshMart", area: "Netanya" },
-  { client: "SuperPharm", area: "Jerusalem" },
-  { client: "Shufersal", area: "Petah Tikva" },
-  { client: "Rami Levy", area: "Kiryat Gat" },
-  { client: "Victory", area: "Holon" },
-  { client: "Tiv Taam", area: "Ra'anana" },
-  { client: "MegaStore", area: "Ramat Gan" },
-  { client: "CityShop", area: "Beer Sheva" },
-  { client: "Urban Retail", area: "Tel Aviv" },
-  { client: "North Market", area: "Haifa" },
-  { client: "Corner Store", area: "Eilat" },
-  { client: "Prime Outlet", area: "Ashdod" },
-  { client: "GreenGrocer", area: "Modi'in" },
-  { client: "ValueMart", area: "Rishon LeZion" },
-  { client: "Lifestyle", area: "Herzliya" },
-  { client: "Daily Market", area: "Kfar Saba" },
-  { client: "Budget Foods", area: "Nahariya" },
-  { client: "Express Mart", area: "Rehovot" },
-  { client: "Family Shop", area: "Afula" },
-  { client: "QuickStop", area: "Bat Yam" },
-  { client: "Market Plus", area: "Yokneam" },
-  { client: "Shop & Go", area: "Carmiel" },
-  { client: "Elite Retail", area: "Givatayim" },
-  { client: "Metro Foods", area: "Ashkelon" },
-  { client: "Sunrise Mart", area: "Tiberias" },
-];
+function todayAt(hour: number, minute = 0): string {
+  const d = new Date();
+  d.setHours(hour, minute, 0, 0);
+  return d.toISOString();
+}
 
-const NEW_INTAKE_DESCRIPTIONS = [
-  "New intake from CS — awaiting assignment",
-  "Store expansion layout from Jira ticket",
-  "Seasonal refresh — assign inspector and QA",
-  "CS urgent request — new floor plan",
-  "Remap after fixture change",
-  "New branch opening map",
-  "Category reset from merchandising",
-  "Promo zone update from CS",
-  "Back wall refresh — needs graphics",
-  "End-cap realignment map",
-];
-
-/** Twenty-five fresh INTAKE maps for the leader new-maps box (0115–0139). */
-export const NEW_INTAKE_MAPS: DemoMapInput[] = NEW_INTAKE_CLIENTS.map((entry, i) => {
-  const num = String(115 + i).padStart(4, "0");
-  const year = i >= 20 ? "2026" : "2024";
-  const workflowPhaseTarget =
-    i % 5 === 1
-      ? WorkflowPhaseTarget.UPLOADED
-      : i % 5 === 2
-        ? WorkflowPhaseTarget.POLISH
-        : WorkflowPhaseTarget.PRE_UPLOAD;
-
+/** Shared FIELD / mapping preset — upload done, ready for hub */
+function mappingBase(overrides: Partial<DemoMapInput> = {}): DemoMapInput {
   return {
-    mapNumber: `MAP-${year}-${num}`,
-    jiraTicketId: i >= 20 ? `OPS-6${num}` : `OPS-46${num}`,
-    client: entry.client,
-    area: entry.area,
-    description: NEW_INTAKE_DESCRIPTIONS[i % NEW_INTAKE_DESCRIPTIONS.length],
-    phase: MapPhase.INTAKE,
-    workflowPhaseTarget,
-    ...(i === 3 ? { dueDate: "2026-07-14" } : {}),
-    ...(i === 7 ? { assignInspector: true } : {}),
-    ...(i === 11 ? { assignInspector: true, assignQa: true } : {}),
+    mapNumber: "MAP-PLACEHOLDER",
+    client: "Client",
+    phase: MapPhase.FIELD,
+    inspectorStatus: InspectorStatus.DONE,
+    uploadApproved: true,
+    assignInspector: true,
+    fieldWorkStatus: FieldWorkStatus.UNCOMPLETED,
+    fieldDate: todayAt(9, 0),
+    ...overrides,
   };
-});
+}
 
 export const DEMO_MAPS: DemoMapInput[] = [
   {
@@ -98,65 +67,26 @@ export const DEMO_MAPS: DemoMapInput[] = [
     area: "Ramat Gan",
     description: "Full floor remap — polish QA review",
     phase: MapPhase.QA_REVIEW,
-    status: MapStatus.DONE,
+    inspectorStatus: InspectorStatus.DONE,
     assignInspector: true,
     assignQa: true,
   },
-  {
+  mappingBase({
     mapNumber: "MAP-2024-0101",
     jiraTicketId: "OPS-4601",
     client: "FreshMart",
     area: "Netanya",
-    description: "New intake from CS — awaiting assignment",
-    phase: MapPhase.INTAKE,
-  },
-  {
-    mapNumber: "MAP-2024-0110",
-    jiraTicketId: "OPS-4610",
-    client: "SuperPharm",
-    area: "Jerusalem",
-    description: "New store layout — assign inspector and QA",
-    phase: MapPhase.INTAKE,
-  },
-  {
-    mapNumber: "MAP-2024-0111",
-    jiraTicketId: "OPS-4611",
-    client: "Shufersal",
-    area: "Petah Tikva",
-    description: "Seasonal refresh from CS ticket",
-    phase: MapPhase.INTAKE,
-  },
-  {
+    description: "Mapping — intake pool on hub (unassigned)",
+    fieldDate: todayAt(8, 30),
+  }),
+  mappingBase({
     mapNumber: "MAP-2024-0112",
     jiraTicketId: "OPS-4612",
-    client: "Rami Levy",
-    area: "Kiryat Gat",
-    description: "Urgent map — due this week",
-    phase: MapPhase.INTAKE,
-    dueDate: "2026-07-12",
-  },
-  {
-    mapNumber: "MAP-2024-0113",
-    jiraTicketId: "OPS-4613",
-    client: "Victory",
-    area: "Holon",
-    description: "Inspector assigned — still needs QA",
-    phase: MapPhase.INTAKE,
-    assignInspector: true,
-  },
-  {
-    mapNumber: "MAP-2024-0114",
-    jiraTicketId: "OPS-4614",
-    client: "Tiv Taam",
-    area: "Ra'anana",
-    description: "Fully assigned — waiting for team to accept",
-    phase: MapPhase.INTAKE,
-    assignInspector: true,
-    assignQa: true,
-    inspectorAssignAccepted: false,
-    qaAssignAccepted: false,
-    releasedToPipeline: true,
-  },
+    client: "ShopRite",
+    area: "Kfar Saba",
+    description: "Mapping — intake pool on hub (unassigned)",
+    fieldDate: todayAt(9, 15),
+  }),
   {
     mapNumber: "MAP-2024-0102",
     jiraTicketId: "OPS-4602",
@@ -164,7 +94,7 @@ export const DEMO_MAPS: DemoMapInput[] = [
     area: "Beer Sheva",
     description: "Initial graphics prep in progress",
     phase: MapPhase.PREP,
-    status: MapStatus.PROCESSING,
+    inspectorStatus: InspectorStatus.PROCESSING,
     assignInspector: true,
   },
   {
@@ -174,21 +104,113 @@ export const DEMO_MAPS: DemoMapInput[] = [
     area: "Tel Aviv",
     description: "Prep complete — QA reviewing dashboard upload",
     phase: MapPhase.UPLOAD_REVIEW,
-    status: MapStatus.DONE,
+    inspectorStatus: InspectorStatus.DONE,
     assignInspector: true,
     assignQa: true,
   },
-  {
+  mappingBase({
     mapNumber: "MAP-2024-0104",
     jiraTicketId: "OPS-4604",
     client: "North Market",
     area: "Haifa",
-    description: "Upload approved — supervisors in field",
-    phase: MapPhase.FIELD,
-    status: MapStatus.DONE,
-    uploadApproved: true,
-    assignInspector: true,
-  },
+    description: "Mapping — hub intake pool",
+    fieldDate: todayAt(10, 0),
+  }),
+  mappingBase({
+    mapNumber: "MAP-2024-0111",
+    jiraTicketId: "OPS-4611",
+    client: "QuickMart",
+    area: "Petah Tikva",
+    description: "Mapping — hub intake pool",
+    fieldDate: todayAt(11, 30),
+  }),
+  mappingBase({
+    mapNumber: "MAP-2024-0110",
+    jiraTicketId: "OPS-4610",
+    client: "SuperPharm",
+    area: "Jerusalem",
+    description: "Mapping — assigned to Alex on shift",
+    assignSupervisor: true,
+    fieldDate: todayAt(9, 0),
+    mapperName: "Field Team A",
+    fieldProgressPercent: 25,
+  }),
+  mappingBase({
+    mapNumber: "MAP-2024-0113",
+    jiraTicketId: "OPS-4613",
+    client: "Daily Mart",
+    area: "Rehovot",
+    description: "Mapping — assigned to Dana (shift leader)",
+    assignSupervisor2: true,
+    fieldDate: todayAt(8, 0),
+    mapperName: "Field Team B",
+    fieldProgressPercent: 50,
+  }),
+  mappingBase({
+    mapNumber: "MAP-2024-0114",
+    jiraTicketId: "OPS-4614",
+    client: "Grand Market",
+    area: "Ashkelon",
+    description: "Mapping complete on hub — ready to accept in maps table",
+    assignSupervisor: true,
+    fieldWorkStatus: FieldWorkStatus.COMPLETED,
+    supervisorStatus: SupervisorStatus.DONE,
+    onHubStatusBoard: true,
+    fieldProgressPercent: 100,
+    fieldDate: todayAt(7, 30),
+    mapperName: "Field Team A",
+  }),
+  mappingBase({
+    mapNumber: "MAP-2024-0115",
+    jiraTicketId: "OPS-4615",
+    client: "MiniStop",
+    area: "Ra'anana",
+    description: "Mapping incomplete on hub — supervisor left a note",
+    assignSupervisor: true,
+    onHubStatusBoard: true,
+    fieldDate: todayAt(10, 45),
+    mapperName: "Contractor C",
+    opsManagerComment: "Could not finish aisle 4 — need return visit tomorrow",
+  }),
+  mappingBase({
+    mapNumber: "MAP-2024-0116",
+    jiraTicketId: "OPS-4616",
+    client: "Market City",
+    area: "Holon",
+    description: "Mapping — assigned to Noam on shift",
+    assignSupervisor3: true,
+    fieldDate: todayAt(9, 45),
+    mapperName: "Field Team C",
+    fieldProgressPercent: 15,
+  }),
+  mappingBase({
+    mapNumber: "MAP-2024-0117",
+    jiraTicketId: "OPS-4617",
+    client: "Blue Box",
+    area: "Rishon",
+    description: "Mapping — hub intake pool",
+    fieldDate: todayAt(12, 0),
+  }),
+  mappingBase({
+    mapNumber: "MAP-2024-0118",
+    jiraTicketId: "OPS-4618",
+    client: "Green Grocer",
+    area: "Modiin",
+    description: "Mapping — hub intake pool",
+    fieldDate: todayAt(13, 15),
+  }),
+  mappingBase({
+    mapNumber: "MAP-2024-0119",
+    jiraTicketId: "OPS-4619",
+    client: "Express Mart",
+    area: "Bat Yam",
+    description: "Mapping — assigned to Dana (shift leader)",
+    assignSupervisor2: true,
+    onHubStatusBoard: true,
+    fieldDate: todayAt(11, 0),
+    mapperName: "Field Team B",
+    fieldProgressPercent: 70,
+  }),
   {
     mapNumber: "MAP-2024-0105",
     jiraTicketId: "OPS-4605",
@@ -196,7 +218,7 @@ export const DEMO_MAPS: DemoMapInput[] = [
     area: "Eilat",
     description: "Post-field polish work",
     phase: MapPhase.POLISH,
-    status: MapStatus.PROCESSING,
+    inspectorStatus: InspectorStatus.PROCESSING,
     uploadApproved: true,
     assignInspector: true,
   },
@@ -207,7 +229,8 @@ export const DEMO_MAPS: DemoMapInput[] = [
     area: "Ashdod",
     description: "Inspector submitted fixes — QA re-review",
     phase: MapPhase.QA_REVIEW,
-    status: MapStatus.FIX_DONE,
+    inspectorStatus: InspectorStatus.DONE,
+    qaStatus: QaStatus.FIX_DONE,
     uploadApproved: true,
     assignInspector: true,
     assignQa: true,
@@ -219,7 +242,8 @@ export const DEMO_MAPS: DemoMapInput[] = [
     area: "Modi'in",
     description: "QA returned map for fixes",
     phase: MapPhase.POLISH,
-    status: MapStatus.FIX,
+    inspectorStatus: InspectorStatus.ACCEPTED,
+    qaStatus: QaStatus.FIX,
     uploadApproved: true,
     assignInspector: true,
     assignQa: true,
@@ -231,7 +255,8 @@ export const DEMO_MAPS: DemoMapInput[] = [
     area: "Rishon LeZion",
     description: "Workflow complete",
     phase: MapPhase.APPROVED,
-    status: MapStatus.APPROVED,
+    inspectorStatus: InspectorStatus.DONE,
+    qaStatus: QaStatus.APPROVED,
     uploadApproved: true,
     assignInspector: true,
     assignQa: true,
@@ -243,19 +268,20 @@ export const DEMO_MAPS: DemoMapInput[] = [
     area: "Herzliya",
     description: "Inspector accepted prep assignment",
     phase: MapPhase.PREP,
-    status: MapStatus.ACCEPTED,
+    inspectorStatus: InspectorStatus.ACCEPTED,
     assignInspector: true,
   },
-  ...NEW_INTAKE_MAPS,
 ];
 
-/** Wipe maps/tasks/events and recreate the full demo map set. */
 export async function seedDemoMaps(prisma: PrismaClient) {
   const leader = await prisma.user.findUnique({ where: { email: "leader@ops-demo.local" } });
   const inspector = await prisma.user.findUnique({ where: { email: "inspector@ops-demo.local" } });
   const qa = await prisma.user.findUnique({ where: { email: "qa@ops-demo.local" } });
+  const supervisor = await prisma.user.findUnique({ where: { email: "supervisor@ops-demo.local" } });
+  const supervisor2 = await prisma.user.findUnique({ where: { email: "supervisor2@ops-demo.local" } });
+  const supervisor3 = await prisma.user.findUnique({ where: { email: "supervisor3@ops-demo.local" } });
 
-  if (!leader || !inspector || !qa) {
+  if (!leader || !inspector || !qa || !supervisor || !supervisor2 || !supervisor3) {
     throw new Error("Demo users must exist before seeding maps. Run user seed first.");
   }
 
@@ -272,17 +298,29 @@ export async function seedDemoMaps(prisma: PrismaClient) {
       client: demo.client,
       area: demo.area,
       description: demo.description,
-      ...(demo.dueDate ? { dueDate: new Date(demo.dueDate) } : {}),
       phase: demo.phase,
-      status: demo.status ?? null,
+      inspectorStatus: demo.inspectorStatus ?? null,
+      supervisorStatus: demo.supervisorStatus ?? null,
+      fieldWorkStatus: demo.fieldWorkStatus ?? undefined,
+      fieldProgressPercent: demo.fieldProgressPercent ?? undefined,
+      onHubStatusBoard: demo.onHubStatusBoard ?? false,
+      mapperName: demo.mapperName ?? null,
+      opsManagerComment: demo.opsManagerComment ?? null,
+      fieldDate: demo.fieldDate ? new Date(demo.fieldDate) : undefined,
+      loomDone: demo.loomDone ?? false,
+      releasedToGraphics: demo.releasedToGraphics ?? false,
+      qaStatus: demo.qaStatus ?? null,
       uploadApproved: demo.uploadApproved ?? false,
-      inspectorAssignAccepted: demo.inspectorAssignAccepted ?? false,
-      qaAssignAccepted: demo.qaAssignAccepted ?? false,
-      workflowPhaseTarget: demo.workflowPhaseTarget ?? WorkflowPhaseTarget.PRE_UPLOAD,
-      releasedToPipeline:
-        demo.releasedToPipeline ?? demo.phase !== MapPhase.INTAKE,
+      uploadCompletedAt: demo.uploadApproved ? new Date() : undefined,
       ...(demo.assignInspector ? { assignedInspector: { connect: { id: inspector.id } } } : {}),
       ...(demo.assignQa ? { assignedQa: { connect: { id: qa.id } } } : {}),
+      ...(demo.assignSupervisor ? { assignedSupervisor: { connect: { id: supervisor.id } } } : {}),
+      ...(demo.assignSupervisor2
+        ? { assignedSupervisor: { connect: { id: supervisor2.id } } }
+        : {}),
+      ...(demo.assignSupervisor3
+        ? { assignedSupervisor: { connect: { id: supervisor3.id } } }
+        : {}),
     };
 
     const map = await prisma.map.create({ data });
@@ -328,5 +366,134 @@ export async function seedDemoMaps(prisma: PrismaClient) {
     });
   }
 
-  console.log(`  ✓ ${DEMO_MAPS.length} demo maps`);
+  const ops = await prisma.user.findUnique({ where: { email: "ops@ops-demo.local" } });
+  if (ops) {
+    await seedDemoUpdateEvents(prisma, {
+      qa,
+      inspector,
+      supervisor,
+      supervisor2,
+      ops,
+    });
+  }
+
+  const fieldCount = DEMO_MAPS.filter((m) => m.phase === MapPhase.FIELD).length;
+  console.log(`  ✓ ${DEMO_MAPS.length} demo maps (${fieldCount} in mapping / FIELD for hub testing)`);
+}
+
+type DemoUsers = {
+  qa: { id: string; name: string };
+  inspector: { id: string; name: string };
+  supervisor: { id: string; name: string };
+  supervisor2: { id: string; name: string };
+  ops: { id: string; name: string };
+};
+
+function hoursAgo(hours: number): Date {
+  return new Date(Date.now() - hours * 60 * 60 * 1000);
+}
+
+/** Sample milestone events so OPS Updates is populated for demos */
+export async function seedDemoUpdateEvents(prisma: PrismaClient, users: DemoUsers) {
+  const byNumber = async (mapNumber: string) =>
+    prisma.map.findUnique({ where: { mapNumber } });
+
+  const samples: {
+    mapNumber: string;
+    userId: string;
+    action: string;
+    note: string;
+    metadata?: string;
+    hoursAgo: number;
+  }[] = [
+    {
+      mapNumber: "MAP-2024-0103",
+      userId: users.qa.id,
+      action: "upload_approved",
+      note: "Dashboard upload approved — ready for field mapping",
+      hoursAgo: 5,
+    },
+    {
+      mapNumber: "MAP-2024-0102",
+      userId: users.inspector.id,
+      action: "inspector_status",
+      note: "Prep complete — sent to upload review",
+      metadata: JSON.stringify({ status: "DONE" }),
+      hoursAgo: 6,
+    },
+    {
+      mapNumber: "MAP-2024-0107",
+      userId: users.inspector.id,
+      action: "fix_done",
+      note: "Aisle label fixes completed per QA notes",
+      hoursAgo: 4,
+    },
+    {
+      mapNumber: "MAP-99",
+      userId: users.qa.id,
+      action: "qa_approved",
+      note: "Polish approved — ready for activation",
+      hoursAgo: 3,
+    },
+    {
+      mapNumber: "MAP-2024-0105",
+      userId: users.ops.id,
+      action: "field_complete",
+      note: "Released to graphics for polish after field work",
+      hoursAgo: 8,
+    },
+    {
+      mapNumber: "MAP-2024-0114",
+      userId: users.supervisor.id,
+      action: "hub_completed",
+      note: "MAP-2024-0114 field mapping complete — marked by Alex Ben-Ami",
+      hoursAgo: 1.5,
+    },
+    {
+      mapNumber: "MAP-2024-0115",
+      userId: users.supervisor.id,
+      action: "hub_uncompleted",
+      note: "Alex Ben-Ami marked MAP-2024-0115 uncompleted — Could not finish aisle 4 — need return visit tomorrow",
+      hoursAgo: 0.75,
+    },
+    {
+      mapNumber: "MAP-2024-0110",
+      userId: users.supervisor.id,
+      action: "hub_completed",
+      note: "MAP-2024-0110 field mapping complete — marked by Alex Ben-Ami",
+      hoursAgo: 12,
+    },
+    {
+      mapNumber: "MAP-2024-0113",
+      userId: users.supervisor2.id,
+      action: "hub_uncompleted",
+      note: "Dana Weiss marked MAP-2024-0113 uncompleted — Mapper left early, sections 2–3 remaining",
+      hoursAgo: 2,
+    },
+    {
+      mapNumber: "MAP-2024-0104",
+      userId: users.ops.id,
+      action: "field_complete",
+      note: "Accepted yesterday's field work — sent to polish",
+      hoursAgo: 20,
+    },
+  ];
+
+  let count = 0;
+  for (const sample of samples) {
+    const map = await byNumber(sample.mapNumber);
+    if (!map) continue;
+    await prisma.mapEvent.create({
+      data: {
+        mapId: map.id,
+        userId: sample.userId,
+        action: sample.action,
+        note: sample.note,
+        metadata: sample.metadata,
+        createdAt: hoursAgo(sample.hoursAgo),
+      },
+    });
+    count += 1;
+  }
+  console.log(`  ✓ ${count} demo update events (graphics + ops milestones)`);
 }

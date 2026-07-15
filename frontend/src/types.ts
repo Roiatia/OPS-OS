@@ -2,7 +2,10 @@ export type RoleName =
   | "GRAPHIC_TEAM_LEADER"
   | "MAPPING_INSPECTOR"
   | "GRAPHIC_QA"
-  | "OPS_ADMIN";
+  | "SUPERVISOR"
+  | "SUPERVISOR_SHIFT_LEADER"
+  | "OPS_ADMIN"
+  | "OPS_MANAGER_2";
 
 export type MapPhase =
   | "INTAKE"
@@ -14,16 +17,10 @@ export type MapPhase =
   | "APPROVED"
   | "CANCELLED";
 
-export type WorkflowPhaseTarget = "PRE_UPLOAD" | "UPLOADED" | "POLISH" | "POLISHED";
-
-export type MapStatus =
-  | "ACCEPTED"
-  | "PROCESSING"
-  | "DONE"
-  | "FIX"
-  | "FIX_DONE"
-  | "APPROVED";
-
+export type InspectorStatus = "ACCEPTED" | "PROCESSING" | "DONE";
+export type SupervisorStatus = "ACCEPTED" | "PROCESSING" | "DONE";
+export type FieldWorkStatus = "UNCOMPLETED" | "COMPLETED" | "CANCELLED";
+export type QaStatus = "FIX" | "FIX_DONE" | "APPROVED";
 export type TaskStatus = "PENDING" | "ACCEPTED" | "PROCESSING" | "DONE" | "FIX" | "FIX_DONE";
 
 export interface User {
@@ -64,8 +61,7 @@ export interface MapAttachment {
   id: string;
   fileName: string;
   mimeType: string;
-  /** Omitted on list endpoints to keep payloads small. */
-  data?: string;
+  data: string;
   context: string;
   createdAt: string;
   uploadedBy: { id: string; name: string };
@@ -86,39 +82,27 @@ export interface MapRecord {
   area: string | null;
   description: string | null;
   dueDate: string | null;
+  fieldDate: string | null;
+  loomDone: boolean;
+  positioning: boolean;
+  mapperName: string | null;
+  opsManagerComment: string | null;
+  fieldWorkStatus: FieldWorkStatus;
+  fieldProgressPercent: number;
+  onHubStatusBoard: boolean;
+  /** null = N/A; false = completed without shift-leader approval (highlight) */
+  shiftLeaderApproved?: boolean | null;
+  returnVisitAt?: string | null;
   phase: MapPhase;
-  status: MapStatus | null;
-  inspectorAssignAccepted: boolean;
-  qaAssignAccepted: boolean;
-  releasedToPipeline: boolean;
-  workflowPhaseTarget: WorkflowPhaseTarget;
+  inspectorStatus: InspectorStatus | null;
+  supervisorStatus: SupervisorStatus | null;
+  qaStatus: QaStatus | null;
   uploadApproved: boolean;
-  /** Spreadsheet fields — stored from CSV import; not shown in table UI yet */
-  batch?: string | null;
-  building?: string | null;
-  address?: string | null;
-  mapReceived?: string | null;
-  setupStage?: string | null;
-  mapperSource?: string | null;
-  mapperName?: string | null;
-  scheduleDate?: string | null;
-  mappingDate?: string | null;
-  postMappingDate?: string | null;
-  sentToStudio?: string | null;
-  receivedFromStudio?: string | null;
-  graphicsPolishAssignee?: string | null;
-  graphicsPolishStatus?: string | null;
-  polishQaAssignee?: string | null;
-  conversion?: string | null;
-  polishStage?: string | null;
-  activation?: string | null;
-  remappingDate?: string | null;
-  dashboardDate?: string | null;
-  maintDate?: string | null;
-  commentExternal?: string | null;
-  commentInternal?: string | null;
+  uploadCompletedAt: string | null;
+  releasedToGraphics: boolean;
   assignedInspector: { id: string; name: string; email: string } | null;
   assignedQa: { id: string; name: string; email: string } | null;
+  assignedSupervisor: { id: string; name: string; email: string } | null;
   tasks: Task[];
   events: MapEvent[];
   phaseHistory: PhaseHistoryEntry[];
@@ -128,10 +112,21 @@ export interface MapRecord {
   updatedAt: string;
 }
 
+export type { OpsActivityMessage, HubNotification } from "./types/activity";
+
+export interface HubSupervisor {
+  id: string;
+  name: string;
+  email: string;
+  shiftStartedAt: string | null;
+  roles: { role: RoleName }[];
+}
+
 export interface TeamMember {
   id: string;
   name: string;
   email: string;
+  shiftStartedAt?: string | null;
   roles: { role: RoleName }[];
 }
 
@@ -139,21 +134,23 @@ export const ROLE_LABELS: Record<RoleName, string> = {
   GRAPHIC_TEAM_LEADER: "Graphic Team Leader",
   MAPPING_INSPECTOR: "Mapping Inspector",
   GRAPHIC_QA: "Graphic QA",
-  OPS_ADMIN: "OPS Admin",
+  SUPERVISOR: "Supervisor",
+  SUPERVISOR_SHIFT_LEADER: "Supervisor Shift Leader",
+  OPS_ADMIN: "OPS Manager",
+  OPS_MANAGER_2: "OPS Manager 2",
 };
 
 export const PHASE_LABELS: Record<MapPhase, string> = {
-  INTAKE: "Pre-upload · Awaiting assign",
-  PREP: "Pre-upload · Inspector",
-  UPLOAD_REVIEW: "Pre-upload · QA",
-  FIELD: "Uploaded to dashboard",
-  POLISH: "Polish · Inspector",
-  QA_REVIEW: "Polish · QA",
+  INTAKE: "Intake",
+  PREP: "Initial Prep",
+  UPLOAD_REVIEW: "Upload Approval",
+  FIELD: "Field Work",
+  POLISH: "Polish",
+  QA_REVIEW: "QA Review",
   APPROVED: "Approved",
   CANCELLED: "Cancelled",
 };
 
-/** @deprecated Timeline UI uses WORKFLOW_TIMELINE in mapDisplay.ts */
 export const PHASE_ORDER: MapPhase[] = [
   "INTAKE",
   "PREP",
