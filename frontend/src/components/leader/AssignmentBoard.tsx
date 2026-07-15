@@ -165,6 +165,15 @@ export function AssignmentBoard({ maps, allMaps, team, onRefresh, onMapUpdated }
     [filteredMaps, selected]
   );
 
+  /** Selected maps that already have an inspector and can have it cleared (undo a shuffle). */
+  const selectedAssignedInspector = useMemo(
+    () =>
+      filteredMaps.filter(
+        (m) => selected.has(m.id) && m.assignedInspector && showInspectorAssignControl(m)
+      ),
+    [filteredMaps, selected]
+  );
+
   const assignableSelected = selectedForShuffle;
 
   function updateFilter(key: keyof MapColumnFilters, value: string) {
@@ -323,6 +332,32 @@ export function AssignmentBoard({ maps, allMaps, team, onRefresh, onMapUpdated }
     }
   }
 
+  async function handleUnshuffle() {
+    if (selectedAssignedInspector.length === 0) return;
+    const count = selectedAssignedInspector.length;
+    if (
+      !confirm(
+        `Clear the inspector from ${count} map${count !== 1 ? "s" : ""}? You can shuffle-assign again after.`
+      )
+    ) {
+      return;
+    }
+    setError("");
+    setLoading(true);
+    try {
+      const updated: MapRecord[] = [];
+      for (const map of selectedAssignedInspector) {
+        updated.push(await api.unassignInspector(map.id));
+      }
+      setSelected(new Set());
+      commitMaps(updated);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   const shuffleInspectors = inspectors.filter((m) => shuffleInspectorIds.has(m.id));
 
   const shufflePreviewRows = useMemo(() => {
@@ -464,7 +499,10 @@ export function AssignmentBoard({ maps, allMaps, team, onRefresh, onMapUpdated }
         ))}
       </div>
 
-      {(selectedForShuffle.length > 0 || selectedNeedingQa.length > 0 || selectedDeletable.length > 0) && (
+      {(selectedForShuffle.length > 0 ||
+        selectedNeedingQa.length > 0 ||
+        selectedAssignedInspector.length > 0 ||
+        selectedDeletable.length > 0) && (
         <div className="space-y-2">
           {selectedForShuffle.length > 0 && (
             <div className="flex flex-wrap items-center gap-3 bg-brand-50 border border-brand-200 rounded-xl px-4 py-3">
@@ -533,6 +571,24 @@ export function AssignmentBoard({ maps, allMaps, team, onRefresh, onMapUpdated }
                 className="px-4 py-1.5 text-sm bg-violet-600 text-white rounded-lg disabled:opacity-50"
               >
                 Assign to QA
+              </button>
+            </div>
+          )}
+
+          {selectedAssignedInspector.length > 0 && (
+            <div className="flex flex-wrap items-center gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+              <span className="text-sm font-medium text-amber-800">
+                {selectedAssignedInspector.length} assigned map
+                {selectedAssignedInspector.length !== 1 ? "s" : ""}
+              </span>
+              <button
+                type="button"
+                disabled={loading}
+                onClick={handleUnshuffle}
+                className="px-4 py-1.5 text-sm font-semibold text-amber-900 bg-white border border-amber-300 rounded-lg hover:bg-amber-100 disabled:opacity-50"
+                title="Clear the inspector so these maps can be shuffle-assigned again"
+              >
+                Unshuffle ({selectedAssignedInspector.length})
               </button>
             </div>
           )}
