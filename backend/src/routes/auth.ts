@@ -4,10 +4,12 @@ import { RoleName } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { authMiddleware, signToken, type AuthedRequest } from "../middleware/auth.js";
 import { ROLE_LABELS } from "../lib/types.js";
+import { env } from "../lib/env.js";
 
 const router = Router();
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
-const demoMode = process.env.DEMO_MODE === "true";
+// Demo mode is disabled in production regardless of DEMO_MODE (resolved in env).
+const demoMode = env.demoMode;
 
 router.get("/config", (_req, res) => {
   res.json({
@@ -43,6 +45,16 @@ router.post("/google", async (req, res) => {
       where: { email: payload.email },
       include: { roles: true },
     });
+
+    // Optional allow-list: when configured, only permit sign-in for emails whose
+    // domain is explicitly allowed. Enforced before auto-creating a new user.
+    if (!user && env.allowedEmailDomains.length > 0) {
+      const domain = payload.email.split("@")[1]?.toLowerCase() ?? "";
+      if (!env.allowedEmailDomains.includes(domain)) {
+        res.status(401).json({ error: "Email domain not allowed" });
+        return;
+      }
+    }
 
     if (!user) {
       user = await prisma.user.create({

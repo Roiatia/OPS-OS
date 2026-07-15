@@ -2,6 +2,7 @@ import "dotenv/config";
 import { createServer } from "http";
 import express from "express";
 import cors from "cors";
+import { env } from "./lib/env.js";
 import authRoutes from "./routes/auth.js";
 import mapsRoutes from "./routes/maps.js";
 import reportsRoutes from "./routes/reports.js";
@@ -13,23 +14,27 @@ import {
 } from "./services/dailyReport.js";
 
 const app = express();
-const port = Number(process.env.PORT) || 3001;
+const port = env.PORT;
+
+// Localhost defaults for dev convenience; production origins come from CORS_ORIGINS.
+const LOCALHOST_ORIGINS = [
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  "http://localhost:5174",
+  "http://127.0.0.1:5174",
+];
+const allowedOrigins = [...new Set([...env.corsOrigins, ...LOCALHOST_ORIGINS])];
 
 app.use(
   cors({
-    origin: [
-      "http://localhost:5173",
-      "http://127.0.0.1:5173",
-      "http://localhost:5174",
-      "http://127.0.0.1:5174",
-    ],
+    origin: allowedOrigins,
     credentials: true,
   })
 );
 app.use(express.json({ limit: "10mb" }));
 
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, demoMode: process.env.DEMO_MODE === "true" });
+  res.json({ ok: true, demoMode: env.demoMode });
 });
 
 app.use("/api/auth", authRoutes);
