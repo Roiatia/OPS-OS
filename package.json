@@ -1,0 +1,9 @@
+{
+  "name": "ops-os",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "bash ./start.sh",
+    "start": "bash ./start.sh"
+  }
+}
