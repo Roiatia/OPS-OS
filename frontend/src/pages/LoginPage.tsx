@@ -3,9 +3,9 @@ import { Link, useNavigate } from "react-router-dom";
 import { GoogleLogin } from "@react-oauth/google";
 import { api } from "../api";
 import { useAuth } from "../context/AuthContext";
-import { OriientLogo } from "../components/OriientLogo";
+import { OriientLogo } from "@/components/common/OriientLogo";
 
-/** Fallback when /auth/demo-users is unavailable — keep in sync with prisma/seed.ts */
+/** Fallback when /auth/demo-users is unavailable — keep in sync with prisma/seed/seed.ts */
 const KNOWN_DEMO_USERS = [
   { email: "leader@ops-demo.local", name: "Sarah Cohen", label: "Graphic Team Leader" },
   { email: "inspector@ops-demo.local", name: "David Levi", label: "Mapping Inspector" },

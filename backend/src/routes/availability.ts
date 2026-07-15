@@ -3,7 +3,7 @@ import { RoleName } from "@prisma/client";
 import { authMiddleware, requireRoles, type AuthedRequest } from "../middleware/auth.js";
 import * as availability from "../services/availability.js";
 import * as shiftPlan from "../services/shiftPlan.js";
-import type { AvailabilityDayInput } from "../lib/availabilityRules.js";
+import type { AvailabilityDayInput } from "../domain/availabilityRules.js";
 
 const router = Router();
 router.use(authMiddleware);

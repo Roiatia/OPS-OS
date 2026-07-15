@@ -10,13 +10,24 @@ import { ConfluencePanel } from "../components/shared/ConfluencePanel";
 import { SupervisorAvailabilityForm } from "../components/availability/SupervisorAvailabilityForm";
 import { AvailabilityReminderModal } from "../components/availability/AvailabilityReminderModal";
 import { getSupervisorFieldStatus } from "../lib/supervisorDisplay";
-import { useMapsRealtime } from "../lib/useMapsRealtime";
+import { useSectionRoute } from "@/hooks/useSectionRoute";
+import { useMapsRealtime } from "@/hooks/useMapsRealtime";
 import { applyMapUpsert, removeMapsById, useDebouncedCallback } from "../lib/mapsLive";
 import { patchMapInList } from "../lib/mapSync";
 import { useAuth } from "../context/AuthContext";
 import { hasSupervisorRole } from "../lib/roles";
-import { useAvailabilityReminder } from "../lib/useAvailabilityReminder";
+import { useAvailabilityReminder } from "@/hooks/useAvailabilityReminder";
 import type { MapRecord, TeamMember } from "../types";
+
+const SUPERVISOR_SECTIONS = [
+  "hub",
+  "maps",
+  "team",
+  "company-dashboard",
+  "availability",
+  "confluence",
+  "settings",
+] as const satisfies readonly SupervisorSection[];
 
 const SECTION_TITLES: Record<SupervisorSection, { title: string; subtitle: string }> = {
   hub: { title: "Hub", subtitle: "Drag your assigned maps — shift leaders can move any map" },
@@ -37,7 +48,11 @@ export function SupervisorDashboardPage() {
   const [teamFieldMaps, setTeamFieldMaps] = useState<MapRecord[]>([]);
   const [team, setTeam] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeSection, setActiveSection] = useState<SupervisorSection>("hub");
+  const [activeSection, setActiveSection] = useSectionRoute(
+    "/app/supervisor",
+    SUPERVISOR_SECTIONS,
+    "hub"
+  );
   const availabilityReminder = useAvailabilityReminder(hasSupervisorRole(user));
 
   function openAvailability() {
@@ -100,6 +115,18 @@ export function SupervisorDashboardPage() {
       }
     },
     []
+  );
+
+  /** Patch a single map from a Maps-board mutation response — no full refetch. */
+  const patchMap = useCallback(
+    (updated: MapRecord) => {
+      setMaps((prev) => {
+        const { next, needReload } = applyMapUpsert(prev, [updated]);
+        if (needReload) reloadMaps();
+        return next;
+      });
+    },
+    [reloadMaps]
   );
 
   const stats = useMemo(() => {
@@ -168,7 +195,11 @@ export function SupervisorDashboardPage() {
                       </div>
                     ))}
                   </div>
-                  <SupervisorMapsBoard maps={maps} onRefresh={load} />
+                  <SupervisorMapsBoard
+                    maps={maps}
+                    onRefresh={() => load(true)}
+                    onPatch={patchMap}
+                  />
                 </>
               )}
 

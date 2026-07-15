@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api";
 import type { MapRecord } from "../../types";
-import { Modal } from "../leader/Modal";
+import { Modal } from "@/components/common/Modal";
 import { formatFieldDateTime } from "../../lib/opsDisplay";
 
 interface Props {

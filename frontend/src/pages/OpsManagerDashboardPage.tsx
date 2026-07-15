@@ -18,12 +18,26 @@ import {
   matchesOpsQueue,
 } from "../lib/opsDisplay";
 import { getOpsWorkloadAlerts } from "../lib/opsWorkload";
-import { useMapsRealtime } from "../lib/useMapsRealtime";
+import { useSectionRoute } from "@/hooks/useSectionRoute";
+import { useMapsRealtime } from "@/hooks/useMapsRealtime";
 import { applyMapUpsert, removeMapsById, useDebouncedCallback } from "../lib/mapsLive";
 import { patchMapInList, normalizeMapRecord } from "../lib/mapSync";
-import { useOpsUpdates } from "../lib/useOpsUpdates";
+import { useOpsUpdates } from "@/hooks/useOpsUpdates";
 import { useAuth } from "../context/AuthContext";
 import type { MapRecord, TeamMember } from "../types";
+
+const OPS_SECTIONS = [
+  "hub",
+  "updates",
+  "maps",
+  "team",
+  "history",
+  "reports",
+  "company-dashboard",
+  "availability",
+  "confluence",
+  "settings",
+] as const satisfies readonly OpsSection[];
 
 const SECTION_TITLES: Record<OpsSection, { title: string; subtitle: string }> = {
   hub: {
@@ -77,7 +91,7 @@ export function OpsManagerDashboardPage() {
   const [showAddMap, setShowAddMap] = useState(false);
   const [readyPanelOpen, setReadyPanelOpen] = useState(false);
   const [error, setError] = useState("");
-  const [activeSection, setActiveSection] = useState<OpsSection>("hub");
+  const [activeSection, setActiveSection] = useSectionRoute("/app/ops", OPS_SECTIONS, "hub");
   const [form, setForm] = useState({
     mapNumber: "",
     jiraTicketId: "",
@@ -148,6 +162,22 @@ export function OpsManagerDashboardPage() {
       }
     },
     [opsUpdates]
+  );
+
+  /** Patch a single map from a Maps-board mutation response — no full refetch. */
+  const handleBoardPatch = useCallback(
+    (updated: MapRecord) => {
+      const normalized = normalizeMapRecord(updated);
+      setMaps((prev) => {
+        const { next, needReload } = applyMapUpsert(prev, [normalized]);
+        if (needReload) reloadMaps();
+        return next;
+      });
+      if (normalized.onHubStatusBoard || isReadyToRelease(normalized)) {
+        void opsUpdates.refresh();
+      }
+    },
+    [reloadMaps, opsUpdates]
   );
 
   async function handleAddMap(e: React.FormEvent) {
@@ -347,9 +377,10 @@ export function OpsManagerDashboardPage() {
                     team={team}
                     workloadAlerts={workloadAlerts}
                     onRefresh={() => {
-                      load();
+                      void load(true);
                       void opsUpdates.refresh();
                     }}
+                    onPatch={handleBoardPatch}
                     readyPanelOpen={readyPanelOpen}
                     onReadyPanelOpenChange={setReadyPanelOpen}
                   />

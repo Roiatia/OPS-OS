@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import type { MapRecord } from "../types";
+import type { MapRecord } from "@/types";
 
 type Handlers = {
   /** Fully-shaped changed maps — patch them into local state (no refetch). */

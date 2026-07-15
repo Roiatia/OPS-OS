@@ -2,7 +2,7 @@ import jwt from "jsonwebtoken";
 import type { Request, Response, NextFunction } from "express";
 import { RoleName } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
-import { isOpsManagerRole, OPS_MANAGER_ROLE_NAMES } from "../lib/roles.js";
+import { isOpsManagerRole, OPS_MANAGER_ROLE_NAMES } from "../domain/roles.js";
 import type { AuthUser } from "../lib/types.js";
 
 const JWT_SECRET = process.env.JWT_SECRET ?? "dev-secret";

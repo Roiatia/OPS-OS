@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { api } from "../api";
+import { api } from "@/api";
 import {
   defaultSubmissionWeekStart,
   formatWeekRange,
   isAvailabilityReminderDue,
   isoWeekStart,
-} from "./availabilityRules";
+} from "@/lib/availabilityRules";
 
 const DISMISSED_KEY = "ops-os-availability-reminder-dismissed";
 

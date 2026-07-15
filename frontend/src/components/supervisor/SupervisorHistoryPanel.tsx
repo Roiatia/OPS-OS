@@ -1,5 +1,5 @@
 import type { MapRecord } from "../../types";
-import { Badge } from "../Badge";
+import { Badge } from "@/components/common/Badge";
 import { FIELD_WORK_STATUS_LABELS, fieldWorkStatusTone, formatFieldDate, getSupervisorFieldStatus } from "../../lib/supervisorDisplay";
 import { Link } from "react-router-dom";
 

@@ -1,27 +1,27 @@
+import { Navigate } from "react-router-dom";
 import { useAuth, hasRole } from "../context/AuthContext";
 import { hasOpsManagerRole, hasSupervisorRole } from "../lib/roles";
-import { LeaderDashboardPage } from "./LeaderDashboardPage";
-import { OpsManagerDashboardPage } from "./OpsManagerDashboardPage";
-import { InspectorDashboardPage, QaDashboardPage } from "./InspectorDashboardPage";
-import { SupervisorDashboardPage } from "./SupervisorDashboardPage";
 
+/** Redirects `/app` to the current user's default role-prefixed section. */
 export function DashboardPage() {
   const { user } = useAuth();
 
+  if (!user) return null;
+
   if (hasOpsManagerRole(user)) {
-    return <OpsManagerDashboardPage />;
+    return <Navigate to="/app/ops/hub" replace />;
   }
-  if (hasRole(user!, "GRAPHIC_TEAM_LEADER")) {
-    return <LeaderDashboardPage />;
+  if (hasRole(user, "GRAPHIC_TEAM_LEADER")) {
+    return <Navigate to="/app/leader/maps" replace />;
   }
-  if (hasRole(user!, "MAPPING_INSPECTOR")) {
-    return <InspectorDashboardPage />;
+  if (hasRole(user, "MAPPING_INSPECTOR")) {
+    return <Navigate to="/app/inspector" replace />;
   }
-  if (hasRole(user!, "GRAPHIC_QA")) {
-    return <QaDashboardPage />;
+  if (hasRole(user, "GRAPHIC_QA")) {
+    return <Navigate to="/app/qa" replace />;
   }
   if (hasSupervisorRole(user)) {
-    return <SupervisorDashboardPage />;
+    return <Navigate to="/app/supervisor/hub" replace />;
   }
 
   return (

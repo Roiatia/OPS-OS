@@ -6,7 +6,7 @@ import authRoutes from "./routes/auth.js";
 import mapsRoutes from "./routes/maps.js";
 import reportsRoutes from "./routes/reports.js";
 import availabilityRoutes from "./routes/availability.js";
-import { attachRealtime } from "./realtime.js";
+import { attachRealtime } from "./lib/realtime.js";
 import {
   catchUpDailyReportIfNeeded,
   runDailyReportSchedulerTick,

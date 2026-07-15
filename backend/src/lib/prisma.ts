@@ -1,5 +1,5 @@
 import { PrismaClient } from "@prisma/client";
-import { mapIncludes } from "./mapIncludes.js";
+import { mapListIncludes } from "./mapIncludes.js";
 import {
   broadcastMapsUpsert,
   broadcastMapsDeleted,
@@ -40,7 +40,7 @@ function emitMapChange(
           broadcastMapsInvalidate();
           return;
         }
-        const shaped = await base.map.findUnique({ where: { id }, include: mapIncludes });
+        const shaped = await base.map.findUnique({ where: { id }, include: mapListIncludes });
         if (shaped) broadcastMapsUpsert([shaped]);
         else broadcastMapsInvalidate();
         return;

@@ -1,5 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
-import type { OpsDailyReportPayload } from "../src/services/dailyReport.js";
+import type { OpsDailyReportPayload } from "../../src/services/dailyReport.js";
 
 function daysAgo(n: number): Date {
   const d = new Date();

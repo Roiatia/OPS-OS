@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api";
 import type { FieldWorkStatus, MapRecord } from "../../types";
-import { Badge } from "../Badge";
+import { Badge } from "@/components/common/Badge";
 import {
   FIELD_WORK_STATUS_LABELS,
   fieldWorkStatusTone,
@@ -15,7 +15,10 @@ import {
 
 interface Props {
   maps: MapRecord[];
+  /** Silent/debounced reload — fallback for errors and realtime. */
   onRefresh: () => void;
+  /** Patch a single updated map into parent state (mirrors MapHubBoard). */
+  onPatch?: (map: MapRecord) => void;
 }
 
 const QUEUE_TABS: { id: SupervisorMapQueue; label: string }[] = [
@@ -28,7 +31,8 @@ const QUEUE_TABS: { id: SupervisorMapQueue; label: string }[] = [
 const filterInputClass =
   "w-full border border-border rounded px-2 py-1 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-brand-500";
 
-export function SupervisorMapsBoard({ maps, onRefresh }: Props) {
+export function SupervisorMapsBoard({ maps, onRefresh, onPatch }: Props) {
+  const patch = (map: MapRecord) => (onPatch ? onPatch(map) : onRefresh());
   const [queue, setQueue] = useState<SupervisorMapQueue>("all");
   const [clientFilter, setClientFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
@@ -71,7 +75,7 @@ export function SupervisorMapsBoard({ maps, onRefresh }: Props) {
 
   async function saveField(
     map: MapRecord,
-    patch: {
+    patchData: {
       loomDone?: boolean;
       positioning?: boolean;
       mapperName?: string | null;
@@ -83,8 +87,8 @@ export function SupervisorMapsBoard({ maps, onRefresh }: Props) {
     setError("");
     setSavingId(map.id);
     try {
-      await api.updateSupervisorField(map.id, patch);
-      onRefresh();
+      const updated = await api.updateSupervisorField(map.id, patchData);
+      patch(updated);
     } catch (e) {
       setError((e as Error).message);
     } finally {

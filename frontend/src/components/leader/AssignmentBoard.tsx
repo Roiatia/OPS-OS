@@ -2,10 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api";
 import type { MapRecord, TeamMember } from "../../types";
-import { Badge } from "../Badge";
+import { Badge } from "@/components/common/Badge";
 import { AssignMapModal } from "./AssignMapModal";
 import { AssignQaModal } from "./AssignQaModal";
-import { Modal } from "./Modal";
+import { Modal } from "@/components/common/Modal";
 import {
   buildBalancedInspectorAssignments,
   countInspectorActiveMaps,
@@ -42,7 +42,10 @@ import { ROLE_LABELS } from "../../types";
 interface Props {
   maps: MapRecord[];
   team: TeamMember[];
+  /** Silent/debounced reload — fallback for bulk ops, errors, and realtime. */
   onRefresh: () => void;
+  /** Patch a single updated map into parent state (mirrors MapHubBoard). */
+  onPatch?: (map: MapRecord) => void;
 }
 
 const QUEUE_TABS: { id: AssignmentQueue; label: string }[] = [
@@ -56,7 +59,9 @@ const QUEUE_TABS: { id: AssignmentQueue; label: string }[] = [
 const filterInputClass =
   "w-full border border-border rounded px-2 py-1 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-brand-500";
 
-export function AssignmentBoard({ maps, team, onRefresh }: Props) {
+export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
+  const patch = (map: MapRecord) => (onPatch ? onPatch(map) : onRefresh());
+
   const [queue, setQueue] = useState<AssignmentQueue>("all");
   const [columnFilters, setColumnFilters] = useState<MapColumnFilters>(EMPTY_COLUMN_FILTERS);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -196,16 +201,17 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
     setLoading(true);
     try {
       const map = assignMap;
+      let updated: MapRecord | undefined;
 
       if (opts.mode === "individual" && opts.memberId) {
-        await api.assignInspector(map.id, opts.memberId, opts.attachment);
+        updated = await api.assignInspector(map.id, opts.memberId, opts.attachment);
       } else if (opts.mode === "shift" && opts.shiftId) {
         const shift = SHIFTS.find((s) => s.id === opts.shiftId)!;
         const shiftInspectors = getShiftInspectors(team, opts.shiftId);
         const leadInspector = shiftInspectors[0];
         if (!leadInspector) throw new Error("No inspectors on this shift");
 
-        await api.assignInspector(map.id, leadInspector.id, opts.attachment);
+        updated = await api.assignInspector(map.id, leadInspector.id, opts.attachment);
 
         const taskPhase =
           map.phase === "POLISH" || map.phase === "QA_REVIEW" ? "POLISH" : "PREP";
@@ -221,7 +227,8 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
 
       setAssignMap(null);
       setSelected(new Set());
-      onRefresh();
+      if (updated) patch(updated);
+      else onRefresh();
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -235,11 +242,11 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
     setLoading(true);
     try {
       for (const map of assignableSelected) {
-        await api.assignInspector(map.id, bulkInspectorId);
+        const updated = await api.assignInspector(map.id, bulkInspectorId);
+        patch(updated);
       }
       setSelected(new Set());
       setBulkInspectorId("");
-      onRefresh();
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -303,11 +310,11 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
     setLoading(true);
     try {
       for (const map of selectedNeedingQa) {
-        await api.assignQa(map.id, bulkQaId);
+        const updated = await api.assignQa(map.id, bulkQaId);
+        patch(updated);
       }
       setSelected(new Set());
       setBulkQaId("");
-      onRefresh();
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -323,10 +330,10 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
     setError("");
     setLoading(true);
     try {
-      await api.assignQa(assignQaMap.id, opts.qaId, opts.attachment);
+      const updated = await api.assignQa(assignQaMap.id, opts.qaId, opts.attachment);
       setAssignQaMap(null);
       setSelected(new Set());
-      onRefresh();
+      patch(updated);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -338,8 +345,8 @@ export function AssignmentBoard({ maps, team, onRefresh }: Props) {
     setError("");
     setDueDateSaving(mapId);
     try {
-      await api.updateMapDueDate(mapId, value || null);
-      onRefresh();
+      const updated = await api.updateMapDueDate(mapId, value || null);
+      patch(updated);
     } catch (err) {
       setError((err as Error).message);
     } finally {

@@ -11,22 +11,22 @@
     "db:migrate": "prisma migrate deploy",
     "db:migrate:dev": "prisma migrate dev",
     "db:push": "prisma db push",
-    "db:seed": "tsx prisma/seed.ts",
-    "db:reseed-maps": "tsx prisma/reseed-demo-maps.ts",
-    "db:reseed-updates": "tsx prisma/reseed-demo-updates.ts",
-    "db:reseed-reports": "tsx prisma/seed-demo-reports.ts",
+    "db:seed": "tsx prisma/seed/seed.ts",
+    "db:reseed-maps": "tsx prisma/seed/reseed-demo-maps.ts",
+    "db:reseed-updates": "tsx prisma/seed/reseed-demo-updates.ts",
+    "db:reseed-reports": "tsx prisma/seed/seed-demo-reports.ts",
     "db:hub-demo": "node scripts/hub-demo-setup.mjs",
-    "db:setup": "prisma migrate deploy && tsx prisma/seed.ts",
+    "db:setup": "prisma migrate deploy && tsx prisma/seed/seed.ts",
     "db:find-pooler": "node scripts/find-pooler.mjs",
     "db:check": "node scripts/check-db.mjs",
     "db:use-local": "node scripts/switch-db.mjs local",
     "db:use-supabase": "node scripts/switch-db.mjs supabase",
     "db:local:up": "docker compose -f ../docker-compose.yml up -d postgres",
-    "db:local:setup": "npm run db:local:up && node scripts/switch-db.mjs local && prisma migrate deploy && tsx prisma/seed.ts",
+    "db:local:setup": "npm run db:local:up && node scripts/switch-db.mjs local && prisma migrate deploy && tsx prisma/seed/seed.ts",
     "postinstall": "prisma generate"
   },
   "prisma": {
-    "seed": "tsx prisma/seed.ts"
+    "seed": "tsx prisma/seed/seed.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.9.0",

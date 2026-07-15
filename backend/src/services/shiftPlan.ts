@@ -1,14 +1,14 @@
 import { RoleName } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
-import { formatWeekRange, weekStartSunday, isNightShift } from "../lib/availabilityRules.js";
+import { formatWeekRange, weekStartSunday, isNightShift } from "../domain/availabilityRules.js";
 import {
   autoPlanShifts,
   validatePlanAssignments,
   type PlannerAssignment,
   type PlannerStaff,
-} from "../lib/shiftPlanner.js";
+} from "../domain/shiftPlanner.js";
 import type { AuthUser } from "../lib/types.js";
-import { supervisorRolesWhere, userHasOpsManagerRole } from "../lib/roles.js";
+import { supervisorRolesWhere, userHasOpsManagerRole } from "../domain/roles.js";
 import { getPriorWeekNightCount } from "./availability.js";
 
 function parseWeekStart(raw?: string): Date {

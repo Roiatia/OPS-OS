@@ -10,8 +10,8 @@ import {
   formatFieldDateTime,
   getSupervisorFieldStatus,
 } from "../../lib/supervisorDisplay";
-import { Badge } from "../Badge";
-import { Modal } from "../leader/Modal";
+import { Badge } from "@/components/common/Badge";
+import { Modal } from "@/components/common/Modal";
 
 interface Props {
   team: TeamMember[];

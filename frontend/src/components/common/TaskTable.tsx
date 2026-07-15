@@ -1,4 +1,4 @@
-import type { Task, TaskStatus } from "../types";
+import type { Task, TaskStatus } from "@/types";
 import { Badge } from "./Badge";
 
 const TASK_STATUSES: TaskStatus[] = [

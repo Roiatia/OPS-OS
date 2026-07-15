@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
-import type { MapRecord } from "../types";
-import { PHASE_LABELS } from "../types";
-import { getMapDisplayState, workflowStateTone } from "../lib/mapDisplay";
+import type { MapRecord } from "@/types";
+import { PHASE_LABELS } from "@/types";
+import { getMapDisplayState, workflowStateTone } from "@/lib/mapDisplay";
 import { Badge } from "./Badge";
 
 export function MapCard({ map }: { map: MapRecord }) {

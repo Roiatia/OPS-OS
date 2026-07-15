@@ -1,7 +1,7 @@
 import type { Server as HttpServer, IncomingMessage } from "http";
 import { WebSocketServer } from "ws";
-import { verifyToken } from "./middleware/auth.js";
-import { addClient, removeClient } from "./lib/realtimeBus.js";
+import { verifyToken } from "../middleware/auth.js";
+import { addClient, removeClient } from "./realtimeBus.js";
 
 function tokenFromRequest(req: IncomingMessage): string | null {
   const url = new URL(req.url ?? "", "http://localhost");

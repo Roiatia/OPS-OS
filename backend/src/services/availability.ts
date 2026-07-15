@@ -10,9 +10,9 @@ import {
   computeShiftCoverageByDay,
   MAX_NIGHT_SHIFTS_PER_TWO_WEEKS,
   type AvailabilityDayInput,
-} from "../lib/availabilityRules.js";
+} from "../domain/availabilityRules.js";
 import type { AuthUser } from "../lib/types.js";
-import { supervisorRolesWhere, userHasOpsManagerRole, userHasSupervisorRole } from "../lib/roles.js";
+import { supervisorRolesWhere, userHasOpsManagerRole, userHasSupervisorRole } from "../domain/roles.js";
 
 function parseWeekStart(raw?: string): Date {
   const toUtcDate = (d: Date) =>

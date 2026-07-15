@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import type { MapRecord, TeamMember } from "../../types";
 import { memberIsSupervisor } from "../../lib/roles";
-import { Modal } from "../leader/Modal";
+import { Modal } from "@/components/common/Modal";
 
 interface Props {
   map: MapRecord;

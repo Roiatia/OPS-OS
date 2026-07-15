@@ -8,7 +8,7 @@ import {
   isInspectorInbox,
   isQaActive,
 } from "../lib/activeMapsWorkflow";
-import { useMapsRealtime } from "../lib/useMapsRealtime";
+import { useMapsRealtime } from "@/hooks/useMapsRealtime";
 import { applyMapUpsertReplaceOnly, removeMapsById, useDebouncedCallback } from "../lib/mapsLive";
 import type { MapRecord } from "../types";
 
@@ -17,9 +17,14 @@ export function InspectorDashboardPage() {
   const [maps, setMaps] = useState<MapRecord[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const load = useCallback(() => {
-    setLoading(true);
-    api.getMaps().then(setMaps).finally(() => setLoading(false));
+  const load = useCallback((silent = false) => {
+    if (!silent) setLoading(true);
+    return api
+      .getMaps()
+      .then(setMaps)
+      .finally(() => {
+        if (!silent) setLoading(false);
+      });
   }, []);
 
   useEffect(() => {
@@ -31,7 +36,11 @@ export function InspectorDashboardPage() {
     return () => clearInterval(interval);
   }, [load]);
 
-  const reload = useDebouncedCallback(load);
+  const reload = useDebouncedCallback(() => load(true));
+
+  const patchMap = useCallback((updated: MapRecord) => {
+    setMaps((prev) => applyMapUpsertReplaceOnly(prev, [updated]));
+  }, []);
 
   useMapsRealtime({
     onUpsert: (incoming) => setMaps((prev) => applyMapUpsertReplaceOnly(prev, incoming)),
@@ -72,7 +81,11 @@ export function InspectorDashboardPage() {
               New maps from the team leader. Click <strong>Accept</strong> to move them into your active
               workspace.
             </p>
-            <InspectorInboxTable maps={inbox} onRefresh={load} />
+            <InspectorInboxTable
+              maps={inbox}
+              onRefresh={() => load(true)}
+              onPatch={patchMap}
+            />
           </section>
 
           <section>
@@ -85,7 +98,12 @@ export function InspectorDashboardPage() {
             <p className="text-sm text-muted mb-4">
               Shared workspace with QA — update status and leave notes like the team spreadsheet.
             </p>
-            <ActiveMapsTable maps={active} role="inspector" onRefresh={load} />
+            <ActiveMapsTable
+              maps={active}
+              role="inspector"
+              onRefresh={() => load(true)}
+              onPatch={patchMap}
+            />
           </section>
         </>
       )}
@@ -97,9 +115,14 @@ export function QaDashboardPage() {
   const [maps, setMaps] = useState<MapRecord[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const load = useCallback(() => {
-    setLoading(true);
-    api.getMaps().then(setMaps).finally(() => setLoading(false));
+  const load = useCallback((silent = false) => {
+    if (!silent) setLoading(true);
+    return api
+      .getMaps()
+      .then(setMaps)
+      .finally(() => {
+        if (!silent) setLoading(false);
+      });
   }, []);
 
   useEffect(() => {
@@ -111,7 +134,11 @@ export function QaDashboardPage() {
     return () => clearInterval(interval);
   }, [load]);
 
-  const reload = useDebouncedCallback(load);
+  const reload = useDebouncedCallback(() => load(true));
+
+  const patchMap = useCallback((updated: MapRecord) => {
+    setMaps((prev) => applyMapUpsertReplaceOnly(prev, [updated]));
+  }, []);
 
   useMapsRealtime({
     onUpsert: (incoming) => setMaps((prev) => applyMapUpsertReplaceOnly(prev, incoming)),
@@ -140,7 +167,12 @@ export function QaDashboardPage() {
               {active.length} in queue
             </span>
           </div>
-          <ActiveMapsTable maps={active} role="qa" onRefresh={load} />
+          <ActiveMapsTable
+            maps={active}
+            role="qa"
+            onRefresh={() => load(true)}
+            onPatch={patchMap}
+          />
         </section>
       )}
     </div>

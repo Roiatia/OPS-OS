@@ -1,8 +1,8 @@
 import { Outlet, Link, useNavigate } from "react-router-dom";
-import { hasSupervisorRole } from "../lib/roles";
-import { useAuth, hasRole } from "../context/AuthContext";
-import { OriientLogo } from "./OriientLogo";
-import { ROLE_LABELS } from "../types";
+import { hasSupervisorRole } from "@/lib/roles";
+import { useAuth, hasRole } from "@/context/AuthContext";
+import { OriientLogo } from "@/components/common/OriientLogo";
+import { ROLE_LABELS } from "@/types";
 
 export function Layout() {
   const { user, logout } = useAuth();

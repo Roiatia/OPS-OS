@@ -9,11 +9,14 @@ import {
   statusRowClass,
   type StatusOption,
 } from "../../lib/activeMapsWorkflow";
-import { Badge } from "../Badge";
+import { Badge } from "@/components/common/Badge";
 
 interface Props {
   maps: MapRecord[];
+  /** Silent/debounced reload — fallback for errors and realtime. */
   onRefresh: () => void;
+  /** Patch a single updated map into parent state (mirrors MapHubBoard). */
+  onPatch?: (map: MapRecord) => void;
   readOnly?: boolean;
 }
 
@@ -31,7 +34,8 @@ function supervisorDisplayStatus(map: MapRecord): string {
   return map.supervisorStatus.charAt(0) + map.supervisorStatus.slice(1).toLowerCase();
 }
 
-export function SupervisorMapsTable({ maps, onRefresh, readOnly = false }: Props) {
+export function SupervisorMapsTable({ maps, onRefresh, onPatch, readOnly = false }: Props) {
+  const patch = (map: MapRecord) => (onPatch ? onPatch(map) : onRefresh());
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState<Record<string, string>>({});
   const [expandedNote, setExpandedNote] = useState<string | null>(null);
@@ -48,11 +52,13 @@ export function SupervisorMapsTable({ maps, onRefresh, readOnly = false }: Props
     setError("");
     setLoadingId(map.id);
     try {
+      let updated: MapRecord | undefined;
       if (option.action.kind === "supervisor") {
-        await api.updateSupervisorStatus(map.id, option.action.status, note);
+        updated = await api.updateSupervisorStatus(map.id, option.action.status, note);
       }
       setNoteDraft((prev) => ({ ...prev, [map.id]: "" }));
-      onRefresh();
+      if (updated) patch(updated);
+      else onRefresh();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -65,10 +71,10 @@ export function SupervisorMapsTable({ maps, onRefresh, readOnly = false }: Props
     if (!body) return;
     setLoadingId(mapId);
     try {
-      await api.addMapNote(mapId, body);
+      const updated = await api.addMapNote(mapId, body);
       setNoteDraft((prev) => ({ ...prev, [mapId]: "" }));
       setExpandedNote(null);
-      onRefresh();
+      patch(updated);
     } catch (e) {
       setError((e as Error).message);
     } finally {

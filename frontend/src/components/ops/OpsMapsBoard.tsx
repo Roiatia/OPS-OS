@@ -3,8 +3,8 @@ import { Link } from "react-router-dom";
 import { api } from "../../api";
 import type { MapRecord, TeamMember } from "../../types";
 import { ROLE_LABELS } from "../../types";
-import { Badge } from "../Badge";
-import { Modal } from "../leader/Modal";
+import { Badge } from "@/components/common/Badge";
+import { Modal } from "@/components/common/Modal";
 import { AssignSupervisorModal } from "./AssignSupervisorModal";
 import { OpsActionLightLoadNote } from "./OpsActionLightLoadNote";
 import { AssignMapModal } from "../leader/AssignMapModal";
@@ -64,7 +64,10 @@ interface Props {
   maps: MapRecord[];
   team: TeamMember[];
   workloadAlerts: OpsWorkloadAlert[];
+  /** Silent/debounced reload — fallback for bulk ops, errors, and realtime. */
   onRefresh: () => void;
+  /** Patch a single updated map into parent state (mirrors MapHubBoard). */
+  onPatch?: (map: MapRecord) => void;
   readyPanelOpen?: boolean;
   onReadyPanelOpenChange?: (open: boolean) => void;
 }
@@ -77,9 +80,12 @@ export function OpsMapsBoard({
   team,
   workloadAlerts,
   onRefresh,
+  onPatch,
   readyPanelOpen,
   onReadyPanelOpenChange,
 }: Props) {
+  const patch = (map: MapRecord) => (onPatch ? onPatch(map) : onRefresh());
+
   const [queue, setQueue] = useState<OpsMapQueue>("all");
   const [columnFilters, setColumnFilters] = useState<MapColumnFilters>(EMPTY_COLUMN_FILTERS);
   const [phaseFilter, setPhaseFilter] = useState("");
@@ -168,8 +174,8 @@ export function OpsMapsBoard({
     setDueDateSaving(mapId);
     setError("");
     try {
-      await api.updateMapDueDate(mapId, value || null);
-      onRefresh();
+      const updated = await api.updateMapDueDate(mapId, value || null);
+      patch(updated);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -267,11 +273,13 @@ export function OpsMapsBoard({
     setLoading(true);
     setError("");
     try {
+      let updated: MapRecord | undefined;
       if (opts.mode === "individual" && opts.memberId) {
-        await api.assignInspector(assignInspectorMap.id, opts.memberId, opts.attachment);
+        updated = await api.assignInspector(assignInspectorMap.id, opts.memberId, opts.attachment);
       }
       setAssignInspectorMap(null);
-      onRefresh();
+      if (updated) patch(updated);
+      else onRefresh();
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -287,9 +295,9 @@ export function OpsMapsBoard({
     setLoading(true);
     setError("");
     try {
-      await api.assignQa(assignQaMap.id, opts.qaId, opts.attachment);
+      const updated = await api.assignQa(assignQaMap.id, opts.qaId, opts.attachment);
       setAssignQaMap(null);
-      onRefresh();
+      patch(updated);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -323,9 +331,9 @@ export function OpsMapsBoard({
     setLoading(true);
     setError("");
     try {
-      await api.assignSupervisor(assignMap.id, supervisorId);
+      const updated = await api.assignSupervisor(assignMap.id, supervisorId);
       setAssignMap(null);
-      onRefresh();
+      patch(updated);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -338,8 +346,8 @@ export function OpsMapsBoard({
     setLoading(true);
     setError("");
     try {
-      await api.fieldComplete(map.id);
-      onRefresh();
+      const updated = await api.fieldComplete(map.id);
+      patch(updated);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -351,8 +359,8 @@ export function OpsMapsBoard({
     setLoading(true);
     setError("");
     try {
-      await api.releaseToGraphics(map.id);
-      onRefresh();
+      const updated = await api.releaseToGraphics(map.id);
+      patch(updated);
     } catch (err) {
       setError((err as Error).message);
     } finally {

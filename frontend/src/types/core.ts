@@ -61,7 +61,8 @@ export interface MapAttachment {
   id: string;
   fileName: string;
   mimeType: string;
-  data: string;
+  /** Base64 payload — only present in the detail shape; omitted from list shapes. */
+  data?: string;
   context: string;
   createdAt: string;
   uploadedBy: { id: string; name: string };
@@ -111,8 +112,6 @@ export interface MapRecord {
   createdAt: string;
   updatedAt: string;
 }
-
-export type { OpsActivityMessage, HubNotification } from "./types/activity";
 
 export interface HubSupervisor {
   id: string;

@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { InspectorStatus, MapPhase, QaStatus, RoleName, SupervisorStatus, FieldWorkStatus, TaskStatus } from "@prisma/client";
 import { authMiddleware, requireRoles, type AuthedRequest } from "../middleware/auth.js";
-import { userHasOpsManagerRole } from "../lib/roles.js";
+import { userHasOpsManagerRole } from "../domain/roles.js";
 import * as workflow from "../services/workflow.js";
 import { syncMapsFromSpreadsheet } from "../services/spreadsheetSync.js";
 import { importSamsClubCsv, previewSamsClubCsv } from "../services/csvImport.js";

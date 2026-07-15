@@ -1,22 +1,22 @@
 import { MapPhase, InspectorStatus, SupervisorStatus, FieldWorkStatus, QaStatus, TaskStatus, RoleName } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
-import { mapIncludes } from "../lib/mapIncludes.js";
+import { mapListIncludes, mapDetailIncludes } from "../lib/mapIncludes.js";
 import { broadcastMapsInvalidate } from "../lib/realtimeBus.js";
-import { assertUploadCompleteForMapping } from "../lib/pipeline.js";
+import { assertUploadCompleteForMapping } from "../domain/pipeline.js";
 import {
   getActivityLabel,
   getActivityTeam,
   isMilestoneEvent,
   MILESTONE_ACTIONS,
   normalizeMilestoneAction,
-} from "../lib/activityFeed.js";
+} from "../domain/activityFeed.js";
 import {
   SUPERVISOR_ROLE_NAMES,
   supervisorRolesWhere,
   userHasShiftLeaderRole,
   userHasSupervisorRole,
   userIsShiftLeader,
-} from "../lib/roles.js";
+} from "../domain/roles.js";
 import type { AuthUser } from "../lib/types.js";
 import { hasRole, isLeaderOrAdmin, isOpsManager } from "../lib/types.js";
 
@@ -117,7 +117,7 @@ export async function listMapsForUser(user: AuthUser) {
   if (isLeaderOrAdmin(user)) {
     return prisma.map.findMany({
       where: { phase: { notIn: ARCHIVED_PHASES } },
-      include: mapIncludes,
+      include: mapListIncludes,
       orderBy: { updatedAt: "desc" },
     });
   }
@@ -131,7 +131,7 @@ export async function listMapsForUser(user: AuthUser) {
           { tasks: { some: { assignedToId: user.id } } },
         ],
       },
-      include: mapIncludes,
+      include: mapListIncludes,
       orderBy: { updatedAt: "desc" },
     });
   }
@@ -147,7 +147,7 @@ export async function listMapsForUser(user: AuthUser) {
           { tasks: { some: { assignedToId: user.id } } },
         ],
       },
-      include: mapIncludes,
+      include: mapListIncludes,
       orderBy: { updatedAt: "desc" },
     });
   }
@@ -158,7 +158,7 @@ export async function listMapsForUser(user: AuthUser) {
         phase: MapPhase.FIELD,
         assignedSupervisorId: user.id,
       },
-      include: mapIncludes,
+      include: mapListIncludes,
       orderBy: { updatedAt: "desc" },
     });
   }
@@ -176,7 +176,7 @@ export async function listTeamFieldMaps(user: AuthUser) {
       phase: MapPhase.FIELD,
       assignedSupervisorId: { not: null },
     },
-    include: mapIncludes,
+    include: mapListIncludes,
     orderBy: [{ fieldDate: "asc" }, { updatedAt: "desc" }],
   });
 }
@@ -248,7 +248,7 @@ export async function releaseToGraphics(mapId: string, user: AuthUser) {
     data: { releasedToGraphics: true },
   });
   await logEvent(mapId, user.id, "released_to_graphics", "OPS sent map to graphics team");
-  return prisma.map.findUnique({ where: { id: mapId }, include: mapIncludes });
+  return prisma.map.findUnique({ where: { id: mapId }, include: mapListIncludes });
 }
 
 export async function shuffleAssignSupervisors(
@@ -362,7 +362,7 @@ export async function listHistoryMaps(user: AuthUser) {
 
   return prisma.map.findMany({
     where: { phase: { in: ARCHIVED_PHASES } },
-    include: mapIncludes,
+    include: mapListIncludes,
     orderBy: { updatedAt: "desc" },
   });
 }
@@ -370,7 +370,7 @@ export async function listHistoryMaps(user: AuthUser) {
 export async function getMapForUser(mapId: string, user: AuthUser) {
   let map = await prisma.map.findUnique({
     where: { id: mapId },
-    include: mapIncludes,
+    include: mapDetailIncludes,
   });
   if (!map) return null;
 
@@ -389,7 +389,7 @@ export async function getMapForUser(mapId: string, user: AuthUser) {
       }
       map = await prisma.map.findUnique({
         where: { id: mapId },
-        include: mapIncludes,
+        include: mapDetailIncludes,
       });
     }
   }
@@ -450,7 +450,7 @@ export async function assignInspector(
   const isNewAssignment = map.phase === MapPhase.INTAKE;
   const newPhase = isNewAssignment ? MapPhase.PREP : map.phase;
 
-  const updated = await prisma.map.update({
+  await prisma.map.update({
     where: { id: mapId },
     data: {
       assignedInspectorId: inspectorId,
@@ -458,7 +458,6 @@ export async function assignInspector(
       inspectorStatus: isNewAssignment ? null : map.inspectorStatus,
       qaStatus: isNewAssignment ? null : map.qaStatus,
     },
-    include: mapIncludes,
   });
 
   if (isNewAssignment && newPhase !== map.phase) {
@@ -483,7 +482,7 @@ export async function assignInspector(
     });
   }
 
-  return prisma.map.findUnique({ where: { id: mapId }, include: mapIncludes });
+  return prisma.map.findUnique({ where: { id: mapId }, include: mapDetailIncludes });
 }
 
 export async function shuffleAssignInspectors(
@@ -619,7 +618,7 @@ export async function assignQa(
     });
   }
 
-  return prisma.map.findUnique({ where: { id: mapId }, include: mapIncludes });
+  return prisma.map.findUnique({ where: { id: mapId }, include: mapDetailIncludes });
 }
 
 export async function cancelMap(mapId: string, user: AuthUser, note?: string) {
@@ -635,7 +634,7 @@ export async function cancelMap(mapId: string, user: AuthUser, note?: string) {
       phase: MapPhase.CANCELLED,
       fieldWorkStatus: FieldWorkStatus.CANCELLED,
     },
-    include: mapIncludes,
+    include: mapDetailIncludes,
   });
 
   await logPhaseEntry(mapId, MapPhase.CANCELLED, user.id, note ?? "Map cancelled");
@@ -669,10 +668,9 @@ export async function updateInspectorStatus(
     });
   }
 
-  const updated = await prisma.map.update({
+  await prisma.map.update({
     where: { id: mapId },
     data: { inspectorStatus: status, phase },
-    include: mapIncludes,
   });
 
   if (phase !== map.phase) {
@@ -683,7 +681,7 @@ export async function updateInspectorStatus(
   if (note?.trim()) {
     await addMapNote(mapId, user.id, note.trim());
   }
-  return prisma.map.findUnique({ where: { id: mapId }, include: mapIncludes });
+  return prisma.map.findUnique({ where: { id: mapId }, include: mapDetailIncludes });
 }
 
 async function ensureQaAssigned(mapId: string, qaId: string) {
@@ -705,7 +703,7 @@ export async function addMapNote(mapId: string, userId: string, body: string) {
   });
   await logEvent(mapId, userId, "note_added", body.slice(0, 120));
 
-  return prisma.map.findUnique({ where: { id: mapId }, include: mapIncludes });
+  return prisma.map.findUnique({ where: { id: mapId }, include: mapDetailIncludes });
 }
 
 export async function qaUploadDecision(
@@ -723,7 +721,7 @@ export async function qaUploadDecision(
   await ensureQaAssigned(mapId, user.id);
 
   if (!approved) {
-    const updated = await prisma.map.update({
+    await prisma.map.update({
       where: { id: mapId },
       data: {
         phase: MapPhase.PREP,
@@ -731,15 +729,14 @@ export async function qaUploadDecision(
         uploadApproved: false,
         uploadCompletedAt: null,
       },
-      include: mapIncludes,
     });
     await logPhaseEntry(mapId, MapPhase.PREP, user.id, note ?? "Upload rejected");
     await logEvent(mapId, user.id, "upload_rejected", note ?? "Upload not approved");
     if (note?.trim()) await addMapNote(mapId, user.id, note.trim());
-    return prisma.map.findUnique({ where: { id: mapId }, include: mapIncludes });
+    return prisma.map.findUnique({ where: { id: mapId }, include: mapDetailIncludes });
   }
 
-  const updated = await prisma.map.update({
+  await prisma.map.update({
     where: { id: mapId },
     data: {
       phase: MapPhase.FIELD,
@@ -748,12 +745,11 @@ export async function qaUploadDecision(
       qaStatus: null,
       supervisorStatus: null,
     },
-    include: mapIncludes,
   });
   await logPhaseEntry(mapId, MapPhase.FIELD, user.id, note ?? "Upload approved");
   await logEvent(mapId, user.id, "upload_approved", note ?? "Approved for dashboard upload");
   if (note?.trim()) await addMapNote(mapId, user.id, note.trim());
-  return prisma.map.findUnique({ where: { id: mapId }, include: mapIncludes });
+  return prisma.map.findUnique({ where: { id: mapId }, include: mapDetailIncludes });
 }
 
 export async function assignSupervisor(
@@ -815,7 +811,7 @@ export async function assignSupervisor(
     });
   }
 
-  return prisma.map.findUnique({ where: { id: mapId }, include: mapIncludes });
+  return prisma.map.findUnique({ where: { id: mapId }, include: mapListIncludes });
 }
 
 export async function updateSupervisorStatus(
@@ -855,7 +851,7 @@ export async function updateSupervisorStatus(
   if (note?.trim()) {
     await addMapNote(mapId, user.id, note.trim());
   }
-  return prisma.map.findUnique({ where: { id: mapId }, include: mapIncludes });
+  return prisma.map.findUnique({ where: { id: mapId }, include: mapDetailIncludes });
 }
 
 export async function updateSupervisorFieldWork(
@@ -899,7 +895,7 @@ export async function updateSupervisorFieldWork(
         ? { supervisorStatus: SupervisorStatus.DONE }
         : {}),
     },
-    include: mapIncludes,
+    include: mapListIncludes,
   });
 
   if (data.opsManagerComment?.trim()) {
@@ -927,7 +923,7 @@ export async function completeFieldWork(mapId: string, user: AuthUser) {
       supervisorStatus: null,
       qaStatus: null,
     },
-    include: mapIncludes,
+    include: mapDetailIncludes,
   });
   await logPhaseEntry(mapId, MapPhase.POLISH, user.id, "OPS released to graphics polish");
   await logEvent(mapId, user.id, "field_complete", "Released to graphics for polish");
@@ -959,7 +955,7 @@ export async function qaPolishDecision(
     await logPhaseEntry(mapId, MapPhase.POLISH, user.id, note ?? "QA requested fixes");
     await logEvent(mapId, user.id, "qa_fix", note ?? "QA requested fixes");
     if (note?.trim()) await addMapNote(mapId, user.id, note.trim());
-    return prisma.map.findUnique({ where: { id: mapId }, include: mapIncludes });
+    return prisma.map.findUnique({ where: { id: mapId }, include: mapDetailIncludes });
   }
 
   if (status === "fix_done") {
@@ -973,7 +969,7 @@ export async function qaPolishDecision(
     await logPhaseEntry(mapId, MapPhase.QA_REVIEW, user.id, note ?? "Fixes completed");
     await logEvent(mapId, user.id, "fix_done", note ?? "Inspector completed fixes");
     if (note?.trim()) await addMapNote(mapId, user.id, note.trim());
-    return prisma.map.findUnique({ where: { id: mapId }, include: mapIncludes });
+    return prisma.map.findUnique({ where: { id: mapId }, include: mapDetailIncludes });
   }
 
   if (status === "approved") {
@@ -988,7 +984,7 @@ export async function qaPolishDecision(
     await logPhaseEntry(mapId, MapPhase.APPROVED, user.id, note ?? "QA approved polish");
     await logEvent(mapId, user.id, "qa_approved", note ?? "QA approved polish");
     if (note?.trim()) await addMapNote(mapId, user.id, note.trim());
-    return prisma.map.findUnique({ where: { id: mapId }, include: mapIncludes });
+    return prisma.map.findUnique({ where: { id: mapId }, include: mapDetailIncludes });
   }
 
   throw new Error("Invalid QA status");
@@ -1071,7 +1067,7 @@ export async function createMapFromJira(
       dueDate: data.dueDate ? new Date(data.dueDate) : undefined,
       phase: MapPhase.INTAKE,
     },
-    include: mapIncludes,
+    include: mapListIncludes,
   });
   await logPhaseEntry(map.id, MapPhase.INTAKE, user.id, "Map created from CS");
   await logEvent(map.id, user.id, "map_created", `From Jira ${data.jiraTicketId ?? ""}`);
@@ -1088,7 +1084,7 @@ export async function updateMapDueDate(mapId: string, dueDate: string | null, us
   const map = await prisma.map.update({
     where: { id: mapId },
     data: { dueDate: dueDate ? new Date(dueDate) : null },
-    include: mapIncludes,
+    include: mapDetailIncludes,
   });
 
   await logEvent(

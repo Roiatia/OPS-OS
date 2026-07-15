@@ -1,4 +1,4 @@
-import type { RoleName } from "../types";
+import type { RoleName } from "./core";
 
 export interface AvailabilityDay {
   id?: string;

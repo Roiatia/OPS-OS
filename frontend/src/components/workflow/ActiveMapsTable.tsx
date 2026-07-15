@@ -11,12 +11,15 @@ import {
   statusRowClass,
   type StatusOption,
 } from "../../lib/activeMapsWorkflow";
-import { Badge } from "../Badge";
+import { Badge } from "@/components/common/Badge";
 
 interface Props {
   maps: MapRecord[];
   role: "inspector" | "qa";
+  /** Silent/debounced reload — fallback for errors and realtime. */
   onRefresh: () => void;
+  /** Patch a single updated map into parent state (mirrors MapHubBoard). */
+  onPatch?: (map: MapRecord) => void;
 }
 
 function formatDate(iso: string) {
@@ -27,7 +30,8 @@ function formatDate(iso: string) {
   });
 }
 
-export function ActiveMapsTable({ maps, role, onRefresh }: Props) {
+export function ActiveMapsTable({ maps, role, onRefresh, onPatch }: Props) {
+  const patch = (map: MapRecord) => (onPatch ? onPatch(map) : onRefresh());
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState<Record<string, string>>({});
   const [expandedNote, setExpandedNote] = useState<string | null>(null);
@@ -50,15 +54,17 @@ export function ActiveMapsTable({ maps, role, onRefresh }: Props) {
     setLoadingId(map.id);
     try {
       const action = option.action;
+      let updated: MapRecord | undefined;
       if (action.kind === "inspector") {
-        await api.updateInspectorStatus(map.id, action.status, note);
+        updated = await api.updateInspectorStatus(map.id, action.status, note);
       } else if (action.kind === "qa_review") {
-        await api.qaReview(map.id, action.status, note);
+        updated = await api.qaReview(map.id, action.status, note);
       } else if (action.kind === "upload_review") {
-        await api.uploadReview(map.id, action.approved, note);
+        updated = await api.uploadReview(map.id, action.approved, note);
       }
       setNoteDraft((prev) => ({ ...prev, [map.id]: "" }));
-      onRefresh();
+      if (updated) patch(updated);
+      else onRefresh();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -71,10 +77,10 @@ export function ActiveMapsTable({ maps, role, onRefresh }: Props) {
     if (!body) return;
     setLoadingId(mapId);
     try {
-      await api.addMapNote(mapId, body);
+      const updated = await api.addMapNote(mapId, body);
       setNoteDraft((prev) => ({ ...prev, [mapId]: "" }));
       setExpandedNote(null);
-      onRefresh();
+      patch(updated);
     } catch (e) {
       setError((e as Error).message);
     } finally {

@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import type { MapRecord, RoleName, TeamMember } from "../../types";
 import { ROLE_LABELS } from "../../types";
-import { Badge } from "../Badge";
+import { Badge } from "@/components/common/Badge";
 import {
   countInspectorActiveMaps,
   countQaActiveMaps,

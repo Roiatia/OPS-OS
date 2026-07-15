@@ -18,8 +18,8 @@ function run(cmd, args) {
 }
 
 run("npx", ["prisma", "migrate", "deploy"]);
-run("npx", ["tsx", "prisma/seed.ts"]);
-run("npx", ["tsx", "prisma/reseed-demo-maps.ts"]);
+run("npx", ["tsx", "prisma/seed/seed.ts"]);
+run("npx", ["tsx", "prisma/seed/reseed-demo-maps.ts"]);
 
 console.log("\n✓ Hub demo ready.");
 console.log("  OPS manager:  ops@ops-demo.local / ops2@ops-demo.local");

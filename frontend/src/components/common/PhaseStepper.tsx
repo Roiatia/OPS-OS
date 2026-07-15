@@ -1,5 +1,5 @@
-import type { MapPhase } from "../types";
-import { PHASE_LABELS, PHASE_ORDER } from "../types";
+import type { MapPhase } from "@/types";
+import { PHASE_LABELS, PHASE_ORDER } from "@/types";
 
 export interface PhaseHistoryEntry {
   phase: MapPhase;

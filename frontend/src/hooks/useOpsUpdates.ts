@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "../api";
-import { DEMO_OPS_UPDATES } from "./demoUpdates";
-import type { OpsActivityMessage, OpsShiftAlert } from "../types/activity";
+import { api } from "@/api";
+import { DEMO_OPS_UPDATES } from "@/lib/demoUpdates";
+import type { OpsActivityMessage, OpsShiftAlert } from "@/types/activity";
 
 const DISMISSED_STORAGE_KEY = "ops-os-dismissed-updates";
 

@@ -3,11 +3,14 @@ import { Link } from "react-router-dom";
 import { api } from "../../api";
 import type { MapRecord } from "../../types";
 import { getTaskType } from "../../lib/mapDisplay";
-import { Badge } from "../Badge";
+import { Badge } from "@/components/common/Badge";
 
 interface Props {
   maps: MapRecord[];
+  /** Silent/debounced reload — fallback for errors and realtime. */
   onRefresh: () => void;
+  /** Patch a single updated map into parent state (mirrors MapHubBoard). */
+  onPatch?: (map: MapRecord) => void;
 }
 
 function formatDate(iso: string) {
@@ -18,7 +21,8 @@ function formatDate(iso: string) {
   });
 }
 
-export function InspectorInboxTable({ maps, onRefresh }: Props) {
+export function InspectorInboxTable({ maps, onRefresh, onPatch }: Props) {
+  const patch = (map: MapRecord) => (onPatch ? onPatch(map) : onRefresh());
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [error, setError] = useState("");
 
@@ -26,8 +30,8 @@ export function InspectorInboxTable({ maps, onRefresh }: Props) {
     setError("");
     setLoadingId(map.id);
     try {
-      await api.updateInspectorStatus(map.id, "ACCEPTED");
-      onRefresh();
+      const updated = await api.updateInspectorStatus(map.id, "ACCEPTED");
+      patch(updated);
     } catch (e) {
       setError((e as Error).message);
     } finally {

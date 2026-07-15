@@ -16,8 +16,8 @@ import {
   getTaskType,
   workflowStateTone,
 } from "../../lib/mapDisplay";
-import { Badge } from "../Badge";
-import { Modal } from "./Modal";
+import { Badge } from "@/components/common/Badge";
+import { Modal } from "@/components/common/Modal";
 
 interface Props {
   team: TeamMember[];

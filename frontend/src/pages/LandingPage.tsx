@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { OriientLogo } from "../components/OriientLogo";
+import { OriientLogo } from "@/components/common/OriientLogo";
 
 export function LandingPage() {
   const { user } = useAuth();

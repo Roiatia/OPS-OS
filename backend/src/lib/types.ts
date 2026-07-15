@@ -1,5 +1,5 @@
 import { RoleName } from "@prisma/client";
-import { isOpsManagerRole } from "./roles.js";
+import { isOpsManagerRole } from "../domain/roles.js";
 
 export const ROLE_LABELS: Record<string, string> = {
   GRAPHIC_TEAM_LEADER: "Field Ops Graphic Team Leader",

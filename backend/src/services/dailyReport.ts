@@ -5,8 +5,8 @@ import {
   isMilestoneEvent,
   MILESTONE_ACTIONS,
   normalizeMilestoneAction,
-} from "../lib/activityFeed.js";
-import { SUPERVISOR_ROLE_NAMES, userIsShiftLeader } from "../lib/roles.js";
+} from "../domain/activityFeed.js";
+import { SUPERVISOR_ROLE_NAMES, userIsShiftLeader } from "../domain/roles.js";
 
 export interface OpsDailyReportMapItem {
   mapId: string;

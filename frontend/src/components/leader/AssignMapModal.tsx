@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { MapRecord, TeamMember } from "../../types";
-import { Modal } from "./Modal";
+import { Modal } from "@/components/common/Modal";
 import { pickLeastLoadedInspector, countInspectorActiveMaps } from "../../lib/assignment";
 import { canAssignInspector } from "../../lib/mapDisplay";
 import { SHIFTS, type ShiftId, getShiftInspectors } from "../../lib/shifts";

@@ -9,9 +9,18 @@ import { SettingsPanel } from "../components/leader/SettingsPanel";
 import { TeamPanel } from "../components/leader/TeamPanel";
 import { getIdleInspectors } from "../lib/assignment";
 import { needsQaAssignment } from "../lib/mapDisplay";
-import { useMapsRealtime } from "../lib/useMapsRealtime";
+import { useSectionRoute } from "@/hooks/useSectionRoute";
+import { useMapsRealtime } from "@/hooks/useMapsRealtime";
 import { applyMapUpsert, removeMapsById, useDebouncedCallback } from "../lib/mapsLive";
 import type { MapRecord, TeamMember } from "../types";
+
+const LEADER_SECTIONS = [
+  "maps",
+  "team",
+  "history",
+  "company-dashboard",
+  "settings",
+] as const satisfies readonly LeaderSection[];
 
 const SECTION_TITLES: Record<LeaderSection, { title: string; subtitle: string }> = {
   maps: {
@@ -44,7 +53,11 @@ export function LeaderDashboardPage() {
   const [showAddMap, setShowAddMap] = useState(false);
   const [showCsvImport, setShowCsvImport] = useState(false);
   const [error, setError] = useState("");
-  const [activeSection, setActiveSection] = useState<LeaderSection>("maps");
+  const [activeSection, setActiveSection] = useSectionRoute(
+    "/app/leader",
+    LEADER_SECTIONS,
+    "maps"
+  );
   const [form, setForm] = useState({
     mapNumber: "",
     jiraTicketId: "",
@@ -54,8 +67,8 @@ export function LeaderDashboardPage() {
     dueDate: "",
   });
 
-  function load() {
-    setLoading(true);
+  function load(silent = false) {
+    if (!silent) setLoading(true);
     api
       .getDashboard()
       .then((d) => {
@@ -69,14 +82,25 @@ export function LeaderDashboardPage() {
           setTeam(t);
         });
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!silent) setLoading(false);
+      });
   }
 
   useEffect(() => {
     load();
   }, []);
 
-  const reload = useDebouncedCallback(() => load());
+  const reload = useDebouncedCallback(() => load(true));
+
+  /** Patch a single map from a mutation response — no full dashboard refetch. */
+  const patchMap = (updated: MapRecord) => {
+    setMaps((prev) => {
+      const { next, needReload } = applyMapUpsert(prev, [updated]);
+      if (needReload) reload();
+      return next;
+    });
+  };
 
   useMapsRealtime({
     onUpsert: (incoming) =>
@@ -264,7 +288,12 @@ export function LeaderDashboardPage() {
                     </form>
                   )}
 
-                  <AssignmentBoard maps={maps} team={team} onRefresh={load} />
+                  <AssignmentBoard
+                    maps={maps}
+                    team={team}
+                    onRefresh={reload}
+                    onPatch={patchMap}
+                  />
                 </>
               )}
 
