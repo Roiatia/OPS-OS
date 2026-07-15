@@ -154,22 +154,22 @@ export function mapInHubZone(map: MapRecord, zone: HubDropZone): boolean {
   return statusColumnMaps([map], status).length > 0;
 }
 
-export function sortHubMaps(
-  maps: MapRecord[],
-  sortBy: "default" | "mapNumber" | "supervisor"
-): MapRecord[] {
-  if (sortBy === "default") return maps;
-  const sorted = [...maps];
-  if (sortBy === "mapNumber") {
-    sorted.sort((a, b) => a.mapNumber.localeCompare(b.mapNumber, undefined, { numeric: true }));
-  } else {
-    sorted.sort(
-      (a, b) =>
-        (a.assignedSupervisor?.name ?? "").localeCompare(b.assignedSupervisor?.name ?? "") ||
-        a.mapNumber.localeCompare(b.mapNumber, undefined, { numeric: true })
-    );
-  }
-  return sorted;
+/** Search like Updates — match map number, client, area, or supervisor name. */
+export function filterHubMaps(maps: MapRecord[], query: string): MapRecord[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return maps;
+  return maps.filter((m) => {
+    const haystack = [
+      m.mapNumber,
+      m.client,
+      m.area ?? "",
+      m.assignedSupervisor?.name ?? "",
+      m.assignedInspector?.name ?? "",
+    ]
+      .join(" ")
+      .toLowerCase();
+    return haystack.includes(q);
+  });
 }
 
 export const HUB_DRAG_MIME = "application/x-oriient-map-id";

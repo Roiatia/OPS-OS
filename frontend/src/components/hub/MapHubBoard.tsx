@@ -13,7 +13,7 @@ import {
   needsShiftLeaderReview,
   poolMaps,
   shortName,
-  sortHubMaps,
+  filterHubMaps,
   statusColumnMaps,
   supervisorMaps,
   type HubDropExtras,
@@ -120,7 +120,7 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [hubDialog, setHubDialog] = useState<HubDialog>(null);
   const [filterSupervisorId, setFilterSupervisorId] = useState<"all" | string>("all");
-  const [sortBy, setSortBy] = useState<"default" | "mapNumber" | "supervisor">("default");
+  const [search, setSearch] = useState("");
   const [progressDraft, setProgressDraft] = useState<{ mapId: string; pct: number } | null>(
     null
   );
@@ -205,7 +205,7 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
     if (filterSupervisorId !== "all") {
       next = next.filter((m) => m.assignedSupervisor?.id === filterSupervisorId);
     }
-    return sortHubMaps(next, sortBy);
+    return filterHubMaps(next, search);
   }
 
   function canDrag(map: MapRecord): boolean {
@@ -712,9 +712,22 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
         ))}
       </div>
 
-      {/* Filter / sort bar */}
-      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-white px-3 py-2.5 shadow-sm">
-        <label className="flex items-center gap-2 text-xs text-slate-600">
+      {/* Search / filter bar — same idea as Updates */}
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border border-border bg-white px-3 py-2.5 shadow-sm">
+        <div className="flex-1 min-w-0">
+          <label htmlFor="hub-map-search" className="sr-only">
+            Search maps
+          </label>
+          <input
+            id="hub-map-search"
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search map number, client, or supervisor name…"
+            className="w-full border border-border rounded-lg px-3 py-2 text-sm text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-brand-400/40 focus:border-brand-400"
+          />
+        </div>
+        <label className="flex items-center gap-2 text-xs text-slate-600 shrink-0">
           <span className="font-semibold uppercase tracking-wide">Supervisor</span>
           <select
             value={filterSupervisorId}
@@ -727,20 +740,6 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
                 {shortName(s.name)}
               </option>
             ))}
-          </select>
-        </label>
-        <label className="flex items-center gap-2 text-xs text-slate-600">
-          <span className="font-semibold uppercase tracking-wide">Sort</span>
-          <select
-            value={sortBy}
-            onChange={(e) =>
-              setSortBy(e.target.value as "default" | "mapNumber" | "supervisor")
-            }
-            className="border border-border rounded-lg px-2 py-1.5 text-sm text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-brand-400/40"
-          >
-            <option value="default">Default</option>
-            <option value="mapNumber">Map number</option>
-            <option value="supervisor">Supervisor name</option>
           </select>
         </label>
       </div>
@@ -803,8 +802,19 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
                   </p>
                 </div>
               ) : (
+                <>
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-                  {onShiftSupervisors.map((sup) => {
+                  {onShiftSupervisors
+                    .filter((sup) => {
+                      if (filterSupervisorId !== "all" && filterSupervisorId !== sup.id) {
+                        return false;
+                      }
+                      if (search.trim()) {
+                        return prepareMaps(supervisorMaps(maps, sup.id)).length > 0;
+                      }
+                      return true;
+                    })
+                    .map((sup) => {
                     const supMaps = supervisorMaps(maps, sup.id);
                     const zone: HubDropZone = `supervisor:${sup.id}`;
                     return (
@@ -843,6 +853,16 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
                     );
                   })}
                 </div>
+                {search.trim() &&
+                  !onShiftSupervisors.some(
+                    (sup) => prepareMaps(supervisorMaps(maps, sup.id)).length > 0
+                  ) &&
+                  prepareMaps(poolMaps(maps, onShiftIds)).length === 0 && (
+                    <p className="text-sm text-muted text-center py-6">
+                      No maps match &ldquo;{search.trim()}&rdquo;
+                    </p>
+                  )}
+                </>
               )}
             </div>
 
