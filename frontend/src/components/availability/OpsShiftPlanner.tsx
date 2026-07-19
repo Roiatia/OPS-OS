@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../api";
+import { useShiftPlanQuery } from "@/hooks/queries";
 import type { ShiftPlanAssignment, ShiftPlanView } from "../../types/availability";
 import {
   AVAILABILITY_DAYS,
@@ -12,33 +13,38 @@ import {
 
 export function OpsShiftPlanner() {
   const [weekStart, setWeekStart] = useState(() => defaultSubmissionWeekStart());
+  const weekIso = isoWeekStart(weekStart);
   const [data, setData] = useState<ShiftPlanView | null>(null);
   const [assignments, setAssignments] = useState<ShiftPlanAssignment[]>([]);
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [autoRunning, setAutoRunning] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [warnings, setWarnings] = useState<string[]>([]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const plan = await api.getShiftPlan(isoWeekStart(weekStart));
-      setData(plan);
-      setAssignments(plan.assignments);
-      setWarnings(plan.warnings);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, [weekStart]);
+  // Cached fetch: revisiting the Availability tab within staleTime is served
+  // from cache instead of re-fetching and flashing a loading state.
+  const planQuery = useShiftPlanQuery(weekIso);
+  const loading = planQuery.isLoading;
+
+  // Seed the local, editable state once per week. Guarding on the week (rather
+  // than on every `planQuery.data` change) means a background revalidation of
+  // the same week never discards in-progress assignment edits or an unsaved
+  // auto-plan preview.
+  const seededWeekRef = useRef<string | null>(null);
+  useEffect(() => {
+    const plan = planQuery.data;
+    if (!plan) return;
+    if (seededWeekRef.current === weekIso) return;
+    setData(plan);
+    setAssignments(plan.assignments);
+    setWarnings(plan.warnings);
+    seededWeekRef.current = weekIso;
+  }, [planQuery.data, weekIso]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (planQuery.error) setError((planQuery.error as Error).message);
+  }, [planQuery.error]);
 
   function changeWeek(delta: number) {
     const d = new Date(weekStart);
@@ -54,13 +60,26 @@ export function OpsShiftPlanner() {
     return map;
   }, [data]);
 
-  function availableStaff(dayOfWeek: number, isShiftLeader: boolean) {
-    return (data?.staff ?? []).filter((s) => {
-      if (s.isShiftLeader !== isShiftLeader) return false;
-      const day = s.days.find((d) => d.dayOfWeek === dayOfWeek);
-      return Boolean(day?.canWork);
-    });
-  }
+  // Precompute the shift-leader / supervisor pools for every day once per data
+  // change, instead of filtering the entire staff array twice for each of the
+  // rendered day cards.
+  const staffPoolsByDay = useMemo(() => {
+    const staffList = data?.staff ?? [];
+    const pools = new Map<
+      number,
+      { shiftLeaders: typeof staffList; supervisors: typeof staffList }
+    >();
+    for (const day of AVAILABILITY_DAYS) {
+      const shiftLeaders = staffList.filter(
+        (s) => s.isShiftLeader && s.days.find((d) => d.dayOfWeek === day)?.canWork
+      );
+      const supervisors = staffList.filter(
+        (s) => !s.isShiftLeader && s.days.find((d) => d.dayOfWeek === day)?.canWork
+      );
+      pools.set(day, { shiftLeaders, supervisors });
+    }
+    return pools;
+  }, [data]);
 
   function addAssignment(dayOfWeek: number, userId: string) {
     const person = data?.staff.find((s) => s.userId === userId);
@@ -199,8 +218,9 @@ export function OpsShiftPlanner() {
             const dayPlan = dayPlans.find((d) => d.dayOfWeek === day);
             const dayAssignments = assignments.filter((a) => a.dayOfWeek === day);
             const mapsList = data?.mapsPerDay.find((m) => m.dayOfWeek === day)?.maps ?? [];
-            const slPool = availableStaff(day, true);
-            const supPool = availableStaff(day, false);
+            const pools = staffPoolsByDay.get(day);
+            const slPool = pools?.shiftLeaders ?? [];
+            const supPool = pools?.supervisors ?? [];
 
             return (
               <div

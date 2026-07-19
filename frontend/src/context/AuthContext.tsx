@@ -1,4 +1,12 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { api, setAuthToken } from "../api";
 import type { User } from "../types";
 
@@ -29,28 +37,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .finally(() => setLoading(false));
   }, []);
 
-  async function loginDemo(email: string) {
+  const loginDemo = useCallback(async (email: string) => {
     const { token, user } = await api.demoLogin(email);
     setAuthToken(token);
     setUser(user);
-  }
+  }, []);
 
-  async function loginGoogle(credential: string) {
+  const loginGoogle = useCallback(async (credential: string) => {
     const { token, user } = await api.googleLogin(credential);
     setAuthToken(token);
     setUser(user);
-  }
+  }, []);
 
-  function logout() {
+  const logout = useCallback(() => {
     setAuthToken(null);
     setUser(null);
-  }
+  }, []);
 
-  return (
-    <AuthContext.Provider value={{ user, loading, loginDemo, loginGoogle, logout }}>
-      {children}
-    </AuthContext.Provider>
+  // Stable value identity so consumers don't re-render on unrelated parent
+  // renders — only when user/loading actually change.
+  const value = useMemo<AuthContextValue>(
+    () => ({ user, loading, loginDemo, loginGoogle, logout }),
+    [user, loading, loginDemo, loginGoogle, logout]
   );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {

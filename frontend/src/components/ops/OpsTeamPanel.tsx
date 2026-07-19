@@ -109,6 +109,14 @@ export function OpsTeamPanel({ team, maps }: Props) {
     [team]
   );
 
+  // Precompute each member's active-map count once per team/maps change instead
+  // of rescanning all maps for every rendered card.
+  const activeCountByMember = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const member of team) counts.set(member.id, activeCountForMember(member, maps));
+    return counts;
+  }, [team, maps]);
+
   const members =
     tab === "on_shift" ? onShiftToday : tab === "graphics" ? graphics : allOps;
 
@@ -166,7 +174,7 @@ export function OpsTeamPanel({ team, maps }: Props) {
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {members.map((member) => {
-            const activeCount = activeCountForMember(member, maps);
+            const activeCount = activeCountByMember.get(member.id) ?? 0;
             const isSelected = selectedId === member.id;
             const onShift = isOnShiftToday(member.shiftStartedAt);
             const lightLoad = memberIsSupervisor(member) && onShift && activeCount <= 1;

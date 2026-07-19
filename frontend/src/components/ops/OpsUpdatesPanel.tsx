@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import type { OpsActivityMessage, OpsShiftAlert } from "../../types/activity";
 import {
@@ -27,7 +27,7 @@ interface Props {
   onRefresh?: () => void;
 }
 
-function ShiftAlertRow({
+const ShiftAlertRow = memo(function ShiftAlertRow({
   alert,
   onDismiss,
   onRestore,
@@ -94,9 +94,9 @@ function ShiftAlertRow({
       </div>
     </li>
   );
-}
+});
 
-function ActivityRow({
+const ActivityRow = memo(function ActivityRow({
   message,
   onDismiss,
   onRestore,
@@ -194,9 +194,9 @@ function ActivityRow({
       </div>
     </li>
   );
-}
+});
 
-function ActivityColumn({
+const ActivityColumn = memo(function ActivityColumn({
   title,
   subtitle,
   accent,
@@ -264,7 +264,7 @@ function ActivityColumn({
       </div>
     </section>
   );
-}
+});
 
 export function OpsUpdatesPanel({
   updates,

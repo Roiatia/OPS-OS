@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api";
 import { useAuth } from "../../context/AuthContext";
@@ -201,13 +201,24 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
     [maps, onShiftSupervisors, onShiftIds]
   );
 
-  function prepareMaps(list: MapRecord[]): MapRecord[] {
-    let next = list;
+  // Compute the supervisor+search filter once over all maps (instead of
+  // re-running `filterHubMaps` for every drop zone on every render/keystroke),
+  // then each zone just checks membership. `filterHubMaps` only filters and
+  // preserves order, so filtering each sublist by this set is equivalent while
+  // keeping each zone's own ordering.
+  const visibleMapIds = useMemo(() => {
+    let next = maps;
     if (filterSupervisorId !== "all") {
       next = next.filter((m) => m.assignedSupervisor?.id === filterSupervisorId);
     }
-    return filterHubMaps(next, search);
-  }
+    next = filterHubMaps(next, search);
+    return new Set(next.map((m) => m.id));
+  }, [maps, filterSupervisorId, search]);
+
+  const prepareMaps = useCallback(
+    (list: MapRecord[]): MapRecord[] => list.filter((m) => visibleMapIds.has(m.id)),
+    [visibleMapIds]
+  );
 
   function canDrag(map: MapRecord): boolean {
     return canUserDragHubMap(map, {

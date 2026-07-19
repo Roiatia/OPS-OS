@@ -1,7 +1,7 @@
 import { Prisma, MapPhase, InspectorStatus, SupervisorStatus, FieldWorkStatus, QaStatus, TaskStatus, RoleName } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { mapListIncludes, mapDetailIncludes, mapHistoryIncludes } from "../lib/mapIncludes.js";
-import { broadcastMapsInvalidate } from "../lib/realtimeBus.js";
+import { broadcastMapsInvalidate, broadcastMapsUpsert, withSuppressedBroadcasts } from "../lib/realtimeBus.js";
 import { assertUploadCompleteForMapping } from "../domain/pipeline.js";
 import {
   getActivityLabel,
@@ -27,6 +27,26 @@ export interface AttachmentInput {
 }
 
 const ARCHIVED_PHASES: MapPhase[] = [MapPhase.APPROVED, MapPhase.CANCELLED];
+
+/**
+ * After a bulk mutation, re-read the affected maps in list shape and push them
+ * as a single surgical `maps:upsert` so clients patch those rows in place
+ * instead of refetching every board. Falls back to a coarse invalidate if the
+ * read fails, so clients never end up with stale data.
+ */
+async function broadcastChangedMaps(mapIds: string[]): Promise<void> {
+  if (mapIds.length === 0) return;
+  try {
+    const changed = await prisma.map.findMany({
+      where: { id: { in: mapIds } },
+      include: mapListIncludes,
+    });
+    if (changed.length > 0) broadcastMapsUpsert(changed);
+    else broadcastMapsInvalidate();
+  } catch {
+    broadcastMapsInvalidate();
+  }
+}
 
 // Resolved shapes of the reshaping read used to return mutation responses.
 type MapDetailPayload = Prisma.MapGetPayload<{ include: typeof mapDetailIncludes }>;
@@ -388,13 +408,16 @@ export async function shuffleAssignSupervisors(
     note: `Shuffle assigned to ${supervisorName}`,
   }));
 
-  await prisma.$transaction([
-    ...updateManyOps,
-    prisma.mapEvent.createMany({ data: eventRows }),
-  ]);
+  await withSuppressedBroadcasts(() =>
+    prisma.$transaction([
+      ...updateManyOps,
+      prisma.mapEvent.createMany({ data: eventRows }),
+    ])
+  );
 
-  // Bulk change: tell clients to refetch (overrides any mid-transaction upserts).
-  broadcastMapsInvalidate();
+  // Surgical realtime: push the exact changed rows so clients patch in place
+  // instead of refetching every board.
+  await broadcastChangedMaps(assignments.map((a) => a.mapId));
 
   const distribution = supervisors.map((supervisor) => ({
     supervisorId: supervisor.id,
@@ -646,14 +669,17 @@ export async function shuffleAssignInspectors(
     note: `Shuffle assigned to ${inspectorName}`,
   }));
 
-  await prisma.$transaction([
-    ...updateManyOps,
-    prisma.mapPhaseHistory.createMany({ data: phaseHistoryRows }),
-    prisma.mapEvent.createMany({ data: eventRows }),
-  ]);
+  await withSuppressedBroadcasts(() =>
+    prisma.$transaction([
+      ...updateManyOps,
+      prisma.mapPhaseHistory.createMany({ data: phaseHistoryRows }),
+      prisma.mapEvent.createMany({ data: eventRows }),
+    ])
+  );
 
-  // Bulk change: tell clients to refetch (overrides any mid-transaction upserts).
-  broadcastMapsInvalidate();
+  // Surgical realtime: push the exact changed rows so clients patch in place
+  // instead of refetching every board.
+  await broadcastChangedMaps(assignments.map((a) => a.mapId));
 
   const distribution = inspectors.map((inspector) => ({
     inspectorId: inspector.id,
@@ -680,27 +706,29 @@ export async function unassignInspectors(mapIds: string[], user: AuthUser) {
   const eligibleIds = maps.filter((m) => m.phase === MapPhase.PREP).map((m) => m.id);
 
   if (eligibleIds.length > 0) {
-    await prisma.$transaction([
-      prisma.map.updateMany({
-        where: { id: { in: eligibleIds } },
-        data: {
-          assignedInspectorId: null,
-          phase: MapPhase.INTAKE,
-          inspectorStatus: null,
-          qaStatus: null,
-        },
-      }),
-      prisma.mapEvent.createMany({
-        data: eligibleIds.map((id) => ({
-          mapId: id,
-          userId: user.id,
-          action: "unassigned_inspector",
-          note: "Unassigned — returned to queue",
-        })),
-      }),
-    ]);
+    await withSuppressedBroadcasts(() =>
+      prisma.$transaction([
+        prisma.map.updateMany({
+          where: { id: { in: eligibleIds } },
+          data: {
+            assignedInspectorId: null,
+            phase: MapPhase.INTAKE,
+            inspectorStatus: null,
+            qaStatus: null,
+          },
+        }),
+        prisma.mapEvent.createMany({
+          data: eligibleIds.map((id) => ({
+            mapId: id,
+            userId: user.id,
+            action: "unassigned_inspector",
+            note: "Unassigned — returned to queue",
+          })),
+        }),
+      ])
+    );
 
-    broadcastMapsInvalidate();
+    await broadcastChangedMaps(eligibleIds);
   }
 
   return { unassigned: eligibleIds.length };
@@ -720,25 +748,27 @@ export async function unassignSupervisors(mapIds: string[], user: AuthUser) {
     .map((m) => m.id);
 
   if (eligibleIds.length > 0) {
-    await prisma.$transaction([
-      prisma.map.updateMany({
-        where: { id: { in: eligibleIds } },
-        data: {
-          assignedSupervisorId: null,
-          supervisorStatus: null,
-        },
-      }),
-      prisma.mapEvent.createMany({
-        data: eligibleIds.map((id) => ({
-          mapId: id,
-          userId: user.id,
-          action: "unassigned_supervisor",
-          note: "Supervisor unassigned",
-        })),
-      }),
-    ]);
+    await withSuppressedBroadcasts(() =>
+      prisma.$transaction([
+        prisma.map.updateMany({
+          where: { id: { in: eligibleIds } },
+          data: {
+            assignedSupervisorId: null,
+            supervisorStatus: null,
+          },
+        }),
+        prisma.mapEvent.createMany({
+          data: eligibleIds.map((id) => ({
+            mapId: id,
+            userId: user.id,
+            action: "unassigned_supervisor",
+            note: "Supervisor unassigned",
+          })),
+        }),
+      ])
+    );
 
-    broadcastMapsInvalidate();
+    await broadcastChangedMaps(eligibleIds);
   }
 
   return { unassigned: eligibleIds.length };

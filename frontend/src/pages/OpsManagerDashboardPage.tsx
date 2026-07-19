@@ -1,18 +1,37 @@
-import { useCallback, useMemo, useState } from "react";
+import { Suspense, lazy, useCallback, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
-import { CompanyDashboardPanel } from "../components/leader/CompanyDashboardPanel";
 import { SettingsPanel } from "../components/leader/SettingsPanel";
 import { MapHubBoard } from "../components/hub/MapHubBoard";
-import { OpsHistoryPanel } from "../components/ops/OpsHistoryPanel";
-import { OpsMapsBoard } from "../components/ops/OpsMapsBoard";
 import { SpreadsheetSyncPanel } from "../components/ops/SpreadsheetSyncPanel";
-import { OpsReportsPanel } from "../components/ops/OpsReportsPanel";
-import { OpsUpdatesPanel } from "../components/ops/OpsUpdatesPanel";
 import { OpsManagerSidebar, type OpsSection } from "../components/ops/OpsManagerSidebar";
-import { OpsTeamPanel } from "../components/ops/OpsTeamPanel";
 import { ConfluencePanel } from "../components/shared/ConfluencePanel";
-import { AvailabilityPanel } from "../components/shared/AvailabilityPanel";
+
+// Heavy, non-default sections are code-split so the initial Hub paint doesn't
+// download the maps board (~1200 lines), reports, history or availability code.
+const OpsMapsBoard = lazy(() =>
+  import("../components/ops/OpsMapsBoard").then((m) => ({ default: m.OpsMapsBoard }))
+);
+const OpsReportsPanel = lazy(() =>
+  import("../components/ops/OpsReportsPanel").then((m) => ({ default: m.OpsReportsPanel }))
+);
+const OpsHistoryPanel = lazy(() =>
+  import("../components/ops/OpsHistoryPanel").then((m) => ({ default: m.OpsHistoryPanel }))
+);
+const OpsUpdatesPanel = lazy(() =>
+  import("../components/ops/OpsUpdatesPanel").then((m) => ({ default: m.OpsUpdatesPanel }))
+);
+const OpsTeamPanel = lazy(() =>
+  import("../components/ops/OpsTeamPanel").then((m) => ({ default: m.OpsTeamPanel }))
+);
+const CompanyDashboardPanel = lazy(() =>
+  import("../components/leader/CompanyDashboardPanel").then((m) => ({
+    default: m.CompanyDashboardPanel,
+  }))
+);
+const AvailabilityPanel = lazy(() =>
+  import("../components/shared/AvailabilityPanel").then((m) => ({ default: m.AvailabilityPanel }))
+);
 import {
   isAtGraphics,
   isReadyToRelease,
@@ -103,7 +122,9 @@ export function OpsManagerDashboardPage() {
   const { data, isLoading } = useDashboardQuery();
   const maps = useMemo(() => data?.maps ?? [], [data]);
   const team = useMemo(() => data?.team ?? [], [data]);
-  const loading = isLoading;
+  // Only gate on the cold load. A background revalidation (realtime/invalidate)
+  // keeps `data` populated, so panels stay rendered instead of flashing "Loading".
+  const loading = isLoading && !data;
 
   // History is heavy at scale — load it lazily the first time the History tab
   // opens (the shared cache keeps it live via realtime after that).
@@ -117,9 +138,12 @@ export function OpsManagerDashboardPage() {
   const reloadMaps = load;
 
   // Live-poll updates only while viewing the sections that surface them; the
-  // badge still gets an initial load on other sections.
+  // badge still gets an initial load on other sections. We intentionally do NOT
+  // pass an onActivity handler: map changes already stream in surgically over
+  // the realtime WebSocket, so a new feed item no longer needs to force a full
+  // dashboard refetch (the feed merges its own items incrementally).
   const opsUpdates = useOpsUpdates(
-    load,
+    undefined,
     activeSection === "updates" || activeSection === "hub"
   );
 
@@ -231,6 +255,7 @@ export function OpsManagerDashboardPage() {
             </p>
           )}
 
+          <Suspense fallback={<p className="text-muted">Loading...</p>}>
           {activeSection === "hub" && user ? (
             <MapHubBoard
               mode="ops"
@@ -376,6 +401,7 @@ export function OpsManagerDashboardPage() {
               {activeSection === "settings" && <SettingsPanel />}
             </>
           )}
+          </Suspense>
         </div>
       </div>
     </div>

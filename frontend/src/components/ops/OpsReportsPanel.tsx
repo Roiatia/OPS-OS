@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api";
+import { reportKeys, useReportDetailQuery, useReportsListQuery } from "@/hooks/queries";
 import type { OpsDailyReportDetail, OpsDailyReportListItem } from "../../types/report";
 
 function formatGeneratedAt(iso: string): string {
@@ -13,19 +15,19 @@ function formatGeneratedAt(iso: string): string {
   });
 }
 
-function ReportListItem({
+const ReportListItem = memo(function ReportListItem({
   report,
   active,
   onSelect,
 }: {
   report: OpsDailyReportListItem;
   active: boolean;
-  onSelect: () => void;
+  onSelect: (id: string) => void;
 }) {
   return (
     <button
       type="button"
-      onClick={onSelect}
+      onClick={() => onSelect(report.id)}
       className={`w-full text-left rounded-xl border px-3 py-3 transition-colors ${
         active
           ? "border-brand-400 bg-brand-50 shadow-sm"
@@ -58,7 +60,7 @@ function ReportListItem({
       </div>
     </button>
   );
-}
+});
 
 function MapItemsTable({
   title,
@@ -320,50 +322,39 @@ function ReportDetail({
 }
 
 export function OpsReportsPanel() {
-  const [reports, setReports] = useState<OpsDailyReportListItem[]>([]);
+  const qc = useQueryClient();
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [selected, setSelected] = useState<OpsDailyReportDetail | null>(null);
   const [search, setSearch] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
 
-  const loadList = useCallback(async (query?: string) => {
-    setLoading(true);
-    setError("");
-    try {
-      const data = await api.getReports(query);
-      setReports(data);
-      setSelectedId((prev) => {
-        if (prev && data.some((r) => r.id === prev)) return prev;
-        return data[0]?.id ?? null;
-      });
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
+  // Debounce the search term into the query key so keystrokes don't fire a
+  // request each; React Query then caches results per search term.
   useEffect(() => {
-    const timer = setTimeout(() => {
-      void loadList(search.trim() || undefined);
-    }, 250);
+    const timer = setTimeout(() => setDebouncedSearch(search.trim()), 250);
     return () => clearTimeout(timer);
-  }, [search, loadList]);
+  }, [search]);
 
+  const listQuery = useReportsListQuery(debouncedSearch);
+  const reports = useMemo(() => listQuery.data ?? [], [listQuery.data]);
+  const loading = listQuery.isLoading;
+
+  // Keep a valid selection as the list changes (search/refresh).
   useEffect(() => {
-    if (!selectedId) {
-      setSelected(null);
-      return;
-    }
-    setDetailLoading(true);
-    api
-      .getReport(selectedId)
-      .then(setSelected)
-      .catch((err) => setError((err as Error).message))
-      .finally(() => setDetailLoading(false));
-  }, [selectedId]);
+    setSelectedId((prev) => {
+      if (prev && reports.some((r) => r.id === prev)) return prev;
+      return reports[0]?.id ?? null;
+    });
+  }, [reports]);
+
+  const detailQuery = useReportDetailQuery(selectedId);
+  const selected = detailQuery.data ?? null;
+  const detailLoading = detailQuery.isFetching && !detailQuery.data;
+
+  const error = listQuery.error
+    ? (listQuery.error as Error).message
+    : detailQuery.error
+    ? (detailQuery.error as Error).message
+    : "";
 
   const filteredEmpty = useMemo(
     () => !loading && reports.length === 0 && search.trim().length > 0,
@@ -388,7 +379,7 @@ export function OpsReportsPanel() {
         </div>
         <button
           type="button"
-          onClick={() => void loadList(search.trim() || undefined)}
+          onClick={() => void listQuery.refetch()}
           className="text-xs font-medium text-brand-700 hover:text-brand-900 px-3 py-2 rounded-lg hover:bg-brand-50 border border-transparent hover:border-brand-100 shrink-0"
         >
           Refresh
@@ -429,7 +420,7 @@ export function OpsReportsPanel() {
                 key={report.id}
                 report={report}
                 active={report.id === selectedId}
-                onSelect={() => setSelectedId(report.id)}
+                onSelect={setSelectedId}
               />
             ))}
           </aside>
@@ -441,19 +432,21 @@ export function OpsReportsPanel() {
               <ReportDetail
                 report={selected}
                 onUpdated={(next) => {
-                  setSelected(next);
-                  setReports((prev) =>
-                    prev.map((r) =>
-                      r.id === next.id
-                        ? {
-                            ...r,
-                            fieldCompleted: next.fieldCompleted,
-                            fieldIncomplete: next.fieldIncomplete,
-                            fieldCancelled: next.fieldCancelled,
-                            summary: next.summary,
-                          }
-                        : r
-                    )
+                  qc.setQueryData<OpsDailyReportDetail>(reportKeys.detail(next.id), next);
+                  qc.setQueryData<OpsDailyReportListItem[]>(
+                    reportKeys.list(debouncedSearch),
+                    (prev) =>
+                      prev?.map((r) =>
+                        r.id === next.id
+                          ? {
+                              ...r,
+                              fieldCompleted: next.fieldCompleted,
+                              fieldIncomplete: next.fieldIncomplete,
+                              fieldCancelled: next.fieldCancelled,
+                              summary: next.summary,
+                            }
+                          : r
+                      )
                   );
                 }}
               />
