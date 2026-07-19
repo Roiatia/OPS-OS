@@ -17,6 +17,22 @@ export function useConfigQuery() {
   });
 }
 
+/**
+ * Demo users for the login picker. Retries with backoff so the list self-heals
+ * across the brief window where the backend is restarting (e.g. `tsx watch`),
+ * instead of permanently falling back to the hardcoded list on a single miss.
+ */
+export function useDemoUsersQuery(enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.demoUsers,
+    queryFn: api.getDemoUsers,
+    staleTime: 60_000,
+    enabled,
+    retry: 4,
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
+  });
+}
+
 export function useDashboardQuery() {
   return useQuery({
     queryKey: queryKeys.dashboard,

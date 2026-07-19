@@ -13,6 +13,7 @@ import {
  */
 export const queryKeys = {
   config: ["config"] as const,
+  demoUsers: ["demoUsers"] as const,
   dashboard: ["dashboard"] as const,
   maps: ["maps"] as const,
   hub: ["hub"] as const,

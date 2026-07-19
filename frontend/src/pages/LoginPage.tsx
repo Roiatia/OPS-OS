@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { GoogleLogin } from "@react-oauth/google";
-import { api } from "../api";
 import { useAuth } from "../context/AuthContext";
-import { useConfigQuery } from "../hooks/queries";
+import { useConfigQuery, useDemoUsersQuery } from "../hooks/queries";
 import { OriientLogo } from "@/components/common/OriientLogo";
 
 /** Fallback when /auth/demo-users is unavailable — keep in sync with prisma/seed/seed.ts */
@@ -39,20 +38,19 @@ function roleRank(label: string): number {
 export function LoginPage() {
   const { user, loginDemo, loginGoogle } = useAuth();
   const navigate = useNavigate();
-  const [demoUsers, setDemoUsers] = useState<
-    { email: string; name: string; roles: { label: string }[] }[]
-  >([]);
   const { data: config } = useConfigQuery();
   const [filter, setFilter] = useState("");
   const [error, setError] = useState("");
   const [loadingEmail, setLoadingEmail] = useState<string | null>(null);
 
-  useEffect(() => {
-    api
-      .getDemoUsers()
-      .then(setDemoUsers)
-      .catch(() => setDemoUsers([]));
-  }, []);
+  // Show the picker whenever DEMO_MODE isn't explicitly disabled.
+  const showDemoAccounts = config?.demoMode !== false;
+
+  const {
+    data: demoUsers = [],
+    isLoading: demoUsersLoading,
+    isError: demoUsersError,
+  } = useDemoUsersQuery(showDemoAccounts);
 
   useEffect(() => {
     if (user) navigate("/app", { replace: true });
@@ -84,8 +82,10 @@ export function LoginPage() {
     );
   }, [filter, hints]);
 
-  // Show picker whenever DEMO_MODE is on, or whenever we already loaded demo users
-  const showDemoAccounts = config?.demoMode !== false;
+  // Only flag the fallback list once the fetch has actually failed to deliver
+  // live users — not while the first request (or its retries) is still in
+  // flight — so the badge is a true "backend unreachable" signal.
+  const usingFallback = demoUsersError || (!demoUsersLoading && demoUsers.length === 0);
 
   async function enterAs(email: string) {
     setError("");
@@ -133,7 +133,7 @@ export function LoginPage() {
                 <p className="text-sm font-semibold text-slate-800">
                   All demo users ({hints.length})
                 </p>
-                {demoUsers.length === 0 && (
+                {usingFallback && (
                   <span className="text-[11px] text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">
                     Showing fallback list
                   </span>
