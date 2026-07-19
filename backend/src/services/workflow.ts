@@ -1,7 +1,7 @@
-import { Prisma, MapPhase, InspectorStatus, SupervisorStatus, FieldWorkStatus, QaStatus, TaskStatus, RoleName, SlCheckStatus } from "@prisma/client";
+import { Prisma, MapPhase, MapTask, MapStation, InspectorStatus, SupervisorStatus, FieldWorkStatus, QaStatus, TaskStatus, RoleName, SlCheckStatus } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { mapListIncludes, mapDetailIncludes, mapHistoryIncludes } from "../lib/mapIncludes.js";
-import { broadcastMapsInvalidate } from "../lib/realtimeBus.js";
+import { broadcastMapsInvalidate, broadcastMapsUpsert, withSuppressedBroadcasts } from "../lib/realtimeBus.js";
 import { assertUploadCompleteForMapping } from "../domain/pipeline.js";
 import {
   getActivityLabel,
@@ -27,6 +27,26 @@ export interface AttachmentInput {
 }
 
 const ARCHIVED_PHASES: MapPhase[] = [MapPhase.APPROVED, MapPhase.CANCELLED];
+
+/**
+ * After a bulk mutation, re-read the affected maps in list shape and push them
+ * as a single surgical `maps:upsert` so clients patch those rows in place
+ * instead of refetching every board. Falls back to a coarse invalidate if the
+ * read fails, so clients never end up with stale data.
+ */
+async function broadcastChangedMaps(mapIds: string[]): Promise<void> {
+  if (mapIds.length === 0) return;
+  try {
+    const changed = await prisma.map.findMany({
+      where: { id: { in: mapIds } },
+      include: mapListIncludes,
+    });
+    if (changed.length > 0) broadcastMapsUpsert(changed);
+    else broadcastMapsInvalidate();
+  } catch {
+    broadcastMapsInvalidate();
+  }
+}
 
 // Resolved shapes of the reshaping read used to return mutation responses.
 type MapDetailPayload = Prisma.MapGetPayload<{ include: typeof mapDetailIncludes }>;
@@ -936,13 +956,16 @@ export async function shuffleAssignSupervisors(
     note: `Shuffle assigned to ${supervisorName}`,
   }));
 
-  await prisma.$transaction([
-    ...updateManyOps,
-    prisma.mapEvent.createMany({ data: eventRows }),
-  ]);
+  await withSuppressedBroadcasts(() =>
+    prisma.$transaction([
+      ...updateManyOps,
+      prisma.mapEvent.createMany({ data: eventRows }),
+    ])
+  );
 
-  // Bulk change: tell clients to refetch (overrides any mid-transaction upserts).
-  broadcastMapsInvalidate();
+  // Surgical realtime: push the exact changed rows so clients patch in place
+  // instead of refetching every board.
+  await broadcastChangedMaps(assignments.map((a) => a.mapId));
 
   const distribution = supervisors.map((supervisor) => ({
     supervisorId: supervisor.id,
@@ -1194,14 +1217,17 @@ export async function shuffleAssignInspectors(
     note: `Shuffle assigned to ${inspectorName}`,
   }));
 
-  await prisma.$transaction([
-    ...updateManyOps,
-    prisma.mapPhaseHistory.createMany({ data: phaseHistoryRows }),
-    prisma.mapEvent.createMany({ data: eventRows }),
-  ]);
+  await withSuppressedBroadcasts(() =>
+    prisma.$transaction([
+      ...updateManyOps,
+      prisma.mapPhaseHistory.createMany({ data: phaseHistoryRows }),
+      prisma.mapEvent.createMany({ data: eventRows }),
+    ])
+  );
 
-  // Bulk change: tell clients to refetch (overrides any mid-transaction upserts).
-  broadcastMapsInvalidate();
+  // Surgical realtime: push the exact changed rows so clients patch in place
+  // instead of refetching every board.
+  await broadcastChangedMaps(assignments.map((a) => a.mapId));
 
   const distribution = inspectors.map((inspector) => ({
     inspectorId: inspector.id,
@@ -1228,27 +1254,29 @@ export async function unassignInspectors(mapIds: string[], user: AuthUser) {
   const eligibleIds = maps.filter((m) => m.phase === MapPhase.PREP).map((m) => m.id);
 
   if (eligibleIds.length > 0) {
-    await prisma.$transaction([
-      prisma.map.updateMany({
-        where: { id: { in: eligibleIds } },
-        data: {
-          assignedInspectorId: null,
-          phase: MapPhase.INTAKE,
-          inspectorStatus: null,
-          qaStatus: null,
-        },
-      }),
-      prisma.mapEvent.createMany({
-        data: eligibleIds.map((id) => ({
-          mapId: id,
-          userId: user.id,
-          action: "unassigned_inspector",
-          note: "Unassigned — returned to queue",
-        })),
-      }),
-    ]);
+    await withSuppressedBroadcasts(() =>
+      prisma.$transaction([
+        prisma.map.updateMany({
+          where: { id: { in: eligibleIds } },
+          data: {
+            assignedInspectorId: null,
+            phase: MapPhase.INTAKE,
+            inspectorStatus: null,
+            qaStatus: null,
+          },
+        }),
+        prisma.mapEvent.createMany({
+          data: eligibleIds.map((id) => ({
+            mapId: id,
+            userId: user.id,
+            action: "unassigned_inspector",
+            note: "Unassigned — returned to queue",
+          })),
+        }),
+      ])
+    );
 
-    broadcastMapsInvalidate();
+    await broadcastChangedMaps(eligibleIds);
   }
 
   return { unassigned: eligibleIds.length };
@@ -1268,25 +1296,27 @@ export async function unassignSupervisors(mapIds: string[], user: AuthUser) {
     .map((m) => m.id);
 
   if (eligibleIds.length > 0) {
-    await prisma.$transaction([
-      prisma.map.updateMany({
-        where: { id: { in: eligibleIds } },
-        data: {
-          assignedSupervisorId: null,
-          supervisorStatus: null,
-        },
-      }),
-      prisma.mapEvent.createMany({
-        data: eligibleIds.map((id) => ({
-          mapId: id,
-          userId: user.id,
-          action: "unassigned_supervisor",
-          note: "Supervisor unassigned",
-        })),
-      }),
-    ]);
+    await withSuppressedBroadcasts(() =>
+      prisma.$transaction([
+        prisma.map.updateMany({
+          where: { id: { in: eligibleIds } },
+          data: {
+            assignedSupervisorId: null,
+            supervisorStatus: null,
+          },
+        }),
+        prisma.mapEvent.createMany({
+          data: eligibleIds.map((id) => ({
+            mapId: id,
+            userId: user.id,
+            action: "unassigned_supervisor",
+            note: "Supervisor unassigned",
+          })),
+        }),
+      ])
+    );
 
-    broadcastMapsInvalidate();
+    await broadcastChangedMaps(eligibleIds);
   }
 
   return { unassigned: eligibleIds.length };
@@ -1899,6 +1929,107 @@ export async function updateMapDueDate(mapId: string, dueDate: string | null, us
     dueDate ? `Deadline set to ${dueDate}` : "Deadline cleared"
   );
   return map;
+}
+
+const MAP_TASKS = new Set<string>(Object.values(MapTask));
+const MAP_STATIONS = new Set<string>(Object.values(MapStation));
+
+/**
+ * Set board Task and/or Station. Independent of MapPhase — no phase
+ * restrictions; graphics team leader (or OPS admin) may change anytime.
+ */
+export async function setMapTaskStation(
+  mapId: string,
+  patch: { task?: MapTask; station?: MapStation },
+  user: AuthUser
+) {
+  if (!isLeaderOrAdmin(user)) {
+    throw new Error("Only the graphics team leader can change task or station");
+  }
+  if (patch.task === undefined && patch.station === undefined) {
+    throw new Error("task or station required");
+  }
+  if (patch.task !== undefined && !MAP_TASKS.has(patch.task)) {
+    throw new Error("Invalid task");
+  }
+  if (patch.station !== undefined && !MAP_STATIONS.has(patch.station)) {
+    throw new Error("Invalid station");
+  }
+
+  const existing = await prisma.map.findUnique({ where: { id: mapId } });
+  if (!existing) throw new Error("Map not found");
+
+  const map = await prisma.map.update({
+    where: { id: mapId },
+    data: {
+      ...(patch.task !== undefined ? { task: patch.task } : {}),
+      ...(patch.station !== undefined ? { station: patch.station } : {}),
+    },
+    include: mapDetailIncludes,
+  });
+
+  const parts: string[] = [];
+  if (patch.task !== undefined && patch.task !== existing.task) parts.push(`task → ${patch.task}`);
+  if (patch.station !== undefined && patch.station !== existing.station) {
+    parts.push(`station → ${patch.station}`);
+  }
+  if (parts.length) {
+    await logEvent(mapId, user.id, "task_station_updated", parts.join(", "));
+  }
+  return map;
+}
+
+/** Bulk set board Task and/or Station on many maps (no phase restrictions). */
+export async function bulkSetMapTaskStation(
+  mapIds: string[],
+  patch: { task?: MapTask; station?: MapStation },
+  user: AuthUser
+) {
+  if (!isLeaderOrAdmin(user)) {
+    throw new Error("Only the graphics team leader can change task or station");
+  }
+  if (!mapIds.length) throw new Error("mapIds required");
+  if (patch.task === undefined && patch.station === undefined) {
+    throw new Error("task or station required");
+  }
+  if (patch.task !== undefined && !MAP_TASKS.has(patch.task)) {
+    throw new Error("Invalid task");
+  }
+  if (patch.station !== undefined && !MAP_STATIONS.has(patch.station)) {
+    throw new Error("Invalid station");
+  }
+
+  const uniqueIds = [...new Set(mapIds)];
+  const data: Prisma.MapUpdateManyMutationInput = {};
+  if (patch.task !== undefined) data.task = patch.task;
+  if (patch.station !== undefined) data.station = patch.station;
+
+  await prisma.map.updateMany({
+    where: { id: { in: uniqueIds } },
+    data,
+  });
+
+  const noteParts: string[] = [];
+  if (patch.task !== undefined) noteParts.push(`task → ${patch.task}`);
+  if (patch.station !== undefined) noteParts.push(`station → ${patch.station}`);
+  const note = `Bulk ${noteParts.join(", ")} (${uniqueIds.length} maps)`;
+
+  await prisma.mapEvent.createMany({
+    data: uniqueIds.map((mapId) => ({
+      mapId,
+      userId: user.id,
+      action: "task_station_updated",
+      note,
+    })),
+  });
+
+  broadcastMapsInvalidate();
+
+  const maps = await prisma.map.findMany({
+    where: { id: { in: uniqueIds } },
+    include: mapListIncludes,
+  });
+  return { updated: maps.length, maps };
 }
 
 export async function listTeamMembers() {

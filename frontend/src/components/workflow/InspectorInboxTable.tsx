@@ -79,13 +79,22 @@ export function InspectorInboxTable({ maps, onRefresh, onPatch }: Props) {
                     </Link>
                   </td>
                   <td className="px-3 py-3">{map.client}</td>
-                  <td className="px-3 py-3">
-                    {taskType ? (
-                      <Badge label={taskType} tone={taskType === "Upload" ? "PREP" : "POLISH"} />
-                    ) : (
-                      "—"
-                    )}
-                  </td>
+                    <td className="px-3 py-3">
+                      {taskType ? (
+                        <Badge
+                          label={taskType}
+                          tone={
+                            taskType === "Upload"
+                              ? "PREP"
+                              : taskType === "Uploaded"
+                                ? "UPLOAD_REVIEW"
+                                : "POLISH"
+                          }
+                        />
+                      ) : (
+                        "—"
+                      )}
+                    </td>
                   <td className="px-3 py-3 text-muted text-xs">
                     {map.dueDate ? formatDate(map.dueDate) : "—"}
                   </td>

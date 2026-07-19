@@ -321,10 +321,13 @@ export function TeamPanel({ team, maps, onRefresh }: Props) {
                               {taskType && (
                                 <Badge
                                   label={taskType}
-                                  tone={taskType === "Upload" ? "PREP" : "POLISH"}
+                                  tone={taskType === "Upload" ? "PREP" : taskType === "Uploaded" ? "UPLOAD_REVIEW" : "POLISH"}
                                 />
                               )}
-                              <Badge label={getMapStation(map)} tone={map.phase} />
+                              <Badge
+                                label={getMapStation(map)}
+                                tone={map.station === "OPS" ? "FIELD" : "PREP"}
+                              />
                               {state !== "—" && (
                                 <Badge label={state} tone={workflowStateTone(state)} />
                               )}

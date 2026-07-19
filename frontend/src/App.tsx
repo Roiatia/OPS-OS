@@ -122,6 +122,11 @@ function AppRoutes() {
         />
 
         <Route path="maps/:id" element={<MapDetailPage />} />
+
+        {/* Unknown paths under /app (typos, stale deep links, extra segments)
+            fall back to the index, which re-resolves the role default instead
+            of rendering the Layout shell with an empty outlet. */}
+        <Route path="*" element={<Navigate to="/app" replace />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

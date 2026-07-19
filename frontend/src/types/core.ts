@@ -17,6 +17,12 @@ export type MapPhase =
   | "APPROVED"
   | "CANCELLED";
 
+/** Board Task — independent of MapPhase / station */
+export type MapTask = "UPLOAD" | "UPLOADED" | "POLISH";
+
+/** Board Station — independent of MapPhase / task */
+export type MapStation = "OPS" | "GRAPHICS";
+
 export type InspectorStatus = "ACCEPTED" | "PROCESSING" | "DONE";
 export type SupervisorStatus = "ACCEPTED" | "PROCESSING" | "DONE";
 export type FieldWorkStatus = "UNCOMPLETED" | "COMPLETED" | "CANCELLED";
@@ -107,6 +113,12 @@ export interface MapRecord {
   helpAskAt?: string | null;
   helpAskBy?: { id: string; name: string } | null;
   phase: MapPhase;
+  /** Board Task — Upload / Uploaded / Polish (independent of phase) */
+  task: MapTask;
+  /** Board Station — OPS or GRAPHICS (independent of phase/task) */
+  station: MapStation;
+  /** CSV Batch column */
+  batch?: string | null;
   inspectorStatus: InspectorStatus | null;
   supervisorStatus: SupervisorStatus | null;
   qaStatus: QaStatus | null;

@@ -119,8 +119,11 @@ export function OpsMapsBoard({
     }
   }
 
-  const supervisors = team.filter(memberIsSupervisor);
-  const inspectors = team.filter((m) => m.roles.some((r) => r.role === "MAPPING_INSPECTOR"));
+  const supervisors = useMemo(() => team.filter(memberIsSupervisor), [team]);
+  const inspectors = useMemo(
+    () => team.filter((m) => m.roles.some((r) => r.role === "MAPPING_INSPECTOR")),
+    [team]
+  );
 
   const clients = useMemo(() => [...new Set(maps.map((m) => m.client))].sort(), [maps]);
   const phases = useMemo(
@@ -353,7 +356,8 @@ export function OpsMapsBoard({
         originals.map((m) => m.id),
         shuffleInspectors.map((m) => m.id)
       );
-      onRefresh();
+      // No refetch: the server broadcasts the exact changed rows (maps:upsert)
+      // which the realtime cache bridge patches in place.
     } catch (err) {
       for (const original of originals) patch(original);
       setSelected(prevSelected);
@@ -438,7 +442,8 @@ export function OpsMapsBoard({
         originals.map((m) => m.id),
         shuffleSupervisors.map((m) => m.id)
       );
-      onRefresh();
+      // No refetch: the server broadcasts the exact changed rows (maps:upsert)
+      // which the realtime cache bridge patches in place.
     } catch (err) {
       for (const original of originals) patch(original);
       setSelected(prevSelected);
@@ -464,7 +469,7 @@ export function OpsMapsBoard({
     setLoading(true);
     try {
       await api.unassignInspectors(originals.map((m) => m.id));
-      onRefresh();
+      // No refetch: realtime maps:upsert reconciles the changed rows.
     } catch (err) {
       for (const original of originals) patch(original);
       setSelected(prevSelected);
@@ -490,7 +495,7 @@ export function OpsMapsBoard({
     setLoading(true);
     try {
       await api.unassignSupervisors(originals.map((m) => m.id));
-      onRefresh();
+      // No refetch: realtime maps:upsert reconciles the changed rows.
     } catch (err) {
       for (const original of originals) patch(original);
       setSelected(prevSelected);
@@ -801,14 +806,23 @@ export function OpsMapsBoard({
                       {taskType ? (
                         <Badge
                           label={taskType}
-                          tone={taskType === "Upload" ? "PREP" : "POLISH"}
+                          tone={
+                            taskType === "Upload"
+                              ? "PREP"
+                              : taskType === "Uploaded"
+                                ? "UPLOAD_REVIEW"
+                                : "POLISH"
+                          }
                         />
                       ) : (
                         "—"
                       )}
                     </td>
                     <td className="px-3 py-3">
-                      <Badge label={getMapStation(map)} tone={map.phase} />
+                      <Badge
+                        label={getMapStation(map)}
+                        tone={map.station === "OPS" ? "FIELD" : "PREP"}
+                      />
                     </td>
                     <td className="px-3 py-3">
                       {graphicsState === "—" ? (

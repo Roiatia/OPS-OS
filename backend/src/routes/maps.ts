@@ -127,6 +127,37 @@ router.post(
   }
 );
 
+router.post(
+  "/bulk-task-station",
+  requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN),
+  async (req, res) => {
+    try {
+      const { mapIds, task, station } = req.body as {
+        mapIds?: string[];
+        task?: string;
+        station?: string;
+      };
+      if (!mapIds?.length) {
+        res.status(400).json({ error: "mapIds required" });
+        return;
+      }
+      const result = await workflow.bulkSetMapTaskStation(
+        mapIds,
+        {
+          ...(task !== undefined ? { task: task as import("@prisma/client").MapTask } : {}),
+          ...(station !== undefined
+            ? { station: station as import("@prisma/client").MapStation }
+            : {}),
+        },
+        (req as AuthedRequest).user
+      );
+      res.json(result);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
 router.get("/hub", requireRoles(RoleName.OPS_ADMIN, RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (req, res) => {
   try {
     const user = (req as AuthedRequest).user;
@@ -651,6 +682,30 @@ router.patch(
         action,
         (req as AuthedRequest).user,
         note
+      );
+      res.json(map);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+// Board Task (Upload/Uploaded/Polish) and Station (OPS/GRAPHICS) — independent of phase.
+router.patch(
+  "/:id/task-station",
+  requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN),
+  async (req, res) => {
+    try {
+      const { task, station } = req.body as { task?: string; station?: string };
+      const map = await workflow.setMapTaskStation(
+        req.params.id,
+        {
+          ...(task !== undefined ? { task: task as import("@prisma/client").MapTask } : {}),
+          ...(station !== undefined
+            ? { station: station as import("@prisma/client").MapStation }
+            : {}),
+        },
+        (req as AuthedRequest).user
       );
       res.json(map);
     } catch (e) {

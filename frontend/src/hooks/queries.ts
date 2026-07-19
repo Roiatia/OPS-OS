@@ -51,3 +51,62 @@ export function useHistoryQuery(enabled: boolean) {
     enabled,
   });
 }
+
+/**
+ * Query keys for the availability / reports panels. These were previously
+ * fetched with ad-hoc `useEffect` loaders that refetched on every tab switch;
+ * routing them through React Query means re-visiting a tab within `staleTime`
+ * is served instantly from cache.
+ */
+export const availabilityKeys = {
+  shiftPlan: (weekStart: string) => ["shiftPlan", weekStart] as const,
+  roster: (weekStart: string) => ["availabilityRoster", weekStart] as const,
+  myAvailability: (weekStart: string) => ["myAvailability", weekStart] as const,
+};
+
+export const reportKeys = {
+  list: (query: string) => ["reports", "list", query] as const,
+  detail: (id: string) => ["reports", "detail", id] as const,
+};
+
+export function useShiftPlanQuery(weekStart: string) {
+  return useQuery({
+    queryKey: availabilityKeys.shiftPlan(weekStart),
+    queryFn: () => api.getShiftPlan(weekStart),
+    staleTime: MAPS_STALE_TIME,
+  });
+}
+
+export function useAvailabilityRosterQuery(weekStart: string) {
+  return useQuery({
+    queryKey: availabilityKeys.roster(weekStart),
+    queryFn: () => api.getAvailabilityRoster(weekStart),
+    staleTime: MAPS_STALE_TIME,
+  });
+}
+
+export function useMyAvailabilityQuery(weekStart: string, enabled = true) {
+  return useQuery({
+    queryKey: availabilityKeys.myAvailability(weekStart),
+    queryFn: () => api.getMyAvailability(weekStart),
+    staleTime: MAPS_STALE_TIME,
+    enabled,
+  });
+}
+
+export function useReportsListQuery(query: string) {
+  return useQuery({
+    queryKey: reportKeys.list(query),
+    queryFn: () => api.getReports(query || undefined),
+    staleTime: MAPS_STALE_TIME,
+  });
+}
+
+export function useReportDetailQuery(id: string | null) {
+  return useQuery({
+    queryKey: reportKeys.detail(id ?? ""),
+    queryFn: () => api.getReport(id as string),
+    staleTime: MAPS_STALE_TIME,
+    enabled: Boolean(id),
+  });
+}

@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
-import type { MapRecord, TeamMember } from "../../types";
+import type { MapRecord, MapStation, MapTask, TeamMember } from "../../types";
 import { Modal } from "@/components/common/Modal";
 import { pickLeastLoadedInspector, countInspectorActiveMaps } from "../../lib/assignment";
-import { canAssignInspector } from "../../lib/mapDisplay";
+import { canAssignInspector, MAP_STATION_OPTIONS, MAP_TASK_OPTIONS } from "../../lib/mapDisplay";
 import { SHIFTS, type ShiftId, getShiftInspectors } from "../../lib/shifts";
 
 type AssignMode = "individual" | "shift";
@@ -17,6 +17,8 @@ interface Props {
     mode: AssignMode;
     memberId?: string;
     shiftId?: ShiftId;
+    task?: MapTask;
+    station?: MapStation;
     attachment?: { fileName: string; mimeType: string; data: string };
   }) => void;
 }
@@ -25,6 +27,8 @@ export function AssignMapModal({ map, team, maps, loading, onClose, onAssign }: 
   const [mode, setMode] = useState<AssignMode>("individual");
   const [shiftId, setShiftId] = useState<ShiftId>("morning");
   const [file, setFile] = useState<File | null>(null);
+  const [task, setTask] = useState<MapTask>(map.task ?? "UPLOAD");
+  const [station, setStation] = useState<MapStation>(map.station ?? "GRAPHICS");
 
   const inspectors = team.filter((m) => m.roles.some((r) => r.role === "MAPPING_INSPECTOR"));
   const inspectorIds = inspectors.map((m) => m.id);
@@ -43,9 +47,21 @@ export function AssignMapModal({ map, team, maps, loading, onClose, onAssign }: 
       attachment = await readFileAsBase64(file);
     }
     if (mode === "shift") {
-      onAssign({ mode: "shift", shiftId, attachment });
+      onAssign({
+        mode: "shift",
+        shiftId,
+        attachment,
+        task,
+        station,
+      });
     } else if (memberId) {
-      onAssign({ mode: "individual", memberId, attachment });
+      onAssign({
+        mode: "individual",
+        memberId,
+        attachment,
+        task,
+        station,
+      });
     }
   }
 
@@ -68,8 +84,40 @@ export function AssignMapModal({ map, team, maps, loading, onClose, onAssign }: 
     <Modal title={`Assign ${map.mapNumber}`} onClose={onClose} wide>
       <form onSubmit={handleSubmit} className="space-y-5">
         <p className="text-sm text-muted">
-          Assign this map to a mapping inspector for prep or polish work.
+          Assign this map to a mapping inspector. Set Task and Station independently of workflow
+          phase.
         </p>
+
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block">
+            <span className="text-sm font-medium text-slate-700">Task</span>
+            <select
+              value={task}
+              onChange={(e) => setTask(e.target.value as MapTask)}
+              className="mt-1.5 w-full border border-border rounded-xl px-3 py-2.5 text-sm bg-white"
+            >
+              {MAP_TASK_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className="text-sm font-medium text-slate-700">Station</span>
+            <select
+              value={station}
+              onChange={(e) => setStation(e.target.value as MapStation)}
+              className="mt-1.5 w-full border border-border rounded-xl px-3 py-2.5 text-sm bg-white"
+            >
+              {MAP_STATION_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
 
         <div className="flex rounded-xl border border-border p-1 bg-slate-50">
           {(

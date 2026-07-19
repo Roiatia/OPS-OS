@@ -1,5 +1,5 @@
 import { parse } from "csv-parse/sync";
-import { MapPhase } from "@prisma/client";
+import { MapPhase, MapTask, MapStation } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import type { AuthUser } from "../lib/types.js";
 
@@ -55,6 +55,15 @@ function cell(row: Record<string, string>, header: string): string {
 /** Convert empty strings to null for Prisma optional fields. */
 function emptyToNull(v: string): string | null {
   return v ? v : null;
+}
+
+/** Infer board Task from CSV Setup column when possible (no phase coupling). */
+function taskFromSetup(setup: string | null): MapTask {
+  const s = (setup ?? "").toLowerCase().trim();
+  if (s.includes("uploaded")) return MapTask.UPLOADED;
+  if (s.includes("polish")) return MapTask.POLISH;
+  if (s.includes("upload")) return MapTask.UPLOAD;
+  return MapTask.UPLOAD;
 }
 
 /**
@@ -143,6 +152,8 @@ export async function importSamsClubCsv(
     area: string | null;
     description: string | null;
     phase: MapPhase;
+    task: MapTask;
+    station: MapStation;
     batch: string | null;
     building: string | null;
     address: string | null;
@@ -202,6 +213,8 @@ export async function importSamsClubCsv(
       area: address,
       description: commentBits || null,
       phase: isCancelled ? MapPhase.CANCELLED : MapPhase.INTAKE,
+      task: taskFromSetup(spreadsheetData.setupStage),
+      station: MapStation.GRAPHICS,
       batch: spreadsheetData.batch,
       building: spreadsheetData.building,
       address: spreadsheetData.address,

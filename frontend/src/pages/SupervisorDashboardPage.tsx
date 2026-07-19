@@ -1,14 +1,29 @@
-import { useCallback, useMemo } from "react";
+import { Suspense, lazy, useCallback, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { MapHubBoard } from "../components/hub/MapHubBoard";
-import { CompanyDashboardPanel } from "../components/leader/CompanyDashboardPanel";
 import { SettingsPanel } from "../components/leader/SettingsPanel";
-import { SupervisorMapsBoard } from "../components/supervisor/SupervisorMapsBoard";
 import { SupervisorSidebar, type SupervisorSection } from "../components/supervisor/SupervisorSidebar";
-import { SupervisorTeamPanel } from "../components/supervisor/SupervisorTeamPanel";
 import { ConfluencePanel } from "../components/shared/ConfluencePanel";
 import { AvailabilityPanel } from "../components/shared/AvailabilityPanel";
 import { AvailabilityReminderModal } from "../components/availability/AvailabilityReminderModal";
+
+// Non-default sections are code-split so the Hub (default) paints without the
+// maps board, team panel, company dashboard or availability form in the chunk.
+const SupervisorMapsBoard = lazy(() =>
+  import("../components/supervisor/SupervisorMapsBoard").then((m) => ({
+    default: m.SupervisorMapsBoard,
+  }))
+);
+const SupervisorTeamPanel = lazy(() =>
+  import("../components/supervisor/SupervisorTeamPanel").then((m) => ({
+    default: m.SupervisorTeamPanel,
+  }))
+);
+const CompanyDashboardPanel = lazy(() =>
+  import("../components/leader/CompanyDashboardPanel").then((m) => ({
+    default: m.CompanyDashboardPanel,
+  }))
+);
 import { getSupervisorFieldStatus } from "../lib/supervisorDisplay";
 import { useSectionRoute } from "@/hooks/useSectionRoute";
 import { useDashboardQuery } from "@/hooks/queries";
@@ -63,7 +78,8 @@ export function SupervisorDashboardPage() {
   const maps = useMemo(() => data?.maps ?? [], [data]);
   const teamFieldMaps = useMemo(() => data?.teamFieldMaps ?? [], [data]);
   const team = useMemo(() => data?.team ?? [], [data]);
-  const loading = isLoading;
+  // Only gate on the cold load; background revalidation keeps `data` populated.
+  const loading = isLoading && !data;
 
   const load = useCallback(
     () => void qc.invalidateQueries({ queryKey: queryKeys.dashboard }),
@@ -99,7 +115,10 @@ export function SupervisorDashboardPage() {
     return { total: maps.length, uncompleted, completed, cancelled };
   }, [maps]);
 
-  const supervisors = team.filter((m) => m.roles.some((r) => r.role === "SUPERVISOR"));
+  const supervisors = useMemo(
+    () => team.filter((m) => m.roles.some((r) => r.role === "SUPERVISOR")),
+    [team]
+  );
 
   const { title, subtitle } = SECTION_TITLES[activeSection];
 
@@ -131,6 +150,7 @@ export function SupervisorDashboardPage() {
             {subtitle && <p className="text-muted mt-1">{subtitle}</p>}
           </div>
 
+          <Suspense fallback={<p className="text-muted">Loading...</p>}>
           {activeSection === "hub" && user ? (
             <MapHubBoard
               mode="supervisor"
@@ -186,6 +206,7 @@ export function SupervisorDashboardPage() {
               {activeSection === "settings" && <SettingsPanel />}
             </>
           )}
+          </Suspense>
         </div>
       </div>
     </div>

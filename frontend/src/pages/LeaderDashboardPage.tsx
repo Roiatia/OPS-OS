@@ -1,13 +1,24 @@
-import { useCallback, useMemo, useState } from "react";
+import { Suspense, lazy, useCallback, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { AssignmentBoard } from "../components/leader/AssignmentBoard";
-import { CompanyDashboardPanel } from "../components/leader/CompanyDashboardPanel";
 import { CsvImportPanel } from "../components/leader/CsvImportPanel";
-import { HistoryPanel } from "../components/leader/HistoryPanel";
 import { LeaderSidebar, type LeaderSection } from "../components/leader/LeaderSidebar";
 import { SettingsPanel } from "../components/leader/SettingsPanel";
-import { TeamPanel } from "../components/leader/TeamPanel";
+
+// The default "maps" section (AssignmentBoard) stays eager; the other sections
+// are code-split so they don't bloat the leader's initial chunk.
+const CompanyDashboardPanel = lazy(() =>
+  import("../components/leader/CompanyDashboardPanel").then((m) => ({
+    default: m.CompanyDashboardPanel,
+  }))
+);
+const HistoryPanel = lazy(() =>
+  import("../components/leader/HistoryPanel").then((m) => ({ default: m.HistoryPanel }))
+);
+const TeamPanel = lazy(() =>
+  import("../components/leader/TeamPanel").then((m) => ({ default: m.TeamPanel }))
+);
 import { getIdleInspectors } from "../lib/assignment";
 import { needsQaAssignment } from "../lib/mapDisplay";
 import { useSectionRoute } from "@/hooks/useSectionRoute";
@@ -69,7 +80,8 @@ export function LeaderDashboardPage() {
   const { data, isLoading } = useDashboardQuery();
   const maps = useMemo(() => data?.maps ?? [], [data]);
   const team = useMemo(() => data?.team ?? [], [data]);
-  const loading = isLoading;
+  // Only gate on the cold load; background revalidation keeps `data` populated.
+  const loading = isLoading && !data;
 
   // History is heavy at scale — load it lazily the first time the History tab
   // opens (the shared cache keeps it live via realtime after that).
@@ -170,6 +182,7 @@ export function LeaderDashboardPage() {
             )}
           </div>
 
+          <Suspense fallback={<p className="text-muted">Loading...</p>}>
           {loading ? (
             <p className="text-muted">Loading...</p>
           ) : (
@@ -286,6 +299,7 @@ export function LeaderDashboardPage() {
               {activeSection === "settings" && <SettingsPanel />}
             </>
           )}
+          </Suspense>
         </div>
       </div>
     </div>
