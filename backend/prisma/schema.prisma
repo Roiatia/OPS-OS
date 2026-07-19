@@ -29,17 +29,24 @@ enum MapPhase {
   CANCELLED
 }
 
+/** Schedule unit shown in the shift planner (maps + internal events). */
+enum ScheduleTaskKind {
+  MAP
+  HAPPY_HOUR
+  COMPANY_MEETING
+  MAPPING_REFRESH
+}
 /** Leader-controlled work kind — independent of MapPhase / station. */
 enum MapTask {
   UPLOAD
   UPLOADED
   POLISH
 }
-
 /** Leader-controlled ownership station — independent of MapPhase / task. */
 enum MapStation {
   OPS
   GRAPHICS
+}
 }
 
 enum InspectorStatus {
@@ -159,6 +166,10 @@ model Map {
   mapNumber       String           @unique
   jiraTicketId    String?
   client          String
+  /** Shift-plan task kind — map work vs happy hour / company meeting. */
+  taskKind        ScheduleTaskKind @default(MAP)
+  /** Optional scheduled end (minutes from midnight, same day). Short events still need a 6h stay. */
+  taskEndMinutes  Int?
   area            String?
   description     String?
   dueDate         DateTime?

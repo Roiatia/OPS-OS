@@ -1,11 +1,11 @@
 /**
  * Small shift-plan demo for checking auto-plan logic.
- * - 3 supervisors + 3 shift leaders (plan-sup-01..03 / plan-sl-01..03 @ops-demo.local)
- * - Removes older plan-* extras and old FAKE maps
- * - 60 FIELD maps for next week: 10/day Sun–Fri (count is even here for clarity;
- *   production can vary day-to-day)
+ * - Ensures 3 supervisors + 3 shift leaders (plan-sup-01..03 / plan-sl-01..03 @ops-demo.local)
+ * - Does NOT wipe other supervisors' availability — fill-availability covers everyone
+ * - 60 FIELD tasks for next week + Sun meeting + Mon mapping refresh
  *
  * Usage: npm run db:seed-shift-plan
+ * Then:  npm run db:fill-availability   (all Sup/SL, 6 days each)
  */
 import {
   PrismaClient,
@@ -126,49 +126,41 @@ async function upsertStaff(params: {
     update: {},
     create: { userId: user.id, client: "fake" },
   });
+  await prisma.supervisorClientCapability.upsert({
+    where: { userId_client: { userId: user.id, client: "internal" } },
+    update: {},
+    create: { userId: user.id, client: "internal" },
+  });
 
   return user;
 }
 
 /**
- * Varied but readable availability:
- * - Most people offer most days
- * - One SL is scarce on weekdays (good for SL-spread checks)
- * - Some afternoon-only / morning-only for hour filters
+ * All demo staff offer every Sun–Fri day (6 days).
+ * Hours still vary (morning / afternoon) so day↔night handoffs stay testable.
  */
-function buildDayAvailability(kind: "sup" | "sl", index: number, fridayContract: boolean) {
+function buildDayAvailability(_kind: "sup" | "sl", index: number, fridayContract: boolean) {
   return [0, 1, 2, 3, 4, 5].map((dayOfWeek) => {
-    // Rachel (SL 3): only Sun + Wed (scarce) — forces smart SL open/close
-    if (kind === "sl" && index === 3) {
-      if (dayOfWeek === 0 || dayOfWeek === 3) {
-        return {
-          dayOfWeek,
-          canWork: true,
-          allDay: false,
-          startMinutes: 8 * 60,
-          endMinutes: 20 * 60,
-        };
-      }
+    // Afternoon / evening band (good for handoffs after day shift)
+    if (index === 2) {
       return {
         dayOfWeek,
-        canWork: false,
+        canWork: true,
         allDay: false,
-        startMinutes: null as number | null,
-        endMinutes: null as number | null,
+        startMinutes: 14 * 60,
+        endMinutes: 24 * 60,
       };
     }
-
-    // Cosmin (Sup 3): mid-week off Tuesday
-    if (kind === "sup" && index === 3 && dayOfWeek === 2) {
+    // Shorter daytime window
+    if (index === 3) {
       return {
         dayOfWeek,
-        canWork: false,
+        canWork: true,
         allDay: false,
-        startMinutes: null,
-        endMinutes: null,
+        startMinutes: 8 * 60,
+        endMinutes: 18 * 60,
       };
     }
-
     if (dayOfWeek === 5 && !fridayContract) {
       return {
         dayOfWeek,
@@ -178,29 +170,6 @@ function buildDayAvailability(kind: "sup" | "sl", index: number, fridayContract:
         endMinutes: 16 * 60,
       };
     }
-
-    // Sup 2 / SL 2: afternoons 14–22
-    if (index === 2) {
-      return {
-        dayOfWeek,
-        canWork: true,
-        allDay: false,
-        startMinutes: 14 * 60,
-        endMinutes: 22 * 60,
-      };
-    }
-
-    // Sup 3 / SL 3: mornings 8–16
-    if (index === 3) {
-      return {
-        dayOfWeek,
-        canWork: true,
-        allDay: false,
-        startMinutes: 8 * 60,
-        endMinutes: 16 * 60,
-      };
-    }
-
     return {
       dayOfWeek,
       canWork: true,
@@ -271,16 +240,9 @@ async function deleteExtraPlanUsers() {
   for (const u of toDelete) console.log(`  ✗ ${u.email}`);
 }
 
-async function clearOtherAvailabilityForWeek(weekStart: Date, keepUserIds: string[]) {
-  const removed = await prisma.availabilitySubmission.deleteMany({
-    where: {
-      weekStart,
-      userId: { notIn: keepUserIds },
-    },
-  });
-  console.log(
-    `Cleared ${removed.count} availability submission(s) for other staff this week (so only the 10 demo people are offered).`
-  );
+async function clearOtherAvailabilityForWeek(_weekStart: Date, _keepUserIds: string[]) {
+  // Keep every supervisor/SL submission — do not wipe non-demo staff.
+  console.log("Keeping availability for all supervisors/SLs (not clearing others).");
 }
 
 async function main() {
@@ -333,20 +295,28 @@ async function main() {
   console.log("Removing all previous FAKE maps…");
   const deletedMaps = await prisma.map.deleteMany({
     where: {
-      client: "fake",
-      mapNumber: { startsWith: "FAKE-" },
+      client: { in: ["fake", "internal"] },
+      OR: [
+        { mapNumber: { startsWith: "FAKE-" } },
+        { mapNumber: { startsWith: "HH-" } },
+        { mapNumber: { startsWith: "MTG-" } },
+        { mapNumber: { startsWith: "REF-" } },
+      ],
     },
   });
-  console.log(`  ✗ ${deletedMaps.count} old FAKE maps`);
+  console.log(`  ✗ ${deletedMaps.count} old demo tasks`);
 
-  console.log("Creating 60 FIELD maps (10/day Sun–Fri)…");
+  console.log("Creating FIELD maps + Sunday meeting + Monday mapping refresh…");
   const mapsData = [];
   for (let day = 0; day <= 5; day++) {
     const base = datePlusDays(weekStart, day);
     const y = base.getUTCFullYear();
     const mo = base.getUTCMonth();
     const da = base.getUTCDate();
-    for (let n = 1; n <= 10; n++) {
+
+    // 10 maps most days; 9 on Sun/Mon so the special event keeps ~10 tasks/day
+    const mapCount = day === 0 || day === 1 ? 9 : 10;
+    for (let n = 1; n <= mapCount; n++) {
       const seq = day * 10 + n;
       const [hour, minute] = IL_STARTS[n - 1]!;
       const fieldDate = israelLocalToUtc(y, mo, da, hour, minute);
@@ -354,6 +324,8 @@ async function main() {
       mapsData.push({
         mapNumber: `FAKE-${String(seq).padStart(3, "0")}`,
         client: "fake",
+        taskKind: "MAP" as const,
+        taskEndMinutes: null as number | null,
         area: `Area ${n}`,
         description: `Shift-plan demo map (day ${day}, ${hour}:${String(minute).padStart(2, "0")} IL)`,
         fieldDate,
@@ -369,14 +341,73 @@ async function main() {
     }
   }
 
+  // Sunday: company meeting 13:00–15:00 (assignees still stay ≥6h → typically 13–19)
+  {
+    const base = datePlusDays(weekStart, 0);
+    mapsData.push({
+      mapNumber: "MTG-SUN",
+      client: "internal",
+      taskKind: "COMPANY_MEETING" as const,
+      taskEndMinutes: 15 * 60,
+      area: null,
+      description: "Company meeting 13:00–15:00 (stay ≥6h)",
+      fieldDate: israelLocalToUtc(
+        base.getUTCFullYear(),
+        base.getUTCMonth(),
+        base.getUTCDate(),
+        13,
+        0
+      ),
+      mapperName: null,
+      phase: MapPhase.FIELD,
+      inspectorStatus: InspectorStatus.DONE,
+      uploadApproved: true,
+      uploadCompletedAt: new Date(),
+      fieldWorkStatus: FieldWorkStatus.UNCOMPLETED,
+      fieldProgressPercent: 0,
+      onHubStatusBoard: false,
+    });
+  }
+
+  // Monday: mapping refresh 13:00–19:00 (exactly 6h)
+  {
+    const base = datePlusDays(weekStart, 1);
+    mapsData.push({
+      mapNumber: "REF-MON",
+      client: "internal",
+      taskKind: "MAPPING_REFRESH" as const,
+      taskEndMinutes: 19 * 60,
+      area: null,
+      description: "Mapping refresh 13:00–19:00",
+      fieldDate: israelLocalToUtc(
+        base.getUTCFullYear(),
+        base.getUTCMonth(),
+        base.getUTCDate(),
+        13,
+        0
+      ),
+      mapperName: null,
+      phase: MapPhase.FIELD,
+      inspectorStatus: InspectorStatus.DONE,
+      uploadApproved: true,
+      uploadCompletedAt: new Date(),
+      fieldWorkStatus: FieldWorkStatus.UNCOMPLETED,
+      fieldProgressPercent: 0,
+      onHubStatusBoard: false,
+    });
+  }
+
   await prisma.map.createMany({ data: mapsData, skipDuplicates: true });
-  console.log(`  ✓ ${mapsData.length} maps (10 × 6 days)`);
+  console.log(`  ✓ ${mapsData.length} tasks (maps + Sun meeting + Mon mapping refresh)`);
   console.log("");
   console.log("Done. Scenario:");
-  console.log("  • 3 Sup + 3 SL only (for availability this week)");
-  console.log("  • 60 maps next week · 10/day (mix of Israel start times)");
-  console.log("  1. Login ops@ops-demo.local → Availability → Shift plan → Auto-plan");
-  console.log("  2. Expect ~2 people/day at ~5 maps each (max 9), SL open/close spread");
+  console.log("  • All supervisors/SLs keep availability (run db:fill-availability for full roster)");
+  console.log("  • Demo 6 each offer all 6 days (hours still vary for handoffs)");
+  console.log("  • Sun: company meeting 13–15 (6h stay rule)");
+  console.log("  • Mon: mapping refresh 13–19");
+  console.log("  1. npm run db:fill-availability");
+  console.log("  2. Login ops@ops-demo.local → Availability → Shift plan → Auto-plan");
+  console.log("  3. Expect full roster + 1 SL/day + supervisors filling seats");
 }
 
 main()
