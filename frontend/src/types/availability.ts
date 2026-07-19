@@ -136,13 +136,23 @@ export interface ShiftPlanStaff {
   }[];
 }
 
+export type ScheduleTaskKind =
+  | "MAP"
+  | "HAPPY_HOUR"
+  | "COMPANY_MEETING"
+  | "MAPPING_REFRESH";
+
 export interface ShiftPlanMap {
   id: string;
   mapNumber: string;
   client: string;
+  /** Schedule task kind — map / happy hour / company meeting / mapping refresh */
+  taskKind?: ScheduleTaskKind;
   fieldDate?: string | null;
   mapperName?: string | null;
   startMinutes?: number | null;
+  /** Scheduled event end (minutes). Assignees still stay ≥6h even if the event is shorter. */
+  endMinutes?: number | null;
 }
 
 export interface ShiftPlanView {

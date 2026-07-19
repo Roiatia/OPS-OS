@@ -1,0 +1,5 @@
+-- AlterEnum
+ALTER TYPE "ScheduleTaskKind" ADD VALUE IF NOT EXISTS 'MAPPING_REFRESH';
+
+-- AlterTable
+ALTER TABLE "Map" ADD COLUMN IF NOT EXISTS "taskEndMinutes" INTEGER;

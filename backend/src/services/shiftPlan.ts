@@ -62,6 +62,8 @@ async function loadPlannerContext(weekStart: Date) {
       id: true,
       mapNumber: true,
       client: true,
+      taskKind: true,
+      taskEndMinutes: true,
       fieldDate: true,
       mapperName: true,
     },
@@ -75,15 +77,24 @@ async function loadPlannerContext(weekStart: Date) {
       id: string;
       mapNumber: string;
       client: string;
+      taskKind: "MAP" | "HAPPY_HOUR" | "COMPANY_MEETING" | "MAPPING_REFRESH";
       fieldDate: string | null;
       mapperName: string | null;
       startMinutes: number | null;
+      endMinutes: number | null;
     }[]
   > = {};
   for (const day of [0, 1, 2, 3, 4, 5]) {
     mapsPerDay[day] = 0;
     mapsByDay[day] = [];
   }
+
+  const taskKindOrder: Record<string, number> = {
+    MAP: 0,
+    MAPPING_REFRESH: 1,
+    HAPPY_HOUR: 2,
+    COMPANY_MEETING: 3,
+  };
 
   for (const map of maps) {
     if (!map.fieldDate) continue;
@@ -94,10 +105,21 @@ async function loadPlannerContext(weekStart: Date) {
       id: map.id,
       mapNumber: map.mapNumber,
       client: map.client,
+      taskKind: map.taskKind,
       fieldDate: map.fieldDate.toISOString(),
       mapperName: map.mapperName,
       startMinutes: clockMinutesFromDate(map.fieldDate),
+      endMinutes: map.taskEndMinutes ?? null,
     });
+  }
+
+  for (const day of [0, 1, 2, 3, 4, 5]) {
+    mapsByDay[day].sort(
+      (a, b) =>
+        (taskKindOrder[a.taskKind] ?? 99) - (taskKindOrder[b.taskKind] ?? 99) ||
+        (a.startMinutes ?? 0) - (b.startMinutes ?? 0) ||
+        a.mapNumber.localeCompare(b.mapNumber)
+    );
   }
 
   const staff: PlannerStaff[] = await Promise.all(

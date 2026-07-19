@@ -39,8 +39,10 @@ export type PlannerMap = {
   id: string;
   mapNumber: string;
   client: string;
+  taskKind?: "MAP" | "HAPPY_HOUR" | "COMPANY_MEETING" | "MAPPING_REFRESH";
   fieldDate: Date | string | null;
   mapperName?: string | null;
+  endMinutes?: number | null;
 };
 
 export type PlannerAssignment = {
@@ -213,8 +215,10 @@ function avoidPenalty(userId: string, avoidUserIds?: Set<string>): number {
 }
 
 /**
- * Assign one open/close SL per map-day:
+ * Assign one open/close SL per task-day:
  * hardest days first → spread duty → prefer constrained SLs.
+ * When planning a single day, still looks at other map-days in the week
+ * so we don't burn an SL who is the only cover for Friday, etc.
  * Also writes TEMP logic notes per day (remove later).
  */
 function assignOpenCloseShiftLeaders(input: {
@@ -248,14 +252,24 @@ function assignOpenCloseShiftLeaders(input: {
     ).length;
 
   uncovered.sort((a, b) => eligibleCount(a) - eligibleCount(b) || a - b);
-  const stillOpen = new Set(uncovered);
+
+  /** Days that still need an SL somewhere in the week (this pass + not-yet-planned). */
+  const weekNeedSl = new Set<number>(
+    AVAILABILITY_DAYS.filter(
+      (d) => (input.mapsPerDay[d] ?? 0) > 0 && !designated.has(d)
+    )
+  );
+
   const variant = input.variant ?? 0;
 
   const orderNote =
     uncovered.length > 0
       ? `SL days filled hardest-first: ${uncovered
           .map((d) => `${dayLabel(d)}(${eligibleCount(d)} SLs)`)
-          .join(" → ")}.`
+          .join(" → ")}` +
+        (weekNeedSl.size > uncovered.length
+          ? ` · also protecting ${weekNeedSl.size - uncovered.length} other day(s) still needing SL.`
+          : ".")
       : null;
 
   for (const day of uncovered) {
@@ -273,14 +287,14 @@ function assignOpenCloseShiftLeaders(input: {
         const remA = remainingSlCoverOptions(
           a,
           day,
-          stillOpen,
+          weekNeedSl,
           input.assignedDaysByUser,
           input.weekStart
         );
         const remB = remainingSlCoverOptions(
           b,
           day,
-          stillOpen,
+          weekNeedSl,
           input.assignedDaysByUser,
           input.weekStart
         );
@@ -313,7 +327,7 @@ function assignOpenCloseShiftLeaders(input: {
     const rem = remainingSlCoverOptions(
       pick,
       day,
-      stillOpen,
+      weekNeedSl,
       input.assignedDaysByUser,
       input.weekStart
     );
@@ -323,7 +337,7 @@ function assignOpenCloseShiftLeaders(input: {
     const runnerUp = candidates[1];
     notes.push(
       `Open/close SL: ${pick.name} — among ${candidates.length} eligible SLs. ` +
-        `Priority: fewest other map-days left they could open (${rem}); ` +
+        `Priority: fewest other week days left they could open (${rem}); ` +
         `even SL duty (${duty} open/close so far); ` +
         `fair ratio ${prevLoad}/${Math.max(1, offered)}.` +
         (runnerUp
@@ -334,7 +348,7 @@ function assignOpenCloseShiftLeaders(input: {
 
     designated.set(day, pick);
     dutyCount.set(pick.userId, duty + 1);
-    stillOpen.delete(day);
+    weekNeedSl.delete(day);
     input.load.set(pick.userId, prevLoad + 1);
     const set = input.assignedDaysByUser.get(pick.userId) ?? new Set();
     set.add(day);
@@ -358,13 +372,13 @@ function staffFillNote(
   const rating = effectiveRating(person);
   const whyLabel =
     why === "fair-fill"
-      ? "roster fill (fair util + ~5 maps target)"
+      ? "roster fill (prefer Sup over extra SL; fair util)"
       : why === "hard-capacity"
-        ? "added so everyone stays ≤9 maps"
-        : "added to cover a map start nobody on roster could";
+        ? "added so everyone stays ≤9 tasks"
+        : "added to cover a task start nobody on roster could";
   let note =
     `${role} ${person.name}: ${whyLabel} — before pick ${loadBefore}/${Math.max(1, offered)} days used, ` +
-    `covers ${(fit * 100).toFixed(0)}% of today's map starts, rating ${rating}`;
+    `covers ${(fit * 100).toFixed(0)}% of today's task starts, rating ${rating}`;
   if (why === "hour-cover" && clock != null) {
     const hh = String(Math.floor(clock / 60)).padStart(2, "0");
     const mm = String(clock % 60).padStart(2, "0");
@@ -374,8 +388,9 @@ function staffFillNote(
 }
 
 /**
- * Fair pick among staff for map seats (SLs included as supervisors).
- * Open/close SL for the day is chosen separately and already reserved.
+ * Fair pick among staff for task seats.
+ * Open/close SL for the day is chosen separately — prefer supervisors for
+ * remaining roster seats so we don't burn every SL on fill.
  */
 function pickStaff(
   pool: PlannerStaff[],
@@ -412,6 +427,9 @@ function pickStaff(
       const avoidA = avoidPenalty(a.userId, opts?.avoidUserIds);
       const avoidB = avoidPenalty(b.userId, opts?.avoidUserIds);
       if (avoidA !== avoidB) return avoidA - avoidB;
+
+      // Prefer supervisors over extra SLs (1 SL already reserved for open/close)
+      if (a.isShiftLeader !== b.isShiftLeader) return a.isShiftLeader ? 1 : -1;
 
       const offeredA = Math.max(1, availableDaysCount(a.days));
       const offeredB = Math.max(1, availableDaysCount(b.days));
