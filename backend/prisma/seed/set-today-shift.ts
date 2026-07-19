@@ -10,10 +10,12 @@ function todayAt(hour: number, minute = 0): Date {
 
 async function main() {
   const shifts = [
-    { email: "supervisor@ops-demo.local", name: "Alex Ben-Ami (supervisor)", at: todayAt(8, 0) },
-    { email: "supervisor2@ops-demo.local", name: "Dana Weiss (shift leader)", at: todayAt(7, 30) },
-    { email: "supervisor3@ops-demo.local", name: "Noam Katz (supervisor)", at: todayAt(8, 15) },
-    { email: "supervisor4@ops-demo.local", name: "Lior Hadad (supervisor)", at: todayAt(8, 30) },
+    { email: "plan-sup-01@ops-demo.local", name: "Eyal (Sup)", at: todayAt(8, 0) },
+    { email: "plan-sup-02@ops-demo.local", name: "Bashar (Sup)", at: todayAt(8, 10) },
+    { email: "plan-sup-03@ops-demo.local", name: "Cosmin (Sup)", at: todayAt(8, 20) },
+    { email: "plan-sl-01@ops-demo.local", name: "Erez (SL)", at: todayAt(7, 30) },
+    { email: "plan-sl-02@ops-demo.local", name: "Oren (SL)", at: todayAt(7, 45) },
+    { email: "plan-sl-03@ops-demo.local", name: "Rachel (SL)", at: todayAt(8, 5) },
   ];
 
   for (const s of shifts) {

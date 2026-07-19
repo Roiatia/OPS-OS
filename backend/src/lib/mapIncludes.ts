@@ -17,6 +17,10 @@ export const mapDetailIncludes = {
   assignedInspector: { select: { id: true, name: true, email: true } },
   assignedQa: { select: { id: true, name: true, email: true } },
   assignedSupervisor: { select: { id: true, name: true, email: true } },
+  slCheckRequestedBy: { select: { id: true, name: true } },
+  slCheckClaimedBy: { select: { id: true, name: true } },
+  swapOfferedBy: { select: { id: true, name: true } },
+  helpAskBy: { select: { id: true, name: true } },
   tasks: {
     include: {
       assignedTo: { select: { id: true, name: true } },
@@ -58,6 +62,10 @@ export const mapListIncludes = {
   assignedInspector: { select: { id: true, name: true, email: true } },
   assignedQa: { select: { id: true, name: true, email: true } },
   assignedSupervisor: { select: { id: true, name: true, email: true } },
+  slCheckRequestedBy: { select: { id: true, name: true } },
+  slCheckClaimedBy: { select: { id: true, name: true } },
+  swapOfferedBy: { select: { id: true, name: true } },
+  helpAskBy: { select: { id: true, name: true } },
   events: {
     include: { user: { select: { id: true, name: true } } },
     orderBy: { createdAt: "desc" as const },

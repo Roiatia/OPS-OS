@@ -5,6 +5,9 @@ import {
   AVAILABILITY_DAYS,
   DAY_LABELS,
   DAY_LABELS_FULL,
+  FRIDAY,
+  FRIDAY_UNSIGNED_END_MINUTES,
+  SUNDAY,
   countNightShiftsFromDays,
   defaultSubmissionWeekStart,
   formatWeekRange,
@@ -13,6 +16,7 @@ import {
   weekStartSunday,
   type AvailabilityDayInput,
 } from "../../lib/availabilityRules";
+import { holidaysInAvailabilityWeek } from "../../lib/israelHolidays";
 import { DayHourDragBar } from "./DayHourDragBar";
 
 type DayChoice = "unset" | "can" | "cant";
@@ -63,30 +67,40 @@ function daysFromSubmission(data: AvailabilitySubmission): LocalDay[] {
   return week;
 }
 
-function toPayload(days: LocalDay[], fridayContract: boolean): AvailabilityDayInput[] {
+function toPayload(
+  days: LocalDay[],
+  fridayContract: boolean,
+  sundayOk: boolean
+): AvailabilityDayInput[] {
   return AVAILABILITY_DAYS.map((dayOfWeek, idx) => {
     const d = days[idx];
-    const blocked =
-      (fridayContract && dayOfWeek === 0) || (!fridayContract && dayOfWeek === 5);
+    // Sunday only if sundayOk. Unsigned Friday allowed until 16:00 (validated separately).
+    const blocked = dayOfWeek === SUNDAY && !sundayOk;
     const canWork = !blocked && d.choice === "can";
+    const allDay = canWork && d.allDay && !(dayOfWeek === FRIDAY && !fridayContract);
+    let endMinutes = canWork && !allDay ? d.endMinutes : null;
+    let endMinutes2 = canWork && !allDay && d.hasSecond ? d.endMinutes2 : null;
+    if (canWork && !allDay && dayOfWeek === FRIDAY && !fridayContract) {
+      if (endMinutes != null) endMinutes = Math.min(endMinutes, FRIDAY_UNSIGNED_END_MINUTES);
+      if (endMinutes2 != null) endMinutes2 = Math.min(endMinutes2, FRIDAY_UNSIGNED_END_MINUTES);
+    }
     return {
       dayOfWeek,
       canWork,
-      allDay: canWork && d.allDay,
-      startMinutes: canWork && !d.allDay ? d.startMinutes : null,
-      endMinutes: canWork && !d.allDay ? d.endMinutes : null,
-      startMinutes2: canWork && !d.allDay && d.hasSecond ? d.startMinutes2 : null,
-      endMinutes2: canWork && !d.allDay && d.hasSecond ? d.endMinutes2 : null,
+      allDay,
+      startMinutes: canWork && !allDay ? d.startMinutes : null,
+      endMinutes,
+      startMinutes2: canWork && !allDay && d.hasSecond ? d.startMinutes2 : null,
+      endMinutes2,
       note: d.note.trim() || null,
     };
   });
 }
 
-function localValidationErrors(days: LocalDay[], fridayContract: boolean): string[] {
+function localValidationErrors(days: LocalDay[], sundayOk: boolean): string[] {
   const incomplete = days.some((d, idx) => {
     const day = AVAILABILITY_DAYS[idx];
-    const blocked =
-      (fridayContract && day === 0) || (!fridayContract && day === 5);
+    const blocked = day === SUNDAY && !sundayOk;
     return !blocked && d.choice === "unset";
   });
   if (incomplete) {
@@ -98,7 +112,7 @@ function localValidationErrors(days: LocalDay[], fridayContract: boolean): strin
 export function SupervisorAvailabilityForm({ onSubmitted }: { onSubmitted?: () => void }) {
   const [weekStart, setWeekStart] = useState(() => defaultSubmissionWeekStart());
   const [fridayContract, setFridayContract] = useState(false);
-  const [hagimOk, setHagimOk] = useState(false);
+  const [sundayOk, setSundayOk] = useState(true);
   const [priorWeekNightShifts, setPriorWeekNightShifts] = useState(0);
   const [days, setDays] = useState<LocalDay[]>(emptyWeek);
   const [submittedAt, setSubmittedAt] = useState<string | null>(null);
@@ -113,7 +127,7 @@ export function SupervisorAvailabilityForm({ onSubmitted }: { onSubmitted?: () =
     try {
       const data: AvailabilitySubmission = await api.getMyAvailability(isoWeekStart(weekStart));
       setFridayContract(data.fridayContract);
-      setHagimOk(Boolean(data.hagimOk));
+      setSundayOk(data.sundayOk ?? !data.fridayContract);
       setPriorWeekNightShifts(data.nightShifts?.priorWeek ?? 0);
       setSubmittedAt(data.submittedAt);
       setDays(daysFromSubmission(data));
@@ -128,23 +142,30 @@ export function SupervisorAvailabilityForm({ onSubmitted }: { onSubmitted?: () =
     void load();
   }, [load]);
 
-  const payloadDays = useMemo(() => toPayload(days, fridayContract), [days, fridayContract]);
+  const payloadDays = useMemo(
+    () => toPayload(days, fridayContract, sundayOk),
+    [days, fridayContract, sundayOk]
+  );
   const validationErrors = useMemo(() => {
-    const local = localValidationErrors(days, fridayContract);
+    const local = localValidationErrors(days, sundayOk);
     if (local.length > 0) return local;
-    return validateAvailabilityDays(payloadDays, fridayContract, priorWeekNightShifts);
-  }, [days, fridayContract, payloadDays, priorWeekNightShifts]);
+    return validateAvailabilityDays(payloadDays, fridayContract, priorWeekNightShifts, {
+      sundayOk,
+      weekStart,
+    });
+  }, [days, fridayContract, sundayOk, payloadDays, priorWeekNightShifts, weekStart]);
+
+  const weekHolidays = useMemo(() => holidaysInAvailabilityWeek(weekStart), [weekStart]);
 
   useEffect(() => {
+    if (sundayOk) return;
     setDays((prev) =>
       prev.map((d, idx) => {
         const day = AVAILABILITY_DAYS[idx];
-        const blocked =
-          (fridayContract && day === 0) || (!fridayContract && day === 5);
-        return blocked ? { ...d, choice: "cant" as const } : d;
+        return day === SUNDAY ? { ...d, choice: "cant" as const } : d;
       })
     );
-  }, [fridayContract]);
+  }, [sundayOk]);
 
   function changeWeek(delta: number) {
     const d = new Date(weekStart);
@@ -173,7 +194,7 @@ export function SupervisorAvailabilityForm({ onSubmitted }: { onSubmitted?: () =
       const saved = await api.saveMyAvailability({
         weekStart: isoWeekStart(weekStart),
         fridayContract,
-        hagimOk,
+        sundayOk,
         days: payloadDays,
       });
       setSubmittedAt(saved.submittedAt);
@@ -228,55 +249,60 @@ export function SupervisorAvailabilityForm({ onSubmitted }: { onSubmitted?: () =
             onChange={(e) => {
               const on = e.target.checked;
               setFridayContract(on);
-              if (on) setHagimOk(true);
+              // Without Friday form, Sunday is the normal option — keep it on.
+              if (!on) setSundayOk(true);
             }}
             className="mt-1"
           />
           <span>
             <span className="text-sm font-semibold text-slate-900">
-              I signed the Friday work form
+              I signed the Friday work form (ששי + חגים)
             </span>
             <span className="block text-xs text-muted mt-0.5">
-              You may work Fridays (shishi) — not Sundays. Usually includes hagim as well.
+              Full Friday after Shabbat enter, and hagim. Tap Sunday below too if you can also work Sundays.
             </span>
           </span>
         </label>
 
-        <label
-          className={`flex items-start gap-3 rounded-xl border p-4 cursor-pointer ${
-            fridayContract ? "border-slate-200 bg-slate-50" : "border-border bg-white"
-          }`}
-        >
+        <label className="flex items-start gap-3 rounded-xl border border-border bg-white p-4 cursor-pointer">
           <input
             type="checkbox"
-            checked={hagimOk}
-            disabled={fridayContract}
-            onChange={(e) => setHagimOk(e.target.checked)}
+            checked={sundayOk}
+            onChange={(e) => setSundayOk(e.target.checked)}
             className="mt-1"
           />
           <span>
-            <span className="text-sm font-semibold text-slate-900">
-              I can work hagim (holidays), but not Friday
-            </span>
+            <span className="text-sm font-semibold text-slate-900">I can work Sunday</span>
             <span className="block text-xs text-muted mt-0.5">
-              For supervisors who accept holiday shifts without the Friday (shishi) form.
+              Without the Friday form you work Sunday (not hagim). Tap both Friday + Sunday if you can do shishi, hagim, and Sunday.
             </span>
           </span>
         </label>
       </div>
 
       <p className="text-xs text-muted">
-        Drag hours from 00:00 → 00:00. Overnight example: Sunday 19:00 → 00:00, then Monday 00:00
-        → 04:00. Night shifts (from 23:00, 6h+): max 7 per 2 weeks — prior week: {priorWeekNightShifts},
-        this week: {countNightShiftsFromDays(payloadDays)}. Max 12 hours per shift.
+        Drag hours from 00:00 → 00:00. Without the Friday form you may work Friday only until
+        16:00 (Shabbat enter) — Thursday night into Friday morning is fine. Saturday is always
+        off. Night shifts (from 23:00, 6h+): max 7 per 2 weeks — prior week: {priorWeekNightShifts},
+        this week: {countNightShiftsFromDays(payloadDays)}. Shift length 6–12 hours; at least
+        8 hours rest between shifts.
       </p>
+
+      {weekHolidays.length > 0 && (
+        <p className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+          Hagim this week:{" "}
+          {weekHolidays.map((h) => `${DAY_LABELS[h.dayOfWeek]} (${h.name})`).join(", ")}. Only
+          supervisors who signed the Friday form can mark those days available.
+        </p>
+      )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-4">
         {AVAILABILITY_DAYS.map((day, idx) => {
           const label = DAY_LABELS[idx];
           const dayState = days[idx];
-          const blocked =
-            (fridayContract && day === 0) || (!fridayContract && day === 5);
+          const blocked = day === SUNDAY && !sundayOk;
+          const fridayCap = !fridayContract && day === FRIDAY;
+          const holiday = weekHolidays.find((h) => h.dayOfWeek === day);
           const choice = blocked ? "cant" : dayState.choice;
 
           return (
@@ -290,6 +316,14 @@ export function SupervisorAvailabilityForm({ onSubmitted }: { onSubmitted?: () =
                 <div>
                   <p className="text-sm font-bold text-slate-900">{label}</p>
                   <p className="text-[11px] text-muted">{DAY_LABELS_FULL[idx]}</p>
+                  {holiday && (
+                    <p className="text-[11px] font-medium text-amber-800 mt-0.5">חג · {holiday.name}</p>
+                  )}
+                  {fridayCap && (
+                    <p className="text-[11px] font-medium text-violet-800 mt-0.5">
+                      Until 16:00 without form
+                    </p>
+                  )}
                 </div>
                 {!blocked && (
                   <div className="flex rounded-lg border border-border overflow-hidden shrink-0">
@@ -321,26 +355,39 @@ export function SupervisorAvailabilityForm({ onSubmitted }: { onSubmitted?: () =
                 )}
               </div>
 
-              {blocked && <p className="text-xs text-muted">Not available this week</p>}
+              {blocked && <p className="text-xs text-muted">Not available — Friday form signed</p>}
 
               {!blocked && choice === "can" && (
                 <div className="space-y-3">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={dayState.allDay}
-                      onChange={(e) => updateDay(idx, { allDay: e.target.checked })}
-                      className="rounded border-border"
-                    />
-                    <span className="text-xs font-medium text-slate-700">All day</span>
-                  </label>
-                  {!dayState.allDay && (
+                  {!fridayCap && (
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={dayState.allDay}
+                        onChange={(e) => updateDay(idx, { allDay: e.target.checked })}
+                        className="rounded border-border"
+                      />
+                      <span className="text-xs font-medium text-slate-700">All day</span>
+                    </label>
+                  )}
+                  {(!dayState.allDay || fridayCap) && (
                     <div className="space-y-3">
                       <DayHourDragBar
                         startMinutes={dayState.startMinutes}
-                        endMinutes={dayState.endMinutes}
+                        endMinutes={
+                          fridayCap
+                            ? Math.min(dayState.endMinutes, FRIDAY_UNSIGNED_END_MINUTES)
+                            : dayState.endMinutes
+                        }
+                        maxEndHour={fridayCap ? 16 : 24}
                         onChange={(startMinutes, endMinutes) =>
-                          updateDay(idx, { startMinutes, endMinutes })
+                          updateDay(idx, {
+                            startMinutes,
+                            endMinutes: fridayCap
+                              ? Math.min(endMinutes, FRIDAY_UNSIGNED_END_MINUTES)
+                              : endMinutes,
+                            allDay: fridayCap ? false : dayState.allDay,
+                          })
                         }
                       />
                       {dayState.hasSecond ? (
@@ -359,9 +406,19 @@ export function SupervisorAvailabilityForm({ onSubmitted }: { onSubmitted?: () =
                           </div>
                           <DayHourDragBar
                             startMinutes={dayState.startMinutes2}
-                            endMinutes={dayState.endMinutes2}
+                            endMinutes={
+                              fridayCap
+                                ? Math.min(dayState.endMinutes2, FRIDAY_UNSIGNED_END_MINUTES)
+                                : dayState.endMinutes2
+                            }
+                            maxEndHour={fridayCap ? 16 : 24}
                             onChange={(startMinutes2, endMinutes2) =>
-                              updateDay(idx, { startMinutes2, endMinutes2 })
+                              updateDay(idx, {
+                                startMinutes2,
+                                endMinutes2: fridayCap
+                                  ? Math.min(endMinutes2, FRIDAY_UNSIGNED_END_MINUTES)
+                                  : endMinutes2,
+                              })
                             }
                           />
                         </div>

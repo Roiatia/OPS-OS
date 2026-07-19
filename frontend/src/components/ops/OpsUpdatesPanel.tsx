@@ -19,7 +19,6 @@ interface Props {
   dismissedUpdates?: OpsActivityMessage[];
   dismissedAlerts?: OpsShiftAlert[];
   dismissedCount?: number;
-  isDemoPreview?: boolean;
   onDismiss: (id: string) => void;
   onDismissAll: () => void;
   onRestore?: (id: string) => void;
@@ -111,6 +110,7 @@ function ActivityRow({
 }) {
   const complete = isCompleteMilestone(message.action);
   const incomplete = isIncompleteMilestone(message.action);
+  const mapperNoShow = message.action === "mapper_not_arrived";
   const reason = getIncompleteReason(message);
   const progress = getIncompleteProgress(message);
 
@@ -154,12 +154,17 @@ function ActivityRow({
             </Link>
             <span className="text-muted"> · {message.map.client}</span>
           </p>
-          {incomplete && progress != null && (
+          {mapperNoShow && message.map.assignedSupervisor && (
+            <p className="text-xs text-amber-900 mt-1">
+              Supervisor · {message.map.assignedSupervisor.name}
+            </p>
+          )}
+          {incomplete && !mapperNoShow && progress != null && (
             <p className="text-xs font-semibold text-amber-800 mt-1">
               {progress}% done
             </p>
           )}
-          {incomplete && reason && (
+          {incomplete && !mapperNoShow && reason && (
             <div className="mt-2 rounded-lg bg-white/80 border border-amber-200/80 px-2.5 py-2">
               <p className="text-[10px] font-bold uppercase tracking-wide text-amber-800">
                 Why incomplete
@@ -167,7 +172,7 @@ function ActivityRow({
               <p className="text-xs text-amber-950 mt-0.5 leading-relaxed">{reason}</p>
             </div>
           )}
-          {incomplete && !reason && (
+          {incomplete && !mapperNoShow && !reason && (
             <p className="text-xs text-amber-700 mt-1 italic">No reason provided yet</p>
           )}
           {isReadyToAcceptMilestone(message.action) && (
@@ -272,7 +277,6 @@ export function OpsUpdatesPanel({
   dismissedUpdates = [],
   dismissedAlerts = [],
   dismissedCount = 0,
-  isDemoPreview = false,
   onDismiss,
   onDismissAll,
   onRestore,
@@ -323,11 +327,6 @@ export function OpsUpdatesPanel({
 
   return (
     <div className="space-y-4">
-      {isDemoPreview && (
-        <p className="text-xs text-brand-700 bg-brand-50 border border-brand-200 rounded-lg px-3 py-2">
-          Sample updates for demo — real milestones appear here as maps move through the pipeline.
-        </p>
-      )}
       <div className="flex flex-col sm:flex-row sm:items-end gap-3">
         <div className="flex-1 min-w-0">
           <label htmlFor="ops-updates-search" className="sr-only">

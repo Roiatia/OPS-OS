@@ -24,6 +24,8 @@ export const ACTIVITY_LABELS: Record<string, string> = {
   supervisor_field_done: "Ready to accept — supervisor marked complete",
   hub_uncompleted: "Field mapping incomplete",
   hub_cancelled: "Map cancelled",
+  hub_return_scheduled: "Return visit scheduled",
+  mapper_not_arrived: "Mapper has not arrived yet",
 };
 
 export function getActivityLabel(action: string): string {
@@ -122,5 +124,5 @@ export function isCompleteMilestone(action: string): boolean {
 }
 
 export function isIncompleteMilestone(action: string): boolean {
-  return action === "hub_uncompleted";
+  return action === "hub_uncompleted" || action === "mapper_not_arrived";
 }

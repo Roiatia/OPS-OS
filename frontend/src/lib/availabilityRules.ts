@@ -1,5 +1,7 @@
 /** Availability — Sun(0) through Fri(5); Saturday is not scheduled */
 
+import { canWorkHagim, holidaysInAvailabilityWeek } from "./israelHolidays";
+
 export const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri"] as const;
 export const DAY_LABELS_FULL = [
   "Sunday",
@@ -20,9 +22,27 @@ export const MAX_NIGHT_SHIFTS_PER_TWO_WEEKS = 7;
 /** @deprecated use MAX_NIGHT_SHIFTS_PER_TWO_WEEKS */
 export const MAX_NIGHT_SHIFTS_PER_WEEK = 3;
 
+/** Without Friday form: may work Friday only until Shabbat enter (16:00). */
+export const FRIDAY_UNSIGNED_END_MINUTES = 16 * 60;
+/** Minimum rest between consecutive shifts. */
+export const MIN_REST_GAP_MINUTES = 8 * 60;
+/** Soft ideal rest gap (warning only where surfaced). */
+export const IDEAL_REST_GAP_MINUTES = 10 * 60;
+/** Hard cap — nobody should take more maps than this in one day. */
+export const MAX_MAPS_PER_SUPERVISOR = 9;
+/** Soft target — schedule enough people so loads stay around this (fairness over cost). */
+export const PREFERRED_MAPS_PER_SUPERVISOR = 5;
+
 export const FRIDAY = 5;
 export const SATURDAY = 6;
 export const SUNDAY = 0;
+
+/** Preferred day load by rating (experience). Never above MAX; used as soft capacity only. */
+export function maxMapsForRating(rating: number | null | undefined): number {
+  const r = rating == null ? 3 : Math.min(5, Math.max(1, Math.round(rating)));
+  const table: Record<number, number> = { 1: 3, 2: 4, 3: 5, 4: 6, 5: 7 };
+  return Math.min(MAX_MAPS_PER_SUPERVISOR, table[r] ?? PREFERRED_MAPS_PER_SUPERVISOR);
+}
 
 export type AvailabilityDayInput = {
   dayOfWeek: number;
@@ -83,6 +103,90 @@ export function minutesToTime(m: number): string {
 export function timeToMinutes(t: string): number {
   const [h, m] = t.split(":").map(Number);
   return (h ?? 0) * 60 + (m ?? 0);
+}
+
+/** Wall-clock minutes in Israel (ops timezone) — not the browser's local zone. */
+export function clockMinutesFromDate(d: Date): number {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Jerusalem",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(d);
+  const h = Number(parts.find((p) => p.type === "hour")?.value ?? 0);
+  const m = Number(parts.find((p) => p.type === "minute")?.value ?? 0);
+  return h * 60 + m;
+}
+
+export function availableDaysCount(
+  days: { dayOfWeek: number; canWork: boolean }[]
+): number {
+  return days.filter((d) => d.canWork && d.dayOfWeek >= 0 && d.dayOfWeek <= 5).length;
+}
+
+export function availabilityUtilization(
+  assignedDays: number,
+  daysOffered: number
+): number {
+  return assignedDays / Math.max(1, daysOffered);
+}
+
+export function availabilityCoversClock(
+  day:
+    | {
+        canWork: boolean;
+        allDay?: boolean;
+        startMinutes?: number | null;
+        endMinutes?: number | null;
+        startMinutes2?: number | null;
+        endMinutes2?: number | null;
+      }
+    | undefined,
+  clockMinutes: number
+): boolean {
+  if (!day?.canWork) return false;
+  if (day.allDay) return true;
+  const ranges = dayHourRanges({
+    dayOfWeek: 0,
+    canWork: true,
+    allDay: false,
+    startMinutes: day.startMinutes,
+    endMinutes: day.endMinutes,
+    startMinutes2: day.startMinutes2,
+    endMinutes2: day.endMinutes2,
+  });
+  if (ranges.length === 0) return true;
+  return ranges.some((r) => {
+    if (r.endMinutes > r.startMinutes) {
+      return clockMinutes >= r.startMinutes && clockMinutes < r.endMinutes;
+    }
+    return clockMinutes >= r.startMinutes || clockMinutes < r.endMinutes;
+  });
+}
+
+export function formatAvailabilityWindow(day: {
+  canWork: boolean;
+  allDay?: boolean;
+  startMinutes?: number | null;
+  endMinutes?: number | null;
+  startMinutes2?: number | null;
+  endMinutes2?: number | null;
+}): string {
+  if (!day.canWork) return "—";
+  if (day.allDay) return "all day";
+  const ranges = dayHourRanges({
+    dayOfWeek: 0,
+    canWork: true,
+    allDay: false,
+    startMinutes: day.startMinutes,
+    endMinutes: day.endMinutes,
+    startMinutes2: day.startMinutes2,
+    endMinutes2: day.endMinutes2,
+  });
+  if (ranges.length === 0) return "hours TBD";
+  return ranges
+    .map((r) => `${minutesToTime(r.startMinutes)}–${minutesToTime(r.endMinutes)}`)
+    .join(", ");
 }
 
 export function shiftDurationMinutes(startMinutes: number, endMinutes: number): number {
@@ -205,9 +309,21 @@ export function countNightShiftsFromDays(
 export function validateAvailabilityDays(
   days: AvailabilityDayInput[],
   fridayContract: boolean,
-  priorWeekNightCount = 0
+  priorWeekNightCount = 0,
+  opts?: {
+    sundayOk?: boolean;
+    /** @deprecated hagim follows Friday form */
+    hagimOk?: boolean;
+    weekStart?: Date;
+    maxRequestedHours?: number | null;
+  }
 ): string[] {
   const errors: string[] = [];
+  const sundayOk = opts?.sundayOk ?? !fridayContract;
+  const maxRequestedMinutes =
+    opts?.maxRequestedHours != null && opts.maxRequestedHours > 0
+      ? Math.min(MAX_SHIFT_MINUTES, Math.round(opts.maxRequestedHours * 60))
+      : MAX_SHIFT_MINUTES;
 
   if (days.length < AVAILABILITY_DAYS.length) {
     errors.push("Mark every day as available or not available.");
@@ -215,7 +331,7 @@ export function validateAvailabilityDays(
 
   for (const d of days) {
     if (d.dayOfWeek === SATURDAY) {
-      errors.push("Saturday is not a scheduling day.");
+      errors.push("Saturday is not a scheduling day (Shabbat — company day off).");
       continue;
     }
     if (!d.canWork) continue;
@@ -231,7 +347,6 @@ export function validateAvailabilityDays(
     if (!d.canWork || d.allDay) continue;
     const ranges = dayHourRanges(d);
     if (ranges.length === 0) continue;
-    // overlap / order
     for (let i = 0; i < ranges.length; i++) {
       const r = ranges[i]!;
       const dur = sameDayDurationMinutes(r.startMinutes, r.endMinutes);
@@ -255,9 +370,9 @@ export function validateAvailabilityDays(
         if (dur < MIN_SEGMENT_MINUTES) {
           errors.push(`${DAY_LABELS[d.dayOfWeek]}: each block must be at least 1 hour.`);
         }
-        if (dur > MAX_SHIFT_MINUTES) {
+        if (dur > maxRequestedMinutes) {
           errors.push(
-            `${DAY_LABELS[d.dayOfWeek]}: a block cannot exceed 12 hours (got ${(dur / 60).toFixed(1)}h).`
+            `${DAY_LABELS[d.dayOfWeek]}: a block cannot exceed ${maxRequestedMinutes / 60} hours (got ${(dur / 60).toFixed(1)}h).`
           );
         }
       }
@@ -269,32 +384,37 @@ export function validateAvailabilityDays(
     }
   }
 
-  // Duration: validate contiguous blocks (overnight split across days is OK)
   const blocks = contiguousWorkBlocks(days);
   for (const b of blocks) {
     const day = days.find((d) => d.dayOfWeek === b.dayOfWeek);
     const multi = day ? dayHourRanges(day).length >= 2 : false;
-    // Multi-block days already validated above (per-segment + total)
     if (multi) continue;
     if (b.duration < MIN_SHIFT_MINUTES) {
       errors.push(
         `${DAY_LABELS[b.dayOfWeek]}: shift must be at least 6 hours (got ${(b.duration / 60).toFixed(1)}h — include next morning if overnight).`
       );
     }
-    if (b.duration > MAX_SHIFT_MINUTES) {
+    if (b.duration > maxRequestedMinutes) {
       errors.push(
-        `${DAY_LABELS[b.dayOfWeek]}: shift cannot exceed 12 hours (got ${(b.duration / 60).toFixed(1)}h).`
+        `${DAY_LABELS[b.dayOfWeek]}: shift cannot exceed ${maxRequestedMinutes / 60} hours (got ${(b.duration / 60).toFixed(1)}h).`
       );
     }
   }
 
-  const ruleErrors = validateAvailability(daysToShiftInputs(days), fridayContract, days);
-  // Strip per-shift duration errors from legacy validator — handled via blocks above
+  errors.push(...validateRestGaps(days));
+
+  const ruleErrors = validateAvailability(daysToShiftInputs(days), fridayContract, days, {
+    sundayOk,
+  });
   errors.push(
     ...ruleErrors.filter(
-      (e) => !e.includes("minimum 6 hours") && !e.includes("maximum 12 hours")
+      (e) => !e.includes("minimum 6 hours") && !e.includes("maximum 12 hours") && !e.includes("cannot exceed")
     )
   );
+
+  if (opts?.weekStart) {
+    errors.push(...validateHagimDays(days, fridayContract, opts.weekStart));
+  }
 
   const thisWeekNights = countNightShiftsFromDays(days);
   if (priorWeekNightCount + thisWeekNights > MAX_NIGHT_SHIFTS_PER_TWO_WEEKS) {
@@ -306,81 +426,110 @@ export function validateAvailabilityDays(
   return errors;
 }
 
+function validateRestGaps(days: AvailabilityDayInput[]): string[] {
+  const errors: string[] = [];
+  const blocks = contiguousWorkBlocks(days)
+    .map((b) => ({
+      ...b,
+      startAbs: b.dayOfWeek * 24 * 60 + b.startMinutes,
+      endAbs: b.dayOfWeek * 24 * 60 + b.startMinutes + b.duration,
+    }))
+    .sort((a, b) => a.startAbs - b.startAbs);
+
+  for (let i = 1; i < blocks.length; i++) {
+    const prev = blocks[i - 1]!;
+    const next = blocks[i]!;
+    const gap = next.startAbs - prev.endAbs;
+    if (gap < MIN_REST_GAP_MINUTES) {
+      errors.push(
+        `Need at least 8 hours rest between shifts (${DAY_LABELS[prev.dayOfWeek]} → ${DAY_LABELS[next.dayOfWeek]}: ${(gap / 60).toFixed(1)}h gap). Ideal is 10–12 hours.`
+      );
+    }
+  }
+  return errors;
+}
+
+function validateHagimDays(
+  days: AvailabilityDayInput[],
+  fridayContract: boolean,
+  weekStart: Date
+): string[] {
+  if (canWorkHagim(fridayContract)) return [];
+  const errors: string[] = [];
+  for (const h of holidaysInAvailabilityWeek(weekStart)) {
+    if (hasWorkOnDay(days, h.dayOfWeek)) {
+      errors.push(
+        `${DAY_LABELS[h.dayOfWeek]} is ${h.name} (חג) — only people who signed the Friday form can work hagim.`
+      );
+    }
+  }
+  return errors;
+}
+
 export function validateAvailability(
   shifts: AvailabilityShiftInput[],
   fridayContract: boolean,
-  days?: AvailabilityDayInput[]
+  days?: AvailabilityDayInput[],
+  opts?: { sundayOk?: boolean }
 ): string[] {
   const errors: string[] = [];
+  const sundayOk = opts?.sundayOk ?? !fridayContract;
 
   for (const s of shifts) {
+    if (s.dayOfWeek < 0 || s.dayOfWeek > 6) {
+      errors.push("Invalid day in shift.");
+      continue;
+    }
     const dur = shiftDurationMinutes(s.startMinutes, s.endMinutes);
     if (dur < MIN_SHIFT_MINUTES) {
-      errors.push(`${DAY_LABELS[s.dayOfWeek]}: minimum 6 hours per shift.`);
+      errors.push(
+        `${DAY_LABELS[s.dayOfWeek]}: shift must be at least 6 hours (got ${(dur / 60).toFixed(1)}h).`
+      );
     }
     if (dur > MAX_SHIFT_MINUTES) {
-      errors.push(`${DAY_LABELS[s.dayOfWeek]}: maximum 12 hours per shift.`);
+      errors.push(
+        `${DAY_LABELS[s.dayOfWeek]}: shift cannot exceed 12 hours (got ${(dur / 60).toFixed(1)}h).`
+      );
     }
   }
 
   const workOn = (day: number) =>
     days ? hasWorkOnDay(days, day) : hasShiftOnDay(shifts, day);
 
-  if (fridayContract && workOn(SUNDAY)) {
-    errors.push("Friday form signed: you cannot work Sunday.");
-  }
-  if (!fridayContract && workOn(FRIDAY)) {
-    errors.push("Without the Friday form: you cannot work Friday.");
+  if (workOn(SUNDAY) && !sundayOk) {
+    errors.push(
+      "Sunday is not enabled — turn on “I can work Sunday” (you can tap both Friday and Sunday)."
+    );
   }
 
-  const friFree = !workOn(FRIDAY);
-  const satFree = !workOn(SATURDAY);
-  const sunFree = !workOn(SUNDAY);
-  if (!(friFree && satFree) && !(satFree && sunFree)) {
-    errors.push("Need 2 free days in a row: Fri+Sat OR Sat+Sun.");
+  if (!fridayContract && days) {
+    const fri = days.find((d) => d.dayOfWeek === FRIDAY && d.canWork);
+    if (fri) {
+      if (fri.allDay) {
+        errors.push(
+          "Without the Friday form: Friday only until 16:00 (Shabbat enter) — all-day is not allowed."
+        );
+      } else {
+        for (const r of dayHourRanges(fri)) {
+          if (r.endMinutes > FRIDAY_UNSIGNED_END_MINUTES) {
+            errors.push(
+              `Without the Friday form: Friday work must end by 16:00 (Shabbat enter). Got end ${minutesToTime(r.endMinutes)}.`
+            );
+          }
+        }
+      }
+    }
+  } else if (!fridayContract && workOn(FRIDAY) && !days) {
+    errors.push(
+      "Without the Friday form: Friday work must end by 16:00 (Shabbat enter)."
+    );
+  }
+
+  if (workOn(SATURDAY)) {
+    errors.push("Saturday is Shabbat — company day off.");
   }
 
   return errors;
-}
-
-export type ShiftCoverageDay = {
-  dayOfWeek: number;
-  label: string;
-  supervisors: number;
-  shiftLeaders: number;
-  staffTotal: number;
-  active: boolean;
-  ok: boolean;
-};
-
-export function computeShiftCoverageByDay(
-  roster: {
-    user: { isShiftLeader: boolean };
-    submission: { days: { dayOfWeek: number; canWork: boolean }[] } | null;
-  }[]
-): ShiftCoverageDay[] {
-  return AVAILABILITY_DAYS.map((dayOfWeek, idx) => {
-    let supervisors = 0;
-    let shiftLeaders = 0;
-    for (const row of roster) {
-      const day = row.submission?.days.find((d) => d.dayOfWeek === dayOfWeek);
-      if (!day?.canWork) continue;
-      if (row.user.isShiftLeader) shiftLeaders += 1;
-      else supervisors += 1;
-    }
-    const staffTotal = supervisors + shiftLeaders;
-    const active = staffTotal > 0;
-    const ok = !active || (supervisors >= 1 && shiftLeaders >= 1);
-    return {
-      dayOfWeek,
-      label: DAY_LABELS[idx],
-      supervisors,
-      shiftLeaders,
-      staffTotal,
-      active,
-      ok,
-    };
-  });
 }
 
 export function weekStartSunday(date = new Date()): Date {
