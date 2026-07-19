@@ -246,14 +246,16 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
           (opts.task ?? map.task) === "POLISH" || map.phase === "POLISH" || map.phase === "QA_REVIEW"
             ? "POLISH"
             : "PREP";
-        for (const inspector of shiftInspectors) {
-          await api.createTask(map.id, {
-            title: `${shift.label} shift — ${map.mapNumber}`,
-            description: `Assigned to ${shift.label} shift (${shift.hours})`,
-            assignedToId: inspector.id,
-            phase: taskPhase,
-          });
-        }
+        await Promise.all(
+          shiftInspectors.map((inspector) =>
+            api.createTask(map.id, {
+              title: `${shift.label} shift — ${map.mapNumber}`,
+              description: `Assigned to ${shift.label} shift (${shift.hours})`,
+              assignedToId: inspector.id,
+              phase: taskPhase,
+            })
+          )
+        );
       }
 
       setAssignMap(null);
@@ -272,10 +274,11 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
     setError("");
     setLoading(true);
     try {
-      for (const map of assignableSelected) {
-        const updated = await api.assignInspector(map.id, bulkInspectorId);
-        patch(updated);
-      }
+      // Assign in parallel rather than serializing one round-trip per map.
+      const updates = await Promise.all(
+        assignableSelected.map((map) => api.assignInspector(map.id, bulkInspectorId))
+      );
+      for (const updated of updates) patch(updated);
       setSelected(new Set());
       setBulkInspectorId("");
     } catch (err) {
@@ -343,7 +346,8 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
         originals.map((m) => m.id),
         shuffleInspectors.map((m) => m.id)
       );
-      onRefresh();
+      // No refetch: the server broadcasts the exact changed rows (maps:upsert)
+      // which the realtime cache bridge patches in place.
     } catch (err) {
       // Roll back the optimistic patches and restore the prior selection.
       for (const original of originals) patch(original);
@@ -370,7 +374,7 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
     setLoading(true);
     try {
       await api.unassignInspectors(originals.map((m) => m.id));
-      onRefresh();
+      // No refetch: realtime maps:upsert reconciles the changed rows.
     } catch (err) {
       // Roll back the optimistic patches and restore the prior selection.
       for (const original of originals) patch(original);
@@ -387,10 +391,10 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
     setError("");
     setLoading(true);
     try {
-      for (const map of selectedNeedingQa) {
-        const updated = await api.assignQa(map.id, bulkQaId);
-        patch(updated);
-      }
+      const updates = await Promise.all(
+        selectedNeedingQa.map((map) => api.assignQa(map.id, bulkQaId))
+      );
+      for (const updated of updates) patch(updated);
       setSelected(new Set());
       setBulkQaId("");
     } catch (err) {

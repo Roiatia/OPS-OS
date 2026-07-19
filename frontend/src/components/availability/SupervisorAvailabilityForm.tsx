@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api";
+import { availabilityKeys, useMyAvailabilityQuery } from "@/hooks/queries";
 import type { AvailabilitySubmission } from "../../types/availability";
 import {
   AVAILABILITY_DAYS,
@@ -110,37 +112,42 @@ function localValidationErrors(days: LocalDay[], sundayOk: boolean): string[] {
 }
 
 export function SupervisorAvailabilityForm({ onSubmitted }: { onSubmitted?: () => void }) {
+  const qc = useQueryClient();
   const [weekStart, setWeekStart] = useState(() => defaultSubmissionWeekStart());
+  const weekIso = isoWeekStart(weekStart);
   const [fridayContract, setFridayContract] = useState(false);
   const [sundayOk, setSundayOk] = useState(true);
   const [priorWeekNightShifts, setPriorWeekNightShifts] = useState(0);
   const [days, setDays] = useState<LocalDay[]>(emptyWeek);
   const [submittedAt, setSubmittedAt] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const data: AvailabilitySubmission = await api.getMyAvailability(isoWeekStart(weekStart));
-      setFridayContract(data.fridayContract);
-      setSundayOk(data.sundayOk ?? !data.fridayContract);
-      setPriorWeekNightShifts(data.nightShifts?.priorWeek ?? 0);
-      setSubmittedAt(data.submittedAt);
-      setDays(daysFromSubmission(data));
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, [weekStart]);
+  // Cached fetch shared with the availability reminder (same query key), so the
+  // supervisor dashboard doesn't fetch "my availability" twice, and re-opening
+  // the tab within staleTime is instant.
+  const availabilityQuery = useMyAvailabilityQuery(weekIso);
+  const loading = availabilityQuery.isLoading;
+
+  // Seed the editable form once per week; a background revalidation of the same
+  // week won't wipe in-progress edits.
+  const seededWeekRef = useRef<string | null>(null);
+  useEffect(() => {
+    const data = availabilityQuery.data;
+    if (!data) return;
+    if (seededWeekRef.current === weekIso) return;
+    setFridayContract(data.fridayContract);
+    setSundayOk(data.sundayOk ?? !data.fridayContract);
+    setPriorWeekNightShifts(data.nightShifts?.priorWeek ?? 0);
+    setSubmittedAt(data.submittedAt);
+    setDays(daysFromSubmission(data));
+    seededWeekRef.current = weekIso;
+  }, [availabilityQuery.data, weekIso]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (availabilityQuery.error) setError((availabilityQuery.error as Error).message);
+  }, [availabilityQuery.error]);
 
   const payloadDays = useMemo(
     () => toPayload(days, fridayContract, sundayOk),
@@ -198,6 +205,8 @@ export function SupervisorAvailabilityForm({ onSubmitted }: { onSubmitted?: () =
         days: payloadDays,
       });
       setSubmittedAt(saved.submittedAt);
+      // Keep the shared cache (and the availability reminder) in sync.
+      qc.setQueryData(availabilityKeys.myAvailability(weekIso), saved);
       setSuccess("Availability submitted.");
       onSubmitted?.();
     } catch (err) {
