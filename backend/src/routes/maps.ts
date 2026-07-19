@@ -232,19 +232,20 @@ router.get("/team", requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMI
   res.json(team);
 });
 
-// Combined dashboard payload — one round-trip instead of 3 (maps + history +
-// team + supervisor field maps). Sub-lists the caller may not access resolve
-// to []. Realtime keeps this fresh after the initial load.
+// Combined dashboard payload for first paint — active maps + team + supervisor
+// field maps in one round-trip. History is deliberately NOT included: at scale
+// the archived list dominates the payload, so the frontend loads it lazily via
+// GET /maps/history only when the History tab opens. Sub-lists the caller may
+// not access resolve to []. Realtime keeps this fresh after the initial load.
 router.get("/dashboard", async (req, res) => {
   const user = (req as AuthedRequest).user;
   try {
-    const [maps, history, team, teamFieldMaps] = await Promise.all([
+    const [maps, team, teamFieldMaps] = await Promise.all([
       workflow.listMapsForUser(user),
-      workflow.listHistoryMaps(user).catch(() => []),
       workflow.listTeamMembers().catch(() => []),
       workflow.listTeamFieldMaps(user).catch(() => []),
     ]);
-    res.json({ maps, history, team, teamFieldMaps });
+    res.json({ maps, team, teamFieldMaps });
   } catch (e) {
     res.status(500).json({ error: (e as Error).message });
   }
@@ -421,6 +422,34 @@ router.patch("/:id/inspector-status", requireRoles(RoleName.MAPPING_INSPECTOR), 
     res.status(400).json({ error: (e as Error).message });
   }
 });
+
+// Graphics team leader override of a map's workflow status from the board.
+// Reuses the inspector / QA transitions; the change broadcasts to all clients.
+router.patch(
+  "/:id/leader-status",
+  requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN),
+  async (req, res) => {
+    try {
+      const { action, note } = req.body as {
+        action?: workflow.LeaderStatusAction;
+        note?: string;
+      };
+      if (!action || typeof action !== "object" || typeof action.kind !== "string") {
+        res.status(400).json({ error: "action required" });
+        return;
+      }
+      const map = await workflow.setMapStatusAsLeader(
+        req.params.id,
+        action,
+        (req as AuthedRequest).user,
+        note
+      );
+      res.json(map);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
 
 router.post("/:id/notes", async (req, res) => {
   try {

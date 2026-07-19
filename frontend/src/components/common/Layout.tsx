@@ -2,11 +2,15 @@ import { Outlet, Link, useNavigate } from "react-router-dom";
 import { hasSupervisorRole } from "@/lib/roles";
 import { useAuth, hasRole } from "@/context/AuthContext";
 import { OriientLogo } from "@/components/common/OriientLogo";
+import { useRealtimeCacheBridge } from "@/hooks/useMapsRealtime";
 import { ROLE_LABELS } from "@/types";
 
 export function Layout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+
+  // One socket for the whole authed app — feeds the shared query cache.
+  useRealtimeCacheBridge();
 
   if (!user) return null;
 

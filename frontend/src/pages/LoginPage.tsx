@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { GoogleLogin } from "@react-oauth/google";
 import { api } from "../api";
 import { useAuth } from "../context/AuthContext";
+import { useConfigQuery } from "../hooks/queries";
 import { OriientLogo } from "@/components/common/OriientLogo";
 
 /** Fallback when /auth/demo-users is unavailable — keep in sync with prisma/seed/seed.ts */
@@ -41,15 +42,12 @@ export function LoginPage() {
   const [demoUsers, setDemoUsers] = useState<
     { email: string; name: string; roles: { label: string }[] }[]
   >([]);
-  const [config, setConfig] = useState<{ demoMode: boolean; googleClientId: string | null } | null>(
-    null
-  );
+  const { data: config } = useConfigQuery();
   const [email, setEmail] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    api.getConfig().then(setConfig);
     api.getDemoUsers().then(setDemoUsers).catch(() => {});
   }, []);
 

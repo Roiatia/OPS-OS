@@ -10,6 +10,21 @@ const JWT_SECRET = env.JWT_SECRET;
 
 export type AuthedRequest = Request & { user: AuthUser };
 
+/**
+ * Short-lived in-memory cache of resolved users (id → user + roles). Every
+ * authed request previously hit the DB to re-resolve roles; on a remote pooler
+ * (~250ms RTT) that tax landed on every call, including the large dashboard.
+ * A short TTL keeps role changes propagating quickly while collapsing the
+ * per-request lookup to at most once per user per window.
+ */
+const USER_CACHE_TTL_MS = 30_000;
+const userCache = new Map<string, { user: AuthUser; expiresAt: number }>();
+
+/** Drop a cached user (call after role/identity mutations if needed). */
+export function invalidateUserCache(userId: string): void {
+  userCache.delete(userId);
+}
+
 export function signToken(user: AuthUser) {
   return jwt.sign(
     { id: user.id, email: user.email, name: user.name, roles: user.roles },
@@ -41,23 +56,35 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
     return;
   }
 
+  const now = Date.now();
+  const cached = userCache.get(payload.id);
+  if (cached && cached.expiresAt > now) {
+    (req as AuthedRequest).user = cached.user;
+    next();
+    return;
+  }
+
   const dbUser = await prisma.user.findUnique({
     where: { id: payload.id },
     include: { roles: true },
   });
 
   if (!dbUser) {
+    userCache.delete(payload.id);
     res.status(401).json({ error: "User not found" });
     return;
   }
 
-  (req as AuthedRequest).user = {
+  const authUser: AuthUser = {
     id: dbUser.id,
     email: dbUser.email,
     name: dbUser.name,
     avatarUrl: dbUser.avatarUrl,
     roles: dbUser.roles.map((r) => r.role),
   };
+
+  userCache.set(payload.id, { user: authUser, expiresAt: now + USER_CACHE_TTL_MS });
+  (req as AuthedRequest).user = authUser;
 
   next();
 }

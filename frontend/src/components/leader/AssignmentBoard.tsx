@@ -38,6 +38,7 @@ import {
   type AssignmentQueue,
   type MapColumnFilters,
 } from "../../lib/mapDisplay";
+import { getLeaderStatusOptions, type StatusOption } from "../../lib/activeMapsWorkflow";
 import { SHIFTS, getShiftInspectors, type ShiftId } from "../../lib/shifts";
 import { ROLE_LABELS } from "../../types";
 
@@ -74,6 +75,7 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
   const [assignQaMap, setAssignQaMap] = useState<MapRecord | null>(null);
   const [bulkQaId, setBulkQaId] = useState("");
   const [dueDateSaving, setDueDateSaving] = useState<string | null>(null);
+  const [statusSaving, setStatusSaving] = useState<string | null>(null);
   const [shuffleOpen, setShuffleOpen] = useState(false);
   const [shuffleStep, setShuffleStep] = useState<"pick" | "preview">("pick");
   const [shuffleInspectorIds, setShuffleInspectorIds] = useState<Set<string>>(new Set());
@@ -397,6 +399,19 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
       setError((err as Error).message);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleStatusChange(map: MapRecord, option: StatusOption) {
+    setError("");
+    setStatusSaving(map.id);
+    try {
+      const updated = await api.setLeaderStatus(map.id, option.action);
+      patch(updated);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setStatusSaving(null);
     }
   }
 
@@ -779,10 +794,44 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
                     <td className="px-3 py-3">
                       {(() => {
                         const state = getMapDisplayState(map);
-                        return state === "—" ? (
-                          "—"
-                        ) : (
-                          <Badge label={state} tone={workflowStateTone(state)} />
+                        const statusOptions = getLeaderStatusOptions(map);
+                        if (statusOptions.length === 0) {
+                          return state === "—" ? (
+                            "—"
+                          ) : (
+                            <Badge label={state} tone={workflowStateTone(state)} />
+                          );
+                        }
+                        return (
+                          <select
+                            value=""
+                            disabled={statusSaving === map.id}
+                            onChange={(e) => {
+                              const opt = statusOptions.find((o) => o.value === e.target.value);
+                              if (opt) handleStatusChange(map, opt);
+                            }}
+                            title="Change status"
+                            className={`w-full text-xs font-medium rounded-md border px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:opacity-50 ${
+                              state === "Fix"
+                                ? "bg-red-100 border-red-200 text-red-800"
+                                : state === "Approved"
+                                  ? "bg-emerald-100 border-emerald-200 text-emerald-800"
+                                  : state === "In QA"
+                                    ? "bg-sky-100 border-sky-200 text-sky-800"
+                                    : state === "Accepted"
+                                      ? "bg-amber-100 border-amber-200 text-amber-800"
+                                      : "bg-white border-border"
+                            }`}
+                          >
+                            <option value="" disabled>
+                              {state === "—" ? "Set status…" : state}
+                            </option>
+                            {statusOptions.map((o) => (
+                              <option key={o.value} value={o.value}>
+                                {o.label}
+                              </option>
+                            ))}
+                          </select>
                         );
                       })()}
                     </td>

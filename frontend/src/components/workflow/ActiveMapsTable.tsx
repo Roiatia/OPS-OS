@@ -194,7 +194,10 @@ export function ActiveMapsTable({ maps, role, onRefresh, onPatch }: Props) {
                     <div className="space-y-1.5">
                       {map.notes?.length > 0 && (
                         <div className="space-y-1 max-h-20 overflow-y-auto">
-                          {map.notes.slice(-3).map((n) => (
+                          {[...map.notes]
+                            .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+                            .slice(-3)
+                            .map((n) => (
                             <p key={n.id} className="text-xs text-slate-600 leading-snug">
                               <span className="font-medium text-slate-800">[{n.user.name.split(" ")[0]}]</span>{" "}
                               {n.body}

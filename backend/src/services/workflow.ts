@@ -1,6 +1,6 @@
 import { Prisma, MapPhase, InspectorStatus, SupervisorStatus, FieldWorkStatus, QaStatus, TaskStatus, RoleName } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
-import { mapListIncludes, mapDetailIncludes } from "../lib/mapIncludes.js";
+import { mapListIncludes, mapDetailIncludes, mapHistoryIncludes } from "../lib/mapIncludes.js";
 import { broadcastMapsInvalidate } from "../lib/realtimeBus.js";
 import { assertUploadCompleteForMapping } from "../domain/pipeline.js";
 import {
@@ -415,7 +415,7 @@ export async function listHistoryMaps(user: AuthUser) {
 
   return prisma.map.findMany({
     where: { phase: { in: ARCHIVED_PHASES } },
-    include: mapListIncludes,
+    include: mapHistoryIncludes,
     orderBy: { updatedAt: "desc" },
   });
 }
@@ -812,7 +812,9 @@ export async function updateInspectorStatus(
 ) {
   const map = await prisma.map.findUnique({ where: { id: mapId } });
   if (!map) throw new Error("Map not found");
-  if (map.assignedInspectorId !== user.id) {
+  // The assigned inspector owns this status, but the graphics team leader (and
+  // OPS admin) may override it from their board to correct/nudge the pipeline.
+  if (map.assignedInspectorId !== user.id && !isLeaderOrAdmin(user)) {
     throw new Error("Not assigned to this map");
   }
   if (map.phase !== MapPhase.PREP && map.phase !== MapPhase.POLISH) {
@@ -849,6 +851,44 @@ export async function updateInspectorStatus(
   ops.push(prisma.map.findUnique({ where: { id: mapId }, include: mapDetailIncludes }));
   const results = await prisma.$transaction(ops);
   return results[results.length - 1] as MapDetailPayload | null;
+}
+
+/**
+ * Status transitions the graphics team leader (or OPS admin) may drive from the
+ * assignment board — the same moves the assigned inspector / QA can make, but
+ * unlocked for the leader so they can correct or advance a map. Each branch
+ * reuses the canonical workflow function (which does the phase transition,
+ * history + event logging, and — via the Prisma extension — broadcasts the
+ * change to every connected client so all users see it live).
+ */
+export type LeaderStatusAction =
+  | { kind: "inspector"; status: InspectorStatus }
+  | { kind: "qa_review"; status: "fix" | "fix_done" | "approved" }
+  | { kind: "upload_review"; approved: boolean };
+
+export async function setMapStatusAsLeader(
+  mapId: string,
+  action: LeaderStatusAction,
+  user: AuthUser,
+  note?: string
+) {
+  if (!isLeaderOrAdmin(user)) {
+    throw new Error("Only the graphics team leader can change status here");
+  }
+
+  switch (action.kind) {
+    case "inspector":
+      if (!Object.values(InspectorStatus).includes(action.status)) {
+        throw new Error("Invalid inspector status");
+      }
+      return updateInspectorStatus(mapId, action.status, user, note);
+    case "upload_review":
+      return qaUploadDecision(mapId, action.approved, user, note);
+    case "qa_review":
+      return qaPolishDecision(mapId, action.status, user, note);
+    default:
+      throw new Error("Invalid status action");
+  }
 }
 
 export async function addMapNote(mapId: string, userId: string, body: string) {

@@ -1,19 +1,41 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { GoogleOAuthProvider } from "@react-oauth/google";
-import { useEffect, useState } from "react";
+import { lazy, Suspense } from "react";
 import { AuthProvider, useAuth, hasRole } from "./context/AuthContext";
+import { useConfigQuery } from "./hooks/queries";
 import { hasOpsManagerRole, hasSupervisorRole } from "./lib/roles";
 import type { User } from "./types";
 import { LandingPage } from "./pages/LandingPage";
 import { LoginPage } from "./pages/LoginPage";
 import { DashboardPage } from "./pages/DashboardPage";
-import { LeaderDashboardPage } from "./pages/LeaderDashboardPage";
-import { OpsManagerDashboardPage } from "./pages/OpsManagerDashboardPage";
-import { SupervisorDashboardPage } from "./pages/SupervisorDashboardPage";
-import { InspectorDashboardPage, QaDashboardPage } from "./pages/InspectorDashboardPage";
-import { MapDetailPage } from "./pages/MapDetailPage";
 import { Layout } from "@/components/common/Layout";
-import { api } from "./api";
+
+// Heavy, role-specific views are code-split so each role only downloads its own
+// dashboard (and the map detail view) on demand, shrinking first paint.
+const LeaderDashboardPage = lazy(() =>
+  import("./pages/LeaderDashboardPage").then((m) => ({ default: m.LeaderDashboardPage }))
+);
+const OpsManagerDashboardPage = lazy(() =>
+  import("./pages/OpsManagerDashboardPage").then((m) => ({ default: m.OpsManagerDashboardPage }))
+);
+const SupervisorDashboardPage = lazy(() =>
+  import("./pages/SupervisorDashboardPage").then((m) => ({ default: m.SupervisorDashboardPage }))
+);
+const InspectorDashboardPage = lazy(() =>
+  import("./pages/InspectorDashboardPage").then((m) => ({ default: m.InspectorDashboardPage }))
+);
+const QaDashboardPage = lazy(() =>
+  import("./pages/InspectorDashboardPage").then((m) => ({ default: m.QaDashboardPage }))
+);
+const MapDetailPage = lazy(() =>
+  import("./pages/MapDetailPage").then((m) => ({ default: m.MapDetailPage }))
+);
+
+function RouteFallback() {
+  return (
+    <div className="min-h-[50vh] flex items-center justify-center text-muted">Loading...</div>
+  );
+}
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -38,6 +60,7 @@ function RoleRoute({
 
 function AppRoutes() {
   return (
+    <Suspense fallback={<RouteFallback />}>
     <Routes>
       <Route path="/" element={<LandingPage />} />
       <Route path="/login" element={<LoginPage />} />
@@ -102,15 +125,13 @@ function AppRoutes() {
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    </Suspense>
   );
 }
 
 export default function App() {
-  const [googleClientId, setGoogleClientId] = useState<string | null>(null);
-
-  useEffect(() => {
-    api.getConfig().then((c) => setGoogleClientId(c.googleClientId));
-  }, []);
+  const { data: config } = useConfigQuery();
+  const googleClientId = config?.googleClientId ?? null;
 
   const inner = (
     <AuthProvider>

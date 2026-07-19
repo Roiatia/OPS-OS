@@ -10,6 +10,19 @@ export default defineConfig({
       "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // Split rarely-changing vendor code into its own long-cacheable chunk
+        // so the app bundle stays small and dependency updates don't bust it.
+        manualChunks: {
+          "react-vendor": ["react", "react-dom", "react-router-dom"],
+          "query-vendor": ["@tanstack/react-query"],
+          "google-oauth": ["@react-oauth/google"],
+        },
+      },
+    },
+  },
   server: {
     port: 5173,
     proxy: {

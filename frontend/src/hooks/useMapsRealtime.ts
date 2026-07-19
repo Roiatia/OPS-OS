@@ -1,5 +1,11 @@
 import { useEffect, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import type { MapRecord } from "@/types";
+import {
+  realtimeDelete,
+  realtimeInvalidate,
+  realtimeUpsert,
+} from "@/lib/mapsCache";
 
 type Handlers = {
   /** Fully-shaped changed maps — patch them into local state (no refetch). */
@@ -81,4 +87,19 @@ export function useMapsRealtime(handlers: Handlers) {
       ws?.close();
     };
   }, []);
+}
+
+/**
+ * Single app-level subscriber that routes realtime map events straight into the
+ * shared React Query cache: upsert/deleted patch the cached lists in place,
+ * invalidate triggers a background revalidate. Mounting this once (in the authed
+ * Layout) keeps every page's cached data live without a per-page socket.
+ */
+export function useRealtimeCacheBridge() {
+  const queryClient = useQueryClient();
+  useMapsRealtime({
+    onUpsert: (maps) => realtimeUpsert(queryClient, maps),
+    onDeleted: (ids) => realtimeDelete(queryClient, ids),
+    onInvalidate: () => realtimeInvalidate(queryClient),
+  });
 }

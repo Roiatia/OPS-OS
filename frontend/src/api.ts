@@ -56,11 +56,14 @@ export const api = {
 
   getMaps: () => request<import("./types").MapRecord[]>("/maps"),
 
-  /** One round-trip for a dashboard: maps + history + team + supervisor field maps. */
+  /**
+   * First-paint dashboard payload: active maps + team + supervisor field maps in
+   * one round-trip. History is intentionally excluded (loaded lazily via
+   * getHistoryMaps() when the History tab opens) to keep the initial load small.
+   */
   getDashboard: () =>
     request<{
       maps: import("./types").MapRecord[];
-      history: import("./types").MapRecord[];
       team: import("./types").TeamMember[];
       teamFieldMaps: import("./types").MapRecord[];
     }>("/maps/dashboard"),
@@ -246,6 +249,17 @@ export const api = {
     request<import("./types").MapRecord>(`/maps/${mapId}/inspector-status`, {
       method: "PATCH",
       body: JSON.stringify({ status, note }),
+    }),
+
+  /** Graphics team leader override of a map's workflow status from the board. */
+  setLeaderStatus: (
+    mapId: string,
+    action: import("./lib/activeMapsWorkflow").StatusAction,
+    note?: string
+  ) =>
+    request<import("./types").MapRecord>(`/maps/${mapId}/leader-status`, {
+      method: "PATCH",
+      body: JSON.stringify({ action, note }),
     }),
 
   updateSupervisorStatus: (mapId: string, status: string, note?: string) =>

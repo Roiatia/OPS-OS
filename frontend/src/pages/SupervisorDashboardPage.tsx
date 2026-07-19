@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { api } from "../api";
+import { useCallback, useMemo } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { MapHubBoard } from "../components/hub/MapHubBoard";
 import { CompanyDashboardPanel } from "../components/leader/CompanyDashboardPanel";
 import { SettingsPanel } from "../components/leader/SettingsPanel";
@@ -11,13 +11,14 @@ import { SupervisorAvailabilityForm } from "../components/availability/Superviso
 import { AvailabilityReminderModal } from "../components/availability/AvailabilityReminderModal";
 import { getSupervisorFieldStatus } from "../lib/supervisorDisplay";
 import { useSectionRoute } from "@/hooks/useSectionRoute";
-import { useMapsRealtime } from "@/hooks/useMapsRealtime";
-import { applyMapUpsert, removeMapsById, useDebouncedCallback } from "../lib/mapsLive";
+import { useDashboardQuery } from "@/hooks/queries";
+import { patchDashboardMaps, queryKeys } from "../lib/mapsCache";
+import { applyMapUpsert } from "../lib/mapsLive";
 import { patchMapInList } from "../lib/mapSync";
 import { useAuth } from "../context/AuthContext";
 import { hasSupervisorRole } from "../lib/roles";
 import { useAvailabilityReminder } from "@/hooks/useAvailabilityReminder";
-import type { MapRecord, TeamMember } from "../types";
+import type { MapRecord } from "../types";
 
 const SUPERVISOR_SECTIONS = [
   "hub",
@@ -44,10 +45,7 @@ const SECTION_TITLES: Record<SupervisorSection, { title: string; subtitle: strin
 
 export function SupervisorDashboardPage() {
   const { user } = useAuth();
-  const [maps, setMaps] = useState<MapRecord[]>([]);
-  const [teamFieldMaps, setTeamFieldMaps] = useState<MapRecord[]>([]);
-  const [team, setTeam] = useState<TeamMember[]>([]);
-  const [loading, setLoading] = useState(true);
+  const qc = useQueryClient();
   const [activeSection, setActiveSection] = useSectionRoute(
     "/app/supervisor",
     SUPERVISOR_SECTIONS,
@@ -61,72 +59,37 @@ export function SupervisorDashboardPage() {
     void availabilityReminder.refresh();
   }
 
-  const load = useCallback((silent = false) => {
-    if (!silent) setLoading(true);
-    return api
-      .getDashboard()
-      .then((d) => {
-        setMaps(d.maps);
-        setTeamFieldMaps(d.teamFieldMaps);
-        setTeam(d.team);
-      })
-      .catch(() => api.getMaps().then(setMaps))
-      .finally(() => {
-        if (!silent) setLoading(false);
-      });
-  }, []);
+  const { data, isLoading } = useDashboardQuery();
+  const maps = useMemo(() => data?.maps ?? [], [data]);
+  const teamFieldMaps = useMemo(() => data?.teamFieldMaps ?? [], [data]);
+  const team = useMemo(() => data?.team ?? [], [data]);
+  const loading = isLoading;
 
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  /** Slow backstop — realtime carries changes; poll catches newly in-scope maps. */
-  useEffect(() => {
-    const interval = setInterval(() => load(true), 60_000);
-    return () => clearInterval(interval);
-  }, [load]);
-
-  const reloadMaps = useDebouncedCallback(() => load(true));
-
-  useMapsRealtime({
-    onUpsert: (incoming) => {
-      setMaps((prev) => {
-        const { next, needReload } = applyMapUpsert(prev, incoming);
-        if (needReload) reloadMaps();
-        return next;
-      });
-      setTeamFieldMaps((prev) => {
-        const { next, needReload } = applyMapUpsert(prev, incoming);
-        if (needReload) reloadMaps();
-        return next;
-      });
-    },
-    onDeleted: (ids) => {
-      setMaps((prev) => removeMapsById(prev, ids));
-      setTeamFieldMaps((prev) => removeMapsById(prev, ids));
-    },
-    onInvalidate: reloadMaps,
-  });
+  const load = useCallback(
+    () => void qc.invalidateQueries({ queryKey: queryKeys.dashboard }),
+    [qc]
+  );
+  const reloadMaps = load;
 
   const handleHubMutate = useCallback(
     (updated?: MapRecord) => {
       if (updated) {
-        setMaps((prev) => patchMapInList(prev, updated));
+        patchDashboardMaps(qc, (prev) => patchMapInList(prev, updated));
       }
     },
-    []
+    [qc]
   );
 
   /** Patch a single map from a Maps-board mutation response — no full refetch. */
   const patchMap = useCallback(
     (updated: MapRecord) => {
-      setMaps((prev) => {
+      patchDashboardMaps(qc, (prev) => {
         const { next, needReload } = applyMapUpsert(prev, [updated]);
         if (needReload) reloadMaps();
         return next;
       });
     },
-    [reloadMaps]
+    [qc, reloadMaps]
   );
 
   const stats = useMemo(() => {
@@ -197,7 +160,7 @@ export function SupervisorDashboardPage() {
                   </div>
                   <SupervisorMapsBoard
                     maps={maps}
-                    onRefresh={() => load(true)}
+                    onRefresh={load}
                     onPatch={patchMap}
                   />
                 </>

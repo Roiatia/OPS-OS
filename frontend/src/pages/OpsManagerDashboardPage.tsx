@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { CompanyDashboardPanel } from "../components/leader/CompanyDashboardPanel";
 import { SettingsPanel } from "../components/leader/SettingsPanel";
@@ -19,12 +20,13 @@ import {
 } from "../lib/opsDisplay";
 import { getOpsWorkloadAlerts } from "../lib/opsWorkload";
 import { useSectionRoute } from "@/hooks/useSectionRoute";
-import { useMapsRealtime } from "@/hooks/useMapsRealtime";
-import { applyMapUpsert, removeMapsById, useDebouncedCallback } from "../lib/mapsLive";
+import { useDashboardQuery, useHistoryQuery } from "@/hooks/queries";
+import { patchDashboardMaps, queryKeys } from "../lib/mapsCache";
+import { applyMapUpsert } from "../lib/mapsLive";
 import { patchMapInList, normalizeMapRecord } from "../lib/mapSync";
 import { useOpsUpdates } from "@/hooks/useOpsUpdates";
 import { useAuth } from "../context/AuthContext";
-import type { MapRecord, TeamMember } from "../types";
+import type { MapRecord } from "../types";
 
 const OPS_SECTIONS = [
   "hub",
@@ -84,10 +86,7 @@ const SECTION_TITLES: Record<OpsSection, { title: string; subtitle: string }> = 
 
 export function OpsManagerDashboardPage() {
   const { user } = useAuth();
-  const [maps, setMaps] = useState<MapRecord[]>([]);
-  const [historyMaps, setHistoryMaps] = useState<MapRecord[]>([]);
-  const [team, setTeam] = useState<TeamMember[]>([]);
-  const [loading, setLoading] = useState(true);
+  const qc = useQueryClient();
   const [showAddMap, setShowAddMap] = useState(false);
   const [readyPanelOpen, setReadyPanelOpen] = useState(false);
   const [error, setError] = useState("");
@@ -101,74 +100,47 @@ export function OpsManagerDashboardPage() {
     dueDate: "",
   });
 
-  const load = useCallback((silent = false) => {
-    if (!silent) setLoading(true);
-    return api
-      .getDashboard()
-      .then((d) => {
-        setMaps(d.maps);
-        setHistoryMaps(d.history);
-        setTeam(d.team);
-      })
-      .catch(() => {
-        if (!silent) {
-          return Promise.all([api.getMaps(), api.getTeam()]).then(([m, t]) => {
-            setMaps(m);
-            setTeam(t);
-          });
-        }
-      })
-      .finally(() => {
-        if (!silent) setLoading(false);
-      });
-  }, []);
+  const { data, isLoading } = useDashboardQuery();
+  const maps = useMemo(() => data?.maps ?? [], [data]);
+  const team = useMemo(() => data?.team ?? [], [data]);
+  const loading = isLoading;
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  // History is heavy at scale — load it lazily the first time the History tab
+  // opens (the shared cache keeps it live via realtime after that).
+  const { data: historyData } = useHistoryQuery(activeSection === "history");
+  const historyMaps = useMemo(() => historyData ?? [], [historyData]);
 
-  /** Slow backstop only — realtime carries changes; polling covers missed events. */
-  useEffect(() => {
-    const interval = setInterval(() => load(true), 120_000);
-    return () => clearInterval(interval);
-  }, [load]);
+  const load = useCallback(
+    () => void qc.invalidateQueries({ queryKey: queryKeys.dashboard }),
+    [qc]
+  );
+  const reloadMaps = load;
 
-  const reloadMaps = useDebouncedCallback(() => load(true));
-
-  useMapsRealtime({
-    onUpsert: (incoming) =>
-      setMaps((prev) => {
-        const { next, needReload } = applyMapUpsert(prev, incoming);
-        if (needReload) reloadMaps();
-        return next;
-      }),
-    onDeleted: (ids) => {
-      setMaps((prev) => removeMapsById(prev, ids));
-      setHistoryMaps((prev) => removeMapsById(prev, ids));
-    },
-    onInvalidate: reloadMaps,
-  });
-
-  const opsUpdates = useOpsUpdates(() => load(true));
+  // Live-poll updates only while viewing the sections that surface them; the
+  // badge still gets an initial load on other sections.
+  const opsUpdates = useOpsUpdates(
+    load,
+    activeSection === "updates" || activeSection === "hub"
+  );
 
   const handleHubMutate = useCallback(
     (updated?: MapRecord) => {
       if (!updated) return;
       const normalized = normalizeMapRecord(updated);
-      setMaps((prev) => patchMapInList(prev, updated));
+      patchDashboardMaps(qc, (prev) => patchMapInList(prev, updated));
       // Refresh Updates for hub status moves and when a map becomes ready to accept
       if (updated.onHubStatusBoard || isReadyToRelease(normalized)) {
         void opsUpdates.refresh();
       }
     },
-    [opsUpdates]
+    [qc, opsUpdates]
   );
 
   /** Patch a single map from a Maps-board mutation response — no full refetch. */
   const handleBoardPatch = useCallback(
     (updated: MapRecord) => {
       const normalized = normalizeMapRecord(updated);
-      setMaps((prev) => {
+      patchDashboardMaps(qc, (prev) => {
         const { next, needReload } = applyMapUpsert(prev, [normalized]);
         if (needReload) reloadMaps();
         return next;
@@ -177,7 +149,7 @@ export function OpsManagerDashboardPage() {
         void opsUpdates.refresh();
       }
     },
-    [reloadMaps, opsUpdates]
+    [qc, reloadMaps, opsUpdates]
   );
 
   async function handleAddMap(e: React.FormEvent) {
@@ -377,7 +349,7 @@ export function OpsManagerDashboardPage() {
                     team={team}
                     workloadAlerts={workloadAlerts}
                     onRefresh={() => {
-                      void load(true);
+                      void load();
                       void opsUpdates.refresh();
                     }}
                     onPatch={handleBoardPatch}

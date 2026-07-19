@@ -29,7 +29,7 @@ function withDemoFallback(notes: OpsActivityMessage[]): OpsActivityMessage[] {
   return DEMO_OPS_UPDATES;
 }
 
-export function useOpsUpdates(onActivity?: () => void) {
+export function useOpsUpdates(onActivity?: () => void, pollEnabled = true) {
   const [updates, setUpdates] = useState<OpsActivityMessage[]>([]);
   const [shiftAlerts, setShiftAlerts] = useState<OpsShiftAlert[]>([]);
   const [dismissed, setDismissed] = useState<Set<string>>(loadDismissedIds);
@@ -64,11 +64,18 @@ export function useOpsUpdates(onActivity?: () => void) {
     }
   }, []);
 
+  // Always do one initial load so the sidebar badge is populated, but only run
+  // the 15s live poll while the relevant section is open (gated by pollEnabled)
+  // to avoid constant background churn on unrelated sections.
   useEffect(() => {
     void poll(true);
+  }, [poll]);
+
+  useEffect(() => {
+    if (!pollEnabled) return;
     const interval = setInterval(() => poll(false), 15_000);
     return () => clearInterval(interval);
-  }, [poll]);
+  }, [poll, pollEnabled]);
 
   const visible = updates.filter((m) => !dismissed.has(m.id));
   const visibleAlerts = shiftAlerts.filter((a) => !dismissed.has(a.id));

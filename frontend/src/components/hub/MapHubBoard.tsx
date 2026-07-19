@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api";
 import { useAuth } from "../../context/AuthContext";
+import { useHubQuery } from "@/hooks/queries";
 import type { HubSupervisor, MapRecord } from "../../types";
 import {
   applyHubDropLocally,
@@ -135,34 +136,34 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
   const isShiftLeader = hasShiftLeaderRole(user);
   const showIntake = mode === "ops" && isOpsManager;
 
-  const load = useCallback(async (silent = false) => {
-    if (!silent) setInitialLoading(true);
-    try {
-      const hub = await api.getHub();
-      setMaps(
-        hub.maps.map((m) => ({
-          ...m,
-          fieldProgressPercent: m.fieldProgressPercent ?? 0,
-          onHubStatusBoard: m.onHubStatusBoard ?? false,
-        }))
-      );
-      setSupervisors(hub.supervisors);
-      setError("");
-    } catch (err) {
-      if (!silent) setError((err as Error).message);
-    } finally {
-      if (!silent) setInitialLoading(false);
-    }
-  }, []);
+  // Shared, cached hub query (staleTime + 45s backstop poll). Navigation back to
+  // the hub is served from cache; realtime patches this same cache in place.
+  const { data: hubData, isLoading: hubLoading, error: hubError } = useHubQuery();
+
+  // Mirror the cached query into local state so the optimistic drag/progress
+  // flows keep working. Skip while a drop is in flight so we don't clobber an
+  // in-progress optimistic update with a background refetch.
+  useEffect(() => {
+    if (!hubData) return;
+    if (pendingDropRef.current.size > 0) return;
+    setMaps(
+      hubData.maps.map((m) => ({
+        ...m,
+        fieldProgressPercent: m.fieldProgressPercent ?? 0,
+        onHubStatusBoard: m.onHubStatusBoard ?? false,
+      }))
+    );
+    setSupervisors(hubData.supervisors);
+    setError("");
+  }, [hubData]);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    if (hubError) setError((hubError as Error).message);
+  }, [hubError]);
 
   useEffect(() => {
-    const interval = setInterval(() => load(true), 45_000);
-    return () => clearInterval(interval);
-  }, [load]);
+    if (!hubLoading) setInitialLoading(false);
+  }, [hubLoading]);
 
   const onShiftSupervisors = useMemo(() => {
     const withMaps = new Set(
