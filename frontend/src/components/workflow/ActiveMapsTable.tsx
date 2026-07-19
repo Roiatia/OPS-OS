@@ -145,7 +145,16 @@ export function ActiveMapsTable({ maps, role, onRefresh, onPatch }: Props) {
                   <td className="px-3 py-2.5 text-slate-700">{map.client}</td>
                   <td className="px-3 py-2.5 whitespace-nowrap">
                     {taskType ? (
-                      <Badge label={taskType} tone={taskType === "Upload" ? "PREP" : "POLISH"} />
+                      <Badge
+                        label={taskType}
+                        tone={
+                          taskType === "Upload"
+                            ? "PREP"
+                            : taskType === "Uploaded"
+                              ? "UPLOAD_REVIEW"
+                              : "POLISH"
+                        }
+                      />
                     ) : (
                       "—"
                     )}

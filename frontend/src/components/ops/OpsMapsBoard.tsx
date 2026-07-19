@@ -801,14 +801,23 @@ export function OpsMapsBoard({
                       {taskType ? (
                         <Badge
                           label={taskType}
-                          tone={taskType === "Upload" ? "PREP" : "POLISH"}
+                          tone={
+                            taskType === "Upload"
+                              ? "PREP"
+                              : taskType === "Uploaded"
+                                ? "UPLOAD_REVIEW"
+                                : "POLISH"
+                          }
                         />
                       ) : (
                         "—"
                       )}
                     </td>
                     <td className="px-3 py-3">
-                      <Badge label={getMapStation(map)} tone={map.phase} />
+                      <Badge
+                        label={getMapStation(map)}
+                        tone={map.station === "OPS" ? "FIELD" : "PREP"}
+                      />
                     </td>
                     <td className="px-3 py-3">
                       {graphicsState === "—" ? (

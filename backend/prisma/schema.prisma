@@ -29,6 +29,19 @@ enum MapPhase {
   CANCELLED
 }
 
+/** Leader-controlled work kind — independent of MapPhase / station. */
+enum MapTask {
+  UPLOAD
+  UPLOADED
+  POLISH
+}
+
+/** Leader-controlled ownership station — independent of MapPhase / task. */
+enum MapStation {
+  OPS
+  GRAPHICS
+}
+
 enum InspectorStatus {
   ACCEPTED
   PROCESSING
@@ -171,6 +184,10 @@ model Map {
   /** Scheduled return when incomplete/cancelled and mapper will continue later */
   returnVisitAt   DateTime?
   phase           MapPhase         @default(INTAKE)
+  /** Graphics board “Task” — Upload / Uploaded / Polish. Independent of phase. */
+  task            MapTask          @default(UPLOAD)
+  /** Graphics board “Station” — OPS or GRAPHICS. Independent of phase/task. */
+  station         MapStation       @default(GRAPHICS)
   inspectorStatus InspectorStatus?
   supervisorStatus SupervisorStatus?
   qaStatus        QaStatus?

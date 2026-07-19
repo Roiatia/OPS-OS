@@ -29,6 +29,8 @@ import {
   getMapStation,
   getQaLabel,
   getTaskType,
+  MAP_STATION_OPTIONS,
+  MAP_TASK_OPTIONS,
   matchesColumnFilters,
   matchesQueue,
   needsInspectorAssignment,
@@ -40,7 +42,7 @@ import {
 } from "../../lib/mapDisplay";
 import { getLeaderStatusOptions, type StatusOption } from "../../lib/activeMapsWorkflow";
 import { SHIFTS, getShiftInspectors, type ShiftId } from "../../lib/shifts";
-import { ROLE_LABELS } from "../../types";
+import { ROLE_LABELS, type MapStation, type MapTask } from "../../types";
 
 interface Props {
   maps: MapRecord[];
@@ -69,6 +71,8 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
   const [columnFilters, setColumnFilters] = useState<MapColumnFilters>(EMPTY_COLUMN_FILTERS);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkInspectorId, setBulkInspectorId] = useState("");
+  const [bulkTask, setBulkTask] = useState<MapTask | "">("");
+  const [bulkStation, setBulkStation] = useState<MapStation | "">("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [assignMap, setAssignMap] = useState<MapRecord | null>(null);
@@ -76,6 +80,7 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
   const [bulkQaId, setBulkQaId] = useState("");
   const [dueDateSaving, setDueDateSaving] = useState<string | null>(null);
   const [statusSaving, setStatusSaving] = useState<string | null>(null);
+  const [taskStationSaving, setTaskStationSaving] = useState<string | null>(null);
   const [shuffleOpen, setShuffleOpen] = useState(false);
   const [shuffleStep, setShuffleStep] = useState<"pick" | "preview">("pick");
   const [shuffleInspectorIds, setShuffleInspectorIds] = useState<Set<string>>(new Set());
@@ -87,6 +92,7 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
 
   const filterOptions = useMemo(() => {
     const clients = new Set<string>();
+    const batches = new Set<string>();
     const tasks = new Set<string>();
     const stations = new Set<string>();
     const states = new Set<string>();
@@ -95,7 +101,8 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
 
     for (const map of maps) {
       clients.add(map.client);
-      tasks.add(getTaskType(map) ?? "—");
+      batches.add(map.batch?.trim() || "—");
+      tasks.add(getTaskType(map));
       stations.add(getMapStation(map));
       states.add(getMapDisplayState(map));
       inspectorNames.add(getInspectorLabel(map));
@@ -104,6 +111,7 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
 
     return {
       clients: [...clients].sort(),
+      batches: [...batches].sort(),
       tasks: [...tasks].sort(),
       stations: [...stations].sort(),
       states: [...states].sort(),
@@ -186,19 +194,17 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
   }
 
   function toggleSelectAll() {
-    const assignable = filteredMaps.filter(
-      (m) => needsInspectorAssignment(m) || needsQaAssignment(m)
-    );
-    if (assignable.every((m) => selected.has(m.id))) {
+    const selectable = filteredMaps.filter(canSelectMap);
+    if (selectable.length > 0 && selectable.every((m) => selected.has(m.id))) {
       setSelected((prev) => {
         const next = new Set(prev);
-        assignable.forEach((m) => next.delete(m.id));
+        selectable.forEach((m) => next.delete(m.id));
         return next;
       });
     } else {
       setSelected((prev) => {
         const next = new Set(prev);
-        assignable.forEach((m) => next.add(m.id));
+        selectable.forEach((m) => next.add(m.id));
         return next;
       });
     }
@@ -208,6 +214,8 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
     mode: "individual" | "shift";
     memberId?: string;
     shiftId?: ShiftId;
+    task?: MapTask;
+    station?: MapStation;
     attachment?: { fileName: string; mimeType: string; data: string };
   }) {
     if (!assignMap) return;
@@ -216,6 +224,13 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
     try {
       const map = assignMap;
       let updated: MapRecord | undefined;
+
+      if (opts.task || opts.station) {
+        updated = await api.setMapTaskStation(map.id, {
+          ...(opts.task ? { task: opts.task } : {}),
+          ...(opts.station ? { station: opts.station } : {}),
+        });
+      }
 
       if (opts.mode === "individual" && opts.memberId) {
         updated = await api.assignInspector(map.id, opts.memberId, opts.attachment);
@@ -228,7 +243,9 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
         updated = await api.assignInspector(map.id, leadInspector.id, opts.attachment);
 
         const taskPhase =
-          map.phase === "POLISH" || map.phase === "QA_REVIEW" ? "POLISH" : "PREP";
+          (opts.task ?? map.task) === "POLISH" || map.phase === "POLISH" || map.phase === "QA_REVIEW"
+            ? "POLISH"
+            : "PREP";
         for (const inspector of shiftInspectors) {
           await api.createTask(map.id, {
             title: `${shift.label} shift — ${map.mapNumber}`,
@@ -415,6 +432,43 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
     }
   }
 
+  async function handleTaskStationChange(
+    map: MapRecord,
+    patchFields: { task?: MapTask; station?: MapStation }
+  ) {
+    setError("");
+    setTaskStationSaving(map.id);
+    try {
+      const updated = await api.setMapTaskStation(map.id, patchFields);
+      patch(updated);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setTaskStationSaving(null);
+    }
+  }
+
+  async function handleBulkTaskStation() {
+    if (selected.size === 0 || (!bulkTask && !bulkStation)) return;
+    setError("");
+    setLoading(true);
+    try {
+      const result = await api.bulkSetMapTaskStation([...selected], {
+        ...(bulkTask ? { task: bulkTask } : {}),
+        ...(bulkStation ? { station: bulkStation } : {}),
+      });
+      for (const m of result.maps) patch(m);
+      setSelected(new Set());
+      setBulkTask("");
+      setBulkStation("");
+      onRefresh();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleDueDateChange(mapId: string, value: string) {
     setError("");
     setDueDateSaving(mapId);
@@ -428,18 +482,13 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
     }
   }
 
-  const assignableInView = filteredMaps.filter(
-    (m) => needsInspectorAssignment(m) || needsQaAssignment(m)
-  );
+  const assignableInView = filteredMaps.filter(canSelectMap);
   const allAssignableSelected =
     assignableInView.length > 0 && assignableInView.every((m) => selected.has(m.id));
 
-  function canUnassignInspector(map: MapRecord) {
-    return map.phase === "PREP" && !!map.assignedInspector;
-  }
-
+  /** Any active map can be selected for bulk task/station (and assign when eligible). */
   function canSelectMap(map: MapRecord) {
-    return needsInspectorAssignment(map) || needsQaAssignment(map) || canUnassignInspector(map);
+    return map.phase !== "APPROVED" && map.phase !== "CANCELLED";
   }
 
   function canShowInspectorAssign(map: MapRecord) {
@@ -449,6 +498,11 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
   function canShowQaAssign(map: MapRecord) {
     return canAssignQa(map);
   }
+
+  const selectedMaps = useMemo(
+    () => filteredMaps.filter((m) => selected.has(m.id)),
+    [filteredMaps, selected]
+  );
 
   return (
     <section className="space-y-4">
@@ -509,10 +563,51 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
         ))}
       </div>
 
-      {(selectedForShuffle.length > 0 ||
+      {(selected.size > 0 ||
+        selectedForShuffle.length > 0 ||
         selectedNeedingQa.length > 0 ||
         selectedForUnassign.length > 0) && (
         <div className="space-y-2">
+          {selectedMaps.length > 0 && (
+            <div className="flex flex-wrap items-center gap-3 bg-slate-50 border border-border rounded-xl px-4 py-3">
+              <span className="text-sm font-medium text-slate-800">
+                {selectedMaps.length} map{selectedMaps.length !== 1 ? "s" : ""} selected
+              </span>
+              <select
+                value={bulkTask}
+                onChange={(e) => setBulkTask(e.target.value as MapTask | "")}
+                className="border border-border rounded-lg px-2 py-1.5 text-sm bg-white"
+              >
+                <option value="">Task…</option>
+                {MAP_TASK_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={bulkStation}
+                onChange={(e) => setBulkStation(e.target.value as MapStation | "")}
+                className="border border-border rounded-lg px-2 py-1.5 text-sm bg-white"
+              >
+                <option value="">Station…</option>
+                {MAP_STATION_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={loading || (!bulkTask && !bulkStation)}
+                onClick={handleBulkTaskStation}
+                className="px-4 py-1.5 text-sm font-semibold bg-slate-800 text-white rounded-lg hover:bg-slate-900 disabled:opacity-50"
+              >
+                Apply task / station
+              </button>
+            </div>
+          )}
+
           {selectedForUnassign.length > 0 && (
             <div className="flex flex-wrap items-center gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
               <span className="text-sm font-medium text-amber-800">
@@ -634,8 +729,9 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
                 </th>
                 <th className="px-3 py-2 font-medium min-w-[120px]">Map</th>
                 <th className="px-3 py-2 font-medium min-w-[100px]">Client</th>
-                <th className="px-3 py-2 font-medium min-w-[90px]">Task</th>
-                <th className="px-3 py-2 font-medium min-w-[90px]">Station</th>
+                <th className="px-3 py-2 font-medium min-w-[90px]">Batch</th>
+                <th className="px-3 py-2 font-medium min-w-[110px]">Task</th>
+                <th className="px-3 py-2 font-medium min-w-[110px]">Station</th>
                 <th className="px-3 py-2 font-medium min-w-[120px]">State</th>
                 <th className="px-3 py-2 font-medium min-w-[110px]">Inspector</th>
                 <th className="px-3 py-2 font-medium min-w-[100px]">QA</th>
@@ -669,14 +765,28 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
                 </th>
                 <th className="px-3 py-2">
                   <select
+                    value={columnFilters.batch}
+                    onChange={(e) => updateFilter("batch", e.target.value)}
+                    className={filterInputClass}
+                  >
+                    <option value="">All</option>
+                    {filterOptions.batches.map((b) => (
+                      <option key={b} value={b}>
+                        {b}
+                      </option>
+                    ))}
+                  </select>
+                </th>
+                <th className="px-3 py-2">
+                  <select
                     value={columnFilters.task}
                     onChange={(e) => updateFilter("task", e.target.value)}
                     className={filterInputClass}
                   >
                     <option value="">All</option>
-                    {filterOptions.tasks.map((t) => (
-                      <option key={t} value={t}>
-                        {t}
+                    {MAP_TASK_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.label}>
+                        {o.label}
                       </option>
                     ))}
                   </select>
@@ -688,9 +798,9 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
                     className={filterInputClass}
                   >
                     <option value="">All</option>
-                    {filterOptions.stations.map((s) => (
-                      <option key={s} value={s}>
-                        {s}
+                    {MAP_STATION_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
                       </option>
                     ))}
                   </select>
@@ -744,8 +854,10 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
             </thead>
             <tbody className="divide-y divide-border">
               {filteredMaps.map((map) => {
-                const taskType = getTaskType(map);
+                const station = (map.station ?? "GRAPHICS") as MapStation;
+                const taskValue = (map.task ?? "UPLOAD") as MapTask;
                 const selectable = canSelectMap(map);
+                const savingMeta = taskStationSaving === map.id;
                 return (
                   <tr
                     key={map.id}
@@ -778,18 +890,42 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
                       </div>
                     </td>
                     <td className="px-3 py-3 text-muted">{map.client}</td>
+                    <td className="px-3 py-3 text-muted text-xs">{map.batch?.trim() || "—"}</td>
                     <td className="px-3 py-3">
-                      {taskType ? (
-                        <Badge
-                          label={taskType}
-                          tone={taskType === "Upload" ? "PREP" : "POLISH"}
-                        />
-                      ) : (
-                        "—"
-                      )}
+                      <select
+                        value={taskValue}
+                        disabled={savingMeta}
+                        onChange={(e) =>
+                          handleTaskStationChange(map, { task: e.target.value as MapTask })
+                        }
+                        title="Change task"
+                        className="w-full text-xs font-medium rounded-md border border-border bg-white px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:opacity-50"
+                      >
+                        {MAP_TASK_OPTIONS.map((o) => (
+                          <option key={o.value} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
                     </td>
                     <td className="px-3 py-3">
-                      <Badge label={getMapStation(map)} tone={map.phase} />
+                      <select
+                        value={station}
+                        disabled={savingMeta}
+                        onChange={(e) =>
+                          handleTaskStationChange(map, {
+                            station: e.target.value as MapStation,
+                          })
+                        }
+                        title="Change station"
+                        className="w-full text-xs font-medium rounded-md border border-border bg-white px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:opacity-50"
+                      >
+                        {MAP_STATION_OPTIONS.map((o) => (
+                          <option key={o.value} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
                     </td>
                     <td className="px-3 py-3">
                       {(() => {

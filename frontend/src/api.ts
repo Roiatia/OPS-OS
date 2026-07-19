@@ -396,6 +396,26 @@ export const api = {
       body: JSON.stringify({ action, note }),
     }),
 
+  /** Set board Task and/or Station (independent of phase). */
+  setMapTaskStation: (
+    mapId: string,
+    patch: { task?: import("./types").MapTask; station?: import("./types").MapStation }
+  ) =>
+    request<import("./types").MapRecord>(`/maps/${mapId}/task-station`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    }),
+
+  /** Bulk set board Task and/or Station. */
+  bulkSetMapTaskStation: (
+    mapIds: string[],
+    patch: { task?: import("./types").MapTask; station?: import("./types").MapStation }
+  ) =>
+    request<{ updated: number; maps: import("./types").MapRecord[] }>(`/maps/bulk-task-station`, {
+      method: "POST",
+      body: JSON.stringify({ mapIds, ...patch }),
+    }),
+
   updateSupervisorStatus: (mapId: string, status: string, note?: string) =>
     request<import("./types").MapRecord>(`/maps/${mapId}/supervisor-status`, {
       method: "PATCH",
