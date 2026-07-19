@@ -7,7 +7,7 @@ import { SupervisorMapsBoard } from "../components/supervisor/SupervisorMapsBoar
 import { SupervisorSidebar, type SupervisorSection } from "../components/supervisor/SupervisorSidebar";
 import { SupervisorTeamPanel } from "../components/supervisor/SupervisorTeamPanel";
 import { ConfluencePanel } from "../components/shared/ConfluencePanel";
-import { SupervisorAvailabilityForm } from "../components/availability/SupervisorAvailabilityForm";
+import { AvailabilityPanel } from "../components/shared/AvailabilityPanel";
 import { AvailabilityReminderModal } from "../components/availability/AvailabilityReminderModal";
 import { getSupervisorFieldStatus } from "../lib/supervisorDisplay";
 import { useSectionRoute } from "@/hooks/useSectionRoute";
@@ -30,16 +30,16 @@ const SUPERVISOR_SECTIONS = [
 ] as const satisfies readonly SupervisorSection[];
 
 const SECTION_TITLES: Record<SupervisorSection, { title: string; subtitle: string }> = {
-  hub: { title: "Hub", subtitle: "Drag your assigned maps — shift leaders can move any map" },
+  hub: { title: "Hub", subtitle: "" },
   maps: { title: "Maps", subtitle: "" },
-  team: { title: "Team", subtitle: "All supervisors on the field ops team" },
-  "company-dashboard": { title: "Dashboard", subtitle: "Field ops metrics and coverage" },
+  team: { title: "Team", subtitle: "" },
+  "company-dashboard": { title: "Dashboard", subtitle: "" },
   availability: {
     title: "Availability",
-    subtitle: "Submit your weekly shifts — due every Sunday",
+    subtitle: "",
   },
-  confluence: { title: "Confluence", subtitle: "Coming soon" },
-  settings: { title: "Settings", subtitle: "Workspace preferences" },
+  confluence: { title: "Confluence", subtitle: "" },
+  settings: { title: "Settings", subtitle: "" },
 };
 
 export function SupervisorDashboardPage() {
@@ -215,7 +215,7 @@ export function SupervisorDashboardPage() {
               {activeSection === "company-dashboard" && <CompanyDashboardPanel />}
 
               {activeSection === "availability" && (
-                <SupervisorAvailabilityForm onSubmitted={() => void availabilityReminder.refresh()} />
+                <AvailabilityPanel onAvailabilitySubmitted={() => void availabilityReminder.refresh()} />
               )}
 
               {activeSection === "confluence" && <ConfluencePanel />}

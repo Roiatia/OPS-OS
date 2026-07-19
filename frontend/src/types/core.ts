@@ -100,6 +100,12 @@ export interface MapRecord {
   slCheckNote?: string | null;
   slCheckRequestedBy?: { id: string; name: string } | null;
   slCheckClaimedBy?: { id: string; name: string } | null;
+  swapBatchId?: string | null;
+  swapOfferedAt?: string | null;
+  swapOfferedBy?: { id: string; name: string } | null;
+  helpAskBatchId?: string | null;
+  helpAskAt?: string | null;
+  helpAskBy?: { id: string; name: string } | null;
   phase: MapPhase;
   inspectorStatus: InspectorStatus | null;
   supervisorStatus: SupervisorStatus | null;

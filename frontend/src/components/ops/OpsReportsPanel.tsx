@@ -395,11 +395,6 @@ export function OpsReportsPanel() {
         </button>
       </div>
 
-      <p className="text-xs text-muted -mt-1">
-        A new report is generated automatically every day at 08:00, covering the previous day
-        (including overnight field work).
-      </p>
-
       {error && (
         <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
           {error}

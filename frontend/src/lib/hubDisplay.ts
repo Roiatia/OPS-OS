@@ -45,6 +45,16 @@ export function poolMaps(maps: MapRecord[], onShiftSupervisorIds?: Set<string>):
   });
 }
 
+/** Unassigned only (not maps tied to off-shift supervisors). */
+export function unassignedPoolMaps(maps: MapRecord[]): MapRecord[] {
+  return maps.filter(
+    (m) =>
+      m.fieldWorkStatus === "UNCOMPLETED" &&
+      !m.onHubStatusBoard &&
+      !m.assignedSupervisor
+  );
+}
+
 export function supervisorMaps(maps: MapRecord[], supervisorId: string): MapRecord[] {
   return maps.filter((m) => {
     if (m.assignedSupervisor?.id !== supervisorId) return false;

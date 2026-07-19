@@ -40,46 +40,16 @@ const OPS_SECTIONS = [
 ] as const satisfies readonly OpsSection[];
 
 const SECTION_TITLES: Record<OpsSection, { title: string; subtitle: string }> = {
-  hub: {
-    title: "Hub",
-    subtitle: "Only supervisors & shift leaders on shift today — assign maps and track status",
-  },
-  updates: {
-    title: "Updates",
-    subtitle: "Map milestones from graphics and ops — stage done, complete, or incomplete",
-  },
-  maps: {
-    title: "Maps",
-    subtitle: "Full pipeline — graphics and field ops in one view",
-  },
-  team: {
-    title: "Team",
-    subtitle: "Who is working today — field shift + graphics under OPS",
-  },
-  history: {
-    title: "History",
-    subtitle: "All maps — active pipeline, completed, and on-shift wrap-up",
-  },
-  reports: {
-    title: "Reports",
-    subtitle: "End-of-day summaries — generated daily at 23:00",
-  },
-  "company-dashboard": {
-    title: "Dashboard",
-    subtitle: "Pipeline overview and coverage",
-  },
-  availability: {
-    title: "Availability",
-    subtitle: "Plan weekly shifts from field maps and supervisor availability",
-  },
-  confluence: {
-    title: "Confluence",
-    subtitle: "Coming soon",
-  },
-  settings: {
-    title: "Settings",
-    subtitle: "Workspace preferences",
-  },
+  hub: { title: "Hub", subtitle: "" },
+  updates: { title: "Updates", subtitle: "" },
+  maps: { title: "Maps", subtitle: "" },
+  team: { title: "Team", subtitle: "" },
+  history: { title: "History", subtitle: "" },
+  reports: { title: "Reports", subtitle: "" },
+  "company-dashboard": { title: "Dashboard", subtitle: "" },
+  availability: { title: "Availability", subtitle: "" },
+  confluence: { title: "Confluence", subtitle: "" },
+  settings: { title: "Settings", subtitle: "" },
 };
 
 export function OpsManagerDashboardPage() {
@@ -240,7 +210,7 @@ export function OpsManagerDashboardPage() {
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <h1 className="text-2xl font-bold">{title}</h1>
-              <p className="text-muted mt-1">{subtitle}</p>
+              {subtitle ? <p className="text-muted mt-1">{subtitle}</p> : null}
             </div>
             {activeSection === "maps" && (
               <button
@@ -252,12 +222,6 @@ export function OpsManagerDashboardPage() {
               </button>
             )}
           </div>
-
-          {activeSection === "maps" && (
-            <p className="text-xs text-muted -mt-4">
-              Stays in sync with Hub — supervisor complete / incomplete / cancelled updates appear here within seconds.
-            </p>
-          )}
 
           {activeSection === "hub" && user ? (
             <MapHubBoard
@@ -272,7 +236,6 @@ export function OpsManagerDashboardPage() {
               dismissedUpdates={opsUpdates.dismissedUpdates}
               dismissedAlerts={opsUpdates.dismissedAlerts}
               dismissedCount={opsUpdates.dismissedCount}
-              isDemoPreview={opsUpdates.isDemoPreview}
               onDismiss={opsUpdates.dismiss}
               onDismissAll={opsUpdates.dismissAll}
               onRestore={opsUpdates.restore}

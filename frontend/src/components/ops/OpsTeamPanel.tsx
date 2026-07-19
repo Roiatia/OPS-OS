@@ -123,11 +123,6 @@ export function OpsTeamPanel({ team, maps }: Props) {
 
   return (
     <section className="space-y-6">
-      <p className="text-sm text-muted">
-        Field ops is part-time — see who is working this shift. Shift leaders work maps like
-        supervisors and also check supervisor work. Graphics team is under OPS too.
-      </p>
-
       <div className="flex flex-wrap gap-2">
         {tabs.map((t) => (
           <button
@@ -158,10 +153,6 @@ export function OpsTeamPanel({ team, maps }: Props) {
       {tab === "on_shift" && members.length === 0 ? (
         <div className="rounded-xl border border-dashed border-border bg-slate-50/80 px-6 py-12 text-center">
           <p className="text-sm font-medium text-slate-800">No one on shift today yet</p>
-          <p className="text-xs text-muted mt-1 max-w-md mx-auto">
-            When OPS schedules supervisors for the day and they clock in (or get their first map),
-            they appear here and on the Hub.
-          </p>
         </div>
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">

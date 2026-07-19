@@ -194,6 +194,22 @@ router.patch("/:id/hub", requireRoles(RoleName.OPS_ADMIN, RoleName.SUPERVISOR, R
 });
 
 router.post(
+  "/:id/mapper-not-arrived",
+  requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER),
+  async (req, res) => {
+    try {
+      const map = await workflow.reportMapperNotArrived(
+        String(req.params.id),
+        (req as AuthedRequest).user
+      );
+      res.json(map);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+router.post(
   "/:id/sl-check/request",
   requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER, RoleName.OPS_ADMIN),
   async (req, res) => {
@@ -267,26 +283,153 @@ router.get("/team-field", requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_
   }
 });
 
-router.post("/swap-supervisor", requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (req, res) => {
+router.post("/swap-offer", requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (req, res) => {
   try {
-    const { mapIds, toSupervisorId } = req.body as {
-      mapIds?: string[];
-      toSupervisorId?: string;
-    };
+    const { mapIds } = req.body as { mapIds?: string[] };
     if (!mapIds?.length) {
       res.status(400).json({ error: "mapIds required" });
       return;
     }
-    if (!toSupervisorId) {
-      res.status(400).json({ error: "toSupervisorId required" });
+    const result = await workflow.createSwapOffer(mapIds, (req as AuthedRequest).user);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+router.get("/swap-offers", requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (req, res) => {
+  try {
+    const [open, mine] = await Promise.all([
+      workflow.listOpenSwapOffers((req as AuthedRequest).user),
+      workflow.listMySwapOffers((req as AuthedRequest).user),
+    ]);
+    res.json({ open, mine });
+  } catch (e) {
+    res.status(403).json({ error: (e as Error).message });
+  }
+});
+
+router.post("/swap-offers/take", requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (req, res) => {
+  try {
+    const { mapIds } = req.body as { mapIds?: string[] };
+    if (!mapIds?.length) {
+      res.status(400).json({ error: "mapIds required" });
       return;
     }
-    const count = await workflow.swapSupervisorMaps(
-      mapIds,
-      toSupervisorId,
-      (req as AuthedRequest).user
-    );
-    res.json({ swapped: count });
+    const taken = await workflow.takeSwapMaps(mapIds, (req as AuthedRequest).user);
+    res.json({ taken });
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+router.post("/help-ask", requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (req, res) => {
+  try {
+    const { mapIds } = req.body as { mapIds?: string[] };
+    if (!mapIds?.length) {
+      res.status(400).json({ error: "mapIds required" });
+      return;
+    }
+    const result = await workflow.createHelpAsk(mapIds, (req as AuthedRequest).user);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+router.get("/help-asks", requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (req, res) => {
+  try {
+    const user = (req as AuthedRequest).user;
+    const [incoming, mine] = await Promise.all([
+      workflow.listIncomingHelpAsks(user),
+      workflow.listMyHelpAsks(user),
+    ]);
+    res.json({ incoming, mine });
+  } catch (e) {
+    res.status(403).json({ error: (e as Error).message });
+  }
+});
+
+router.post("/help-asks/accept", requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (req, res) => {
+  try {
+    const { batchId } = req.body as { batchId?: string };
+    if (!batchId) {
+      res.status(400).json({ error: "batchId required" });
+      return;
+    }
+    const result = await workflow.acceptHelpAsk(batchId, (req as AuthedRequest).user);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+router.post("/help-asks/reject", requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (req, res) => {
+  try {
+    const { batchId } = req.body as { batchId?: string };
+    if (!batchId) {
+      res.status(400).json({ error: "batchId required" });
+      return;
+    }
+    const result = await workflow.rejectHelpAsk(batchId, (req as AuthedRequest).user);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+router.post("/help-asks/cancel", requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (req, res) => {
+  try {
+    const { batchId } = req.body as { batchId?: string };
+    if (!batchId) {
+      res.status(400).json({ error: "batchId required" });
+      return;
+    }
+    const result = await workflow.cancelHelpAsk(batchId, (req as AuthedRequest).user);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+router.post("/swap-offers/decline", requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (req, res) => {
+  try {
+    const { batchId } = req.body as { batchId?: string };
+    if (!batchId) {
+      res.status(400).json({ error: "batchId required" });
+      return;
+    }
+    const result = await workflow.declineSwapOffer(batchId, (req as AuthedRequest).user);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+router.post("/swap-offers/cancel", requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (req, res) => {
+  try {
+    const { batchId } = req.body as { batchId?: string };
+    if (!batchId) {
+      res.status(400).json({ error: "batchId required" });
+      return;
+    }
+    const result = await workflow.cancelSwapOffer(batchId, (req as AuthedRequest).user);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+/** @deprecated — creates an open swap offer (request), not an instant transfer */
+router.post("/swap-supervisor", requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (req, res) => {
+  try {
+    const { mapIds } = req.body as { mapIds?: string[]; toSupervisorId?: string };
+    if (!mapIds?.length) {
+      res.status(400).json({ error: "mapIds required" });
+      return;
+    }
+    const result = await workflow.createSwapOffer(mapIds, (req as AuthedRequest).user);
+    res.json({ swapped: result.offered, batchId: result.batchId });
   } catch (e) {
     res.status(400).json({ error: (e as Error).message });
   }

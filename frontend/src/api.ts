@@ -135,6 +135,12 @@ export const api = {
       body: JSON.stringify({}),
     }),
 
+  reportMapperNotArrived: (mapId: string) =>
+    request<import("./types").MapRecord>(`/maps/${mapId}/mapper-not-arrived`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+
   claimSlCheck: (mapId: string) =>
     request<import("./types").MapRecord>(`/maps/${mapId}/sl-check/claim`, {
       method: "POST",
@@ -156,10 +162,97 @@ export const api = {
       body: JSON.stringify({}),
     }),
 
-  swapSupervisorMaps: (mapIds: string[], toSupervisorId: string) =>
-    request<{ swapped: number }>("/maps/swap-supervisor", {
+  swapSupervisorMaps: (mapIds: string[], _toSupervisorId?: string) =>
+    request<{ swapped: number; batchId?: string }>("/maps/swap-offer", {
       method: "POST",
-      body: JSON.stringify({ mapIds, toSupervisorId }),
+      body: JSON.stringify({ mapIds }),
+    }),
+
+  createSwapOffer: (mapIds: string[]) =>
+    request<{ batchId: string; offered: number }>("/maps/swap-offer", {
+      method: "POST",
+      body: JSON.stringify({ mapIds }),
+    }),
+
+  getSwapOffers: () =>
+    request<{
+      open: Array<{
+        batchId: string;
+        offeredAt: string;
+        from: { id: string; name: string };
+        maps: Array<{
+          id: string;
+          mapNumber: string;
+          client: string;
+          assignedSupervisor: { id: string; name: string; email: string } | null;
+        }>;
+      }>;
+      mine: Array<{
+        batchId: string;
+        offeredAt: string;
+        maps: Array<{ id: string; mapNumber: string; client: string }>;
+      }>;
+    }>("/maps/swap-offers"),
+
+  takeSwapMaps: (mapIds: string[]) =>
+    request<{ taken: number }>("/maps/swap-offers/take", {
+      method: "POST",
+      body: JSON.stringify({ mapIds }),
+    }),
+
+  createHelpAsk: (mapIds: string[]) =>
+    request<{ asked: number; batches: Array<{ batchId: string; asked: number; ownerId: string }> }>(
+      "/maps/help-ask",
+      {
+        method: "POST",
+        body: JSON.stringify({ mapIds }),
+      }
+    ),
+
+  getHelpAsks: () =>
+    request<{
+      incoming: Array<{
+        batchId: string;
+        askedAt: string;
+        from: { id: string; name: string };
+        maps: Array<{ id: string; mapNumber: string; client: string }>;
+      }>;
+      mine: Array<{
+        batchId: string;
+        askedAt: string;
+        to: { id: string; name: string } | null;
+        maps: Array<{ id: string; mapNumber: string; client: string }>;
+      }>;
+    }>("/maps/help-asks"),
+
+  acceptHelpAsk: (batchId: string) =>
+    request<{ accepted: number }>("/maps/help-asks/accept", {
+      method: "POST",
+      body: JSON.stringify({ batchId }),
+    }),
+
+  rejectHelpAsk: (batchId: string) =>
+    request<{ rejected: number }>("/maps/help-asks/reject", {
+      method: "POST",
+      body: JSON.stringify({ batchId }),
+    }),
+
+  cancelHelpAsk: (batchId: string) =>
+    request<{ cancelled: number }>("/maps/help-asks/cancel", {
+      method: "POST",
+      body: JSON.stringify({ batchId }),
+    }),
+
+  declineSwapOffer: (batchId: string) =>
+    request<{ declined: boolean }>("/maps/swap-offers/decline", {
+      method: "POST",
+      body: JSON.stringify({ batchId }),
+    }),
+
+  cancelSwapOffer: (batchId: string) =>
+    request<{ cancelled: number }>("/maps/swap-offers/cancel", {
+      method: "POST",
+      body: JSON.stringify({ batchId }),
     }),
 
   shuffleAssignSupervisors: (mapIds: string[], supervisorIds: string[]) =>
@@ -433,6 +526,60 @@ export const api = {
   getPublishedSchedule: (weekStart?: string) =>
     request<import("./types/availability").PublishedScheduleView>(
       `/availability/schedule${buildQuery({ weekStart })}`
+    ),
+
+  getShiftChangeCandidates: (weekStart: string, dayOfWeek: number) =>
+    request<{ candidates: import("./types/availability").ShiftChangeCandidate[] }>(
+      `/availability/shift-changes/candidates${buildQuery({
+        weekStart,
+        dayOfWeek: String(dayOfWeek),
+      })}`
+    ),
+
+  getShiftChanges: (weekStart?: string) =>
+    request<import("./types/availability").ShiftChangeList>(
+      `/availability/shift-changes${buildQuery({ weekStart })}`
+    ),
+
+  createShiftChange: (body: {
+    weekStart: string;
+    dayOfWeek: number;
+    toUserId: string;
+    note?: string;
+  }) =>
+    request<import("./types/availability").ShiftChangeRequest>("/availability/shift-changes", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  acceptShiftChange: (id: string) =>
+    request<import("./types/availability").ShiftChangeRequest>(
+      `/availability/shift-changes/${id}/accept`,
+      { method: "POST" }
+    ),
+
+  rejectShiftChange: (id: string) =>
+    request<import("./types/availability").ShiftChangeRequest>(
+      `/availability/shift-changes/${id}/reject`,
+      { method: "POST" }
+    ),
+
+  cancelShiftChange: (id: string) =>
+    request<import("./types/availability").ShiftChangeRequest>(
+      `/availability/shift-changes/${id}/cancel`,
+      { method: "POST" }
+    ),
+
+  opsAcceptShiftChange: (id: string) =>
+    request<import("./types/availability").ShiftChangeRequest>(
+      `/availability/shift-changes/${id}/ops-accept`,
+      { method: "POST" }
+    ),
+
+  opsRejectShiftChange: (id: string) =>
+    request<import("./types/availability").ShiftChangeRequest>(
+      `/availability/shift-changes/${id}/ops-reject`,
+      { method: "POST" }
     ),
 };
 

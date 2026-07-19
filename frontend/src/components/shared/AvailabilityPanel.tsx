@@ -6,7 +6,11 @@ import { OpsShiftPlanner } from "../availability/OpsShiftPlanner";
 import { PublishedSchedulePanel } from "../availability/PublishedSchedulePanel";
 import { SupervisorAvailabilityForm } from "../availability/SupervisorAvailabilityForm";
 
-export function AvailabilityPanel() {
+interface Props {
+  onAvailabilitySubmitted?: () => void;
+}
+
+export function AvailabilityPanel({ onAvailabilitySubmitted }: Props) {
   const { user } = useAuth();
   const [opsTab, setOpsTab] = useState<"plan" | "roster" | "schedule">("plan");
   const [supTab, setSupTab] = useState<"mine" | "schedule">("mine");
@@ -14,10 +18,6 @@ export function AvailabilityPanel() {
   if (hasSupervisorRole(user)) {
     return (
       <div className="space-y-4">
-        <p className="text-sm text-muted max-w-2xl">
-          Submit your availability after each Sunday. Once OPS publishes the plan, view the full
-          week schedule here.
-        </p>
         <div className="flex gap-2">
           {(
             [
@@ -39,7 +39,11 @@ export function AvailabilityPanel() {
             </button>
           ))}
         </div>
-        {supTab === "mine" ? <SupervisorAvailabilityForm /> : <PublishedSchedulePanel />}
+        {supTab === "mine" ? (
+          <SupervisorAvailabilityForm onSubmitted={onAvailabilitySubmitted} />
+        ) : (
+          <PublishedSchedulePanel />
+        )}
       </div>
     );
   }
@@ -47,10 +51,6 @@ export function AvailabilityPanel() {
   if (hasOpsManagerRole(user)) {
     return (
       <div className="space-y-4">
-        <p className="text-sm text-muted max-w-2xl">
-          Review availability, auto-plan shifts from field maps, edit as needed, then Save &amp;
-          publish so supervisors and shift leaders can see the schedule.
-        </p>
         <div className="flex flex-wrap gap-2">
           {(
             [

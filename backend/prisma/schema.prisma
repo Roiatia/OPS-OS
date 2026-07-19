@@ -55,6 +55,14 @@ enum SlCheckStatus {
   NEEDS_CORRECTIONS
 }
 
+enum ShiftChangeStatus {
+  PENDING_COUNTERPART
+  PENDING_OPS
+  ACCEPTED
+  REJECTED
+  CANCELLED
+}
+
 enum QaStatus {
   FIX
   FIX_DONE
@@ -92,6 +100,9 @@ model User {
   assignedMapsAsSupervisor Map[] @relation("SupervisorMaps")
   slChecksRequested        Map[] @relation("SlCheckRequestedBy")
   slChecksClaimed          Map[] @relation("SlCheckClaimedBy")
+  swapOffersCreated        Map[] @relation("SwapOfferedBy")
+  swapOfferDeclines        SwapOfferDecline[]
+  helpAsksCreated          Map[] @relation("HelpAskBy")
   assignedTasks           Task[]
   createdTasks            Task[] @relation("TaskCreator")
   events                  MapEvent[]
@@ -101,6 +112,9 @@ model User {
   availabilitySubmissions AvailabilitySubmission[]
   shiftPlansCreated       ShiftPlan[]           @relation("ShiftPlansCreated")
   shiftPlanAssignments    ShiftPlanAssignment[]
+  shiftChangesFrom        ShiftChangeRequest[]  @relation("ShiftChangeFrom")
+  shiftChangesTo          ShiftChangeRequest[]  @relation("ShiftChangeTo")
+  shiftChangesOps         ShiftChangeRequest[]  @relation("ShiftChangeOps")
   supervisorClients       SupervisorClientCapability[]
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
@@ -169,6 +183,16 @@ model Map {
   assignedQa          User?        @relation("QaMaps", fields: [assignedQaId], references: [id])
   assignedSupervisorId String?
   assignedSupervisor   User?       @relation("SupervisorMaps", fields: [assignedSupervisorId], references: [id])
+  /** Open swap offer — same batchId groups maps from one “Call for a swap”. */
+  swapBatchId      String?
+  swapOfferedAt    DateTime?
+  swapOfferedById  String?
+  swapOfferedBy    User?   @relation("SwapOfferedBy", fields: [swapOfferedById], references: [id], onDelete: SetNull)
+  /** Help-others ask — requester waits for the map owner to accept/reject. */
+  helpAskBatchId   String?
+  helpAskAt        DateTime?
+  helpAskById      String?
+  helpAskBy        User?   @relation("HelpAskBy", fields: [helpAskById], references: [id], onDelete: SetNull)
   /** Spreadsheet import fields (Sam's Club / field ops CSV) — stored, not required in UI tables */
   batch                   String?
   building                String?
@@ -206,6 +230,20 @@ model Map {
   @@index([assignedQaId])
   @@index([assignedSupervisorId])
   @@index([phase, fieldWorkStatus])
+  @@index([swapBatchId])
+  @@index([helpAskBatchId])
+}
+
+/** Teammate declined (hid) a swap batch — offer stays open for others. */
+model SwapOfferDecline {
+  id        String   @id @default(cuid())
+  batchId   String
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([batchId, userId])
+  @@index([batchId])
 }
 
 model MapPhaseHistory {
@@ -320,6 +358,7 @@ model ShiftPlan {
   createdById String?
   createdBy   User?                 @relation("ShiftPlansCreated", fields: [createdById], references: [id], onDelete: SetNull)
   assignments ShiftPlanAssignment[]
+  changeRequests ShiftChangeRequest[]
   createdAt   DateTime              @default(now())
   updatedAt   DateTime              @updatedAt
 
@@ -339,6 +378,33 @@ model ShiftPlanAssignment {
   @@index([planId])
   @@index([userId])
 }
+
+/** After publish: give up a rostered day to someone who offered availability (counterpart + OPS must accept). */
+model ShiftChangeRequest {
+  id             String            @id @default(cuid())
+  planId         String
+  plan           ShiftPlan         @relation(fields: [planId], references: [id], onDelete: Cascade)
+  weekStart      DateTime          @db.Date
+  dayOfWeek      Int
+  fromUserId     String
+  fromUser       User              @relation("ShiftChangeFrom", fields: [fromUserId], references: [id], onDelete: Cascade)
+  toUserId       String
+  toUser         User              @relation("ShiftChangeTo", fields: [toUserId], references: [id], onDelete: Cascade)
+  status         ShiftChangeStatus @default(PENDING_COUNTERPART)
+  note           String?
+  counterpartAt  DateTime?
+  opsAt          DateTime?
+  opsById        String?
+  opsBy          User?             @relation("ShiftChangeOps", fields: [opsById], references: [id], onDelete: SetNull)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@index([planId, status])
+  @@index([fromUserId, status])
+  @@index([toUserId, status])
+  @@index([weekStart, dayOfWeek])
+}
+
 model AvailabilityDay {
   id           String   @id @default(cuid())
   submissionId String

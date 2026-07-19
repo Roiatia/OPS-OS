@@ -178,3 +178,40 @@ export interface PublishedScheduleView {
   warnings: string[];
   viewerUserId: string;
 }
+
+export type ShiftChangeStatus =
+  | "PENDING_COUNTERPART"
+  | "PENDING_OPS"
+  | "ACCEPTED"
+  | "REJECTED"
+  | "CANCELLED";
+
+export interface ShiftChangeCandidate {
+  userId: string;
+  name: string;
+  email: string;
+  isShiftLeader: boolean;
+  hoursLabel: string | null;
+}
+
+export interface ShiftChangeRequest {
+  id: string;
+  planId: string;
+  weekStart: string;
+  dayOfWeek: number;
+  status: ShiftChangeStatus;
+  note: string | null;
+  counterpartAt: string | null;
+  opsAt: string | null;
+  createdAt: string;
+  fromUser: { id: string; name: string; email: string };
+  toUser: { id: string; name: string; email: string };
+  opsBy: { id: string; name: string; email: string } | null;
+}
+
+export interface ShiftChangeList {
+  weekStart: string;
+  incoming: ShiftChangeRequest[];
+  outgoing: ShiftChangeRequest[];
+  pendingOps: ShiftChangeRequest[];
+}

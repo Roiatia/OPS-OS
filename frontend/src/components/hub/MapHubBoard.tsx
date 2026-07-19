@@ -20,6 +20,7 @@ import {
   type HubDropZone,
 } from "../../lib/hubDisplay";
 import { normalizeMapRecord } from "../../lib/mapSync";
+import { SwapOffersPanel } from "../supervisor/SwapOffersPanel";
 import {
   hasOpsManagerRole,
   hasShiftLeaderRole,
@@ -88,9 +89,11 @@ function buildReturnIso(date: string, time: string): string | null {
 /**
  * Who may drag a specific map:
  * - OPS manager → any map (including restoring cancelled)
- * - Shift leader → any non-cancelled map
+ * - Shift leader → any non-cancelled map (except SL-check locks)
  * - Supervisor → only maps assigned to them
  * - Cancelled → OPS manager only
+ * - OPEN/CLAIMED SL check → locked until Yes/No
+ * - ACCEPTED SL check → only assigned owner (or OPS) may move
  */
 export function canUserDragHubMap(
   map: MapRecord,
@@ -101,8 +104,21 @@ export function canUserDragHubMap(
   }
 ): boolean {
   if (map.fieldWorkStatus === "CANCELLED") return opts.isOpsManager;
+
+  const isOwner = map.assignedSupervisor?.id === opts.currentUserId;
+
+  // Must answer Yes/No before anyone moves the map
+  if (map.slCheckStatus === "OPEN" || map.slCheckStatus === "CLAIMED") {
+    return false;
+  }
+
+  // After SL Yes: only the assigned owner (or OPS) moves it
+  if (map.slCheckStatus === "ACCEPTED" && !map.onHubStatusBoard) {
+    return opts.isOpsManager || isOwner;
+  }
+
   if (opts.isOpsManager || opts.isShiftLeader) return true;
-  return map.assignedSupervisor?.id === opts.currentUserId;
+  return isOwner;
 }
 
 /** Progress % control only on maps in the Uncompleted end-of-day column */
@@ -116,6 +132,7 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
   const [supervisors, setSupervisors] = useState<HubSupervisor[]>([]);
   const [initialLoading, setInitialLoading] = useState(true);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [activeDropZone, setActiveDropZone] = useState<HubDropZone | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [hubDialog, setHubDialog] = useState<HubDialog>(null);
@@ -135,10 +152,11 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
   const onMutateRef = useRef(onMutate);
   onMutateRef.current = onMutate;
 
-  // UI layout: intake column only for OPS managers (not based on mode alone)
   const isOpsManager = hasOpsManagerRole(user);
   const isShiftLeader = hasShiftLeaderRole(user);
-  const showIntake = mode === "ops" && isOpsManager;
+  // Intake for OPS managers and shift leaders — they distribute maps each shift
+  const showIntake = isOpsManager || isShiftLeader;
+  void mode;
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setInitialLoading(true);
@@ -191,23 +209,64 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
     [onShiftSupervisors]
   );
 
-  const stats = useMemo(
-    () => ({
+  const stats = useMemo(() => {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    const end = new Date();
+    end.setHours(23, 59, 59, 999);
+    const mapsToday = maps.filter((m) => {
+      if (!m.fieldDate) return false;
+      const d = new Date(m.fieldDate);
+      return d >= start && d <= end;
+    }).length;
+    return {
+      mapsToday,
       pool: poolMaps(maps, onShiftIds).length,
-      active: maps.filter(
+      onShift: onShiftSupervisors.length,
+    };
+  }, [maps, onShiftSupervisors, onShiftIds]);
+
+  const myActiveHubMaps = useMemo(
+    () =>
+      maps.filter(
+        (m) =>
+          m.assignedSupervisor?.id === currentUserId &&
+          m.fieldWorkStatus === "UNCOMPLETED" &&
+          !m.onHubStatusBoard
+      ),
+    [maps, currentUserId]
+  );
+
+  const otherActiveHubMaps = useMemo(
+    () =>
+      maps.filter(
         (m) =>
           m.assignedSupervisor &&
-          onShiftIds.has(m.assignedSupervisor.id) &&
+          m.assignedSupervisor.id !== currentUserId &&
+          m.fieldWorkStatus === "UNCOMPLETED" &&
           !m.onHubStatusBoard
-      ).length,
-      onShift: onShiftSupervisors.length,
-    }),
-    [maps, onShiftSupervisors, onShiftIds]
+      ),
+    [maps, currentUserId]
   );
 
   const openSlChecks = useMemo(
-    () => maps.filter((m) => m.slCheckStatus === "OPEN"),
+    () =>
+      maps.filter(
+        (m) =>
+          m.slCheckStatus === "OPEN" ||
+          (m.fieldWorkStatus === "COMPLETED" &&
+            m.shiftLeaderApproved === false &&
+            m.slCheckStatus !== "CLAIMED")
+      ),
     [maps]
+  );
+
+  const myClaimedSlChecks = useMemo(
+    () =>
+      maps.filter(
+        (m) => m.slCheckStatus === "CLAIMED" && m.slCheckClaimedBy?.id === currentUserId
+      ),
+    [maps, currentUserId]
   );
 
   function patchMap(updated: MapRecord) {
@@ -228,11 +287,43 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
     }
   }
 
+  async function handleMapperNotArrived(map: MapRecord) {
+    setSlBusyId(map.id);
+    setError("");
+    setNotice("");
+    try {
+      await api.reportMapperNotArrived(map.id);
+      setNotice("Sent to OPS Updates: mapper has not arrived yet.");
+      window.setTimeout(() => setNotice(""), 2500);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSlBusyId(null);
+    }
+  }
+
+  function canReportMapperNotArrived(map: MapRecord): boolean {
+    // Only on supervisor/SL hub — the person responsible for this map
+    if (mode === "ops" || isOpsManager) return false;
+    if (!currentUserId || map.assignedSupervisor?.id !== currentUserId) return false;
+    if (map.fieldWorkStatus !== "UNCOMPLETED") return false;
+    return true;
+  }
+
   async function handleClaimSlCheck(map: MapRecord) {
     setSlBusyId(map.id);
     setError("");
     try {
-      patchMap(await api.claimSlCheck(map.id));
+      const updated = await api.claimSlCheck(map.id);
+      patchMap({
+        ...updated,
+        slCheckStatus: updated.slCheckStatus ?? "CLAIMED",
+        slCheckClaimedBy:
+          updated.slCheckClaimedBy ??
+          (currentUserId
+            ? { id: currentUserId, name: user?.name ?? "You" }
+            : null),
+      });
     } catch (err) {
       setError((err as Error).message);
       void load(true);
@@ -290,12 +381,33 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
   }
 
   function canAskSlCheck(map: MapRecord): boolean {
+    // Only the assigned owner asks; SLs check their own maps themselves
     if (!currentUserId || map.assignedSupervisor?.id !== currentUserId) return false;
+    if (isShiftLeader) return false;
     if (map.onHubStatusBoard) return false;
-    if ((map.fieldProgressPercent ?? 0) < 100) return false;
     if (map.fieldWorkStatus === "COMPLETED" || map.fieldWorkStatus === "CANCELLED") return false;
-    if (map.slCheckStatus === "OPEN" || map.slCheckStatus === "CLAIMED") return false;
+    // Already in progress or already approved
+    if (map.slCheckStatus === "OPEN" || map.slCheckStatus === "CLAIMED" || map.slCheckStatus === "ACCEPTED") {
+      return false;
+    }
     return true;
+  }
+
+  function needsSlTakeCheck(map: MapRecord): boolean {
+    if (map.slCheckStatus === "OPEN") return true;
+    return (
+      map.fieldWorkStatus === "COMPLETED" &&
+      map.shiftLeaderApproved === false &&
+      map.slCheckStatus !== "CLAIMED"
+    );
+  }
+
+  function isMySlClaim(map: MapRecord): boolean {
+    return (
+      !!currentUserId &&
+      map.slCheckStatus === "CLAIMED" &&
+      map.slCheckClaimedBy?.id === currentUserId
+    );
   }
 
   function prepareMaps(list: MapRecord[]): MapRecord[] {
@@ -315,10 +427,13 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
   }
 
   function canDropOn(zone: HubDropZone): boolean {
-    // Only OPS managers reassign via Intake / supervisor columns
     if (isOpsManager) return true;
+    // Shift leaders distribute from Intake → any supervisor/SL column
+    if (isShiftLeader) {
+      if (zone === "pool" || zone.startsWith("supervisor:")) return true;
+      return true; // status columns
+    }
     if (zone === "pool" || zone.startsWith("supervisor:")) return false;
-    // Shift leaders + supervisors: status columns only
     return true;
   }
 
@@ -615,11 +730,19 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
     const lockHint = !draggable
       ? map.fieldWorkStatus === "CANCELLED"
         ? "Cancelled — only OPS manager can restore"
-        : map.assignedSupervisor
-          ? assignedToMe
-            ? null
-            : `Only ${map.assignedSupervisor.name.split(" ")[0]}, shift leaders & OPS can move this`
-          : "Assign to a supervisor first (OPS only)"
+        : map.slCheckStatus === "CLAIMED"
+          ? isMySlClaim(map)
+            ? "Answer Yes or No before this map can move"
+            : `Waiting for ${map.slCheckClaimedBy?.name?.split(" ")[0] ?? "SL"} to answer Yes or No`
+          : map.slCheckStatus === "OPEN"
+            ? "Waiting for a shift leader to take the check"
+            : map.slCheckStatus === "ACCEPTED" && !map.onHubStatusBoard && !assignedToMe
+              ? `Only ${map.assignedSupervisor?.name.split(" ")[0] ?? "the owner"} can move after SL approval`
+              : map.assignedSupervisor
+                ? assignedToMe
+                  ? null
+                  : `Only ${map.assignedSupervisor.name.split(" ")[0]}, shift leaders & OPS can move this`
+                : "Assign to a supervisor first (OPS only)"
       : null;
     const pct = map.fieldProgressPercent ?? 0;
     const displayPct =
@@ -640,7 +763,7 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
         draggable={draggable}
         onDragStart={(e) => handleDragStart(e, map)}
         onDragEnd={handleDragEnd}
-        className={`group rounded-xl border px-3 py-2.5 text-sm transition-all ${
+        className={`group rounded-xl border px-2.5 py-2 text-sm transition-all ${
           draggable ? "cursor-grab active:cursor-grabbing" : "cursor-not-allowed opacity-85"
         } ${
           isDragging && needsReview
@@ -650,7 +773,9 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
       >
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <div className="font-semibold text-slate-900 leading-tight truncate">{map.client}</div>
+            <div className="font-semibold text-slate-900 leading-tight truncate text-[13px]">
+              {map.client}
+            </div>
             <Link
               to={`/app/maps/${map.id}`}
               onClick={(e) => e.stopPropagation()}
@@ -659,30 +784,47 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
               {map.mapNumber}
             </Link>
           </div>
-          <div className="shrink-0 flex flex-col items-end gap-1">
+          <div className="shrink-0 flex flex-col items-end gap-0.5">
+            {map.swapBatchId && (
+              <span className="text-[9px] font-bold uppercase tracking-wide bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded">
+                Swap
+              </span>
+            )}
             {needsReview && (
-              <span className="text-[9px] font-bold uppercase tracking-wide bg-rose-100 text-rose-800 px-1.5 py-0.5 rounded-md">
-                No SL approval
+              <span className="text-[9px] font-bold uppercase tracking-wide bg-rose-100 text-rose-800 px-1.5 py-0.5 rounded">
+                No SL
               </span>
             )}
             {map.fieldDate && (
-              <span className="text-[10px] font-semibold tabular-nums bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-md">
+              <span className="text-[10px] font-semibold tabular-nums bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">
                 {formatMapTime(map.fieldDate)}
               </span>
             )}
           </div>
         </div>
         {map.area && (
-          <p className="text-[11px] text-muted mt-1 truncate">{map.area}</p>
+          <p className="text-[11px] text-muted mt-0.5 truncate">{map.area}</p>
         )}
         {map.mapperName && (
-          <p className="text-[11px] text-muted mt-0.5 truncate">Mapper · {map.mapperName}</p>
+          <p className="text-[11px] text-muted truncate">Mapper · {map.mapperName}</p>
+        )}
+        {canReportMapperNotArrived(map) && (
+          <div className="mt-1.5" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              disabled={slBusyId === map.id}
+              onClick={() => void handleMapperNotArrived(map)}
+              className="text-[10px] font-semibold px-2 py-1 rounded-md border border-rose-200 bg-rose-50 text-rose-800 hover:bg-rose-100 disabled:opacity-50"
+            >
+              Mapper not arrive yet
+            </button>
+          </div>
         )}
         {map.opsManagerComment && (
-          <p className="text-[11px] text-slate-600 mt-1 line-clamp-2">{map.opsManagerComment}</p>
+          <p className="text-[11px] text-slate-600 mt-0.5 line-clamp-2">{map.opsManagerComment}</p>
         )}
         {map.returnVisitAt && (
-          <p className="text-[10px] text-muted mt-1">
+          <p className="text-[10px] text-muted mt-0.5">
             Return · {formatMapTime(map.returnVisitAt)}
           </p>
         )}
@@ -695,9 +837,9 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
             )}
             {map.slCheckStatus === "CLAIMED" && (
               <p className="text-[10px] font-semibold text-violet-900 bg-violet-50 rounded-md px-2 py-1">
-                {map.slCheckClaimedBy?.id === currentUserId
-                  ? "Your check — accept?"
-                  : `Taken by ${map.slCheckClaimedBy?.name ?? "SL"}`}
+                {isMySlClaim(map)
+                  ? "Your check — answer Yes or No"
+                  : `Taken by ${map.slCheckClaimedBy?.name ?? "SL"} — waiting for Yes/No`}
               </p>
             )}
             {map.slCheckStatus === "NEEDS_CORRECTIONS" && (
@@ -707,7 +849,7 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
             )}
             {map.slCheckStatus === "ACCEPTED" && (
               <p className="text-[10px] font-semibold text-emerald-900 bg-emerald-50 rounded-md px-2 py-1">
-                SL accepted — ready for status
+                SL approved
               </p>
             )}
             <div className="flex flex-wrap gap-1.5">
@@ -721,18 +863,17 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
                   Ask SL check
                 </button>
               )}
-              {assignedToMe &&
-                (map.slCheckStatus === "OPEN" || map.slCheckStatus === "CLAIMED") && (
-                  <button
-                    type="button"
-                    disabled={slBusyId === map.id}
-                    onClick={() => void handleCancelSlCheck(map)}
-                    className="text-[10px] font-semibold px-2 py-1 rounded-md border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                  >
-                    Cancel request
-                  </button>
-                )}
-              {isShiftLeader && map.slCheckStatus === "OPEN" && (
+              {assignedToMe && map.slCheckStatus === "OPEN" && (
+                <button
+                  type="button"
+                  disabled={slBusyId === map.id}
+                  onClick={() => void handleCancelSlCheck(map)}
+                  className="text-[10px] font-semibold px-2 py-1 rounded-md border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Cancel request
+                </button>
+              )}
+              {isShiftLeader && needsSlTakeCheck(map) && (
                 <button
                   type="button"
                   disabled={slBusyId === map.id}
@@ -742,34 +883,44 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
                   Take check
                 </button>
               )}
-              {isShiftLeader &&
-                map.slCheckStatus === "CLAIMED" &&
-                map.slCheckClaimedBy?.id === currentUserId && (
-                  <>
-                    <button
-                      type="button"
-                      disabled={slBusyId === map.id}
-                      onClick={() => void handleSlAccept(map)}
-                      className="text-[10px] font-semibold px-2 py-1 rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
-                    >
-                      Yes
-                    </button>
-                    <button
-                      type="button"
-                      disabled={slBusyId === map.id}
-                      onClick={() =>
-                        setSlNoteDialog({
-                          mapId: map.id,
-                          note: "",
-                        })
-                      }
-                      className="text-[10px] font-semibold px-2 py-1 rounded-md bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50"
-                    >
-                      No
-                    </button>
-                  </>
-                )}
+              {isShiftLeader && isMySlClaim(map) && (
+                <>
+                  <button
+                    type="button"
+                    disabled={slBusyId === map.id}
+                    onClick={() => void handleSlAccept(map)}
+                    className="text-xs font-bold px-3 py-1.5 rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+                  >
+                    Yes
+                  </button>
+                  <button
+                    type="button"
+                    disabled={slBusyId === map.id}
+                    onClick={() =>
+                      setSlNoteDialog({
+                        mapId: map.id,
+                        note: "",
+                      })
+                    }
+                    className="text-xs font-bold px-3 py-1.5 rounded-md bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50"
+                  >
+                    No
+                  </button>
+                </>
+              )}
             </div>
+          </div>
+        )}
+        {!map.slCheckStatus && needsSlTakeCheck(map) && isShiftLeader && (
+          <div className="mt-1.5" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              disabled={slBusyId === map.id}
+              onClick={() => void handleClaimSlCheck(map)}
+              className="text-[10px] font-semibold px-2 py-1 rounded-md bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50"
+            >
+              Take check
+            </button>
           </div>
         )}
         {!map.slCheckStatus && canAskSlCheck(map) && (
@@ -842,9 +993,9 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
           }
         }}
         onDrop={(e) => onZoneDrop(e, zone)}
-        className={`min-h-[100px] rounded-xl border-2 border-dashed p-2.5 transition-all duration-150 ${
+        className={`min-h-[72px] rounded-xl border-2 border-dashed p-2 transition-all duration-150 ${
           isTarget
-            ? "border-brand-500 bg-brand-50 shadow-inner scale-[1.01]"
+            ? "border-brand-500 bg-brand-50 shadow-inner"
             : "border-slate-200/80 bg-slate-50/60"
         } ${className}`}
       >
@@ -853,7 +1004,7 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
         </div>
         {prepared.length === 0 && (
           <p
-            className={`text-xs text-center py-8 ${
+            className={`text-xs text-center py-4 ${
               isTarget ? "text-brand-600 font-medium" : "text-muted"
             }`}
           >
@@ -890,51 +1041,87 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
         : "Save incomplete";
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-3">
       {/* Summary strip */}
       <div className="grid grid-cols-3 gap-3">
         {[
+          { label: "Maps today", value: stats.mapsToday, accent: "text-slate-900" },
           { label: "Unassigned", value: stats.pool, accent: "text-brand-600" },
-          { label: "Active in field", value: stats.active, accent: "text-slate-900" },
-          { label: "Supervisors on shift", value: stats.onShift, accent: "text-slate-900" },
+          { label: "On shift", value: stats.onShift, accent: "text-slate-900" },
         ].map((s) => (
           <div
             key={s.label}
-            className="rounded-xl border border-border bg-white px-4 py-3 shadow-sm"
+            className="rounded-xl border border-border bg-white px-3 py-2.5 shadow-sm"
           >
-            <div className={`text-2xl font-bold tabular-nums ${s.accent}`}>{s.value}</div>
+            <div className={`text-xl font-bold tabular-nums leading-tight ${s.accent}`}>
+              {s.value}
+            </div>
             <div className="text-xs text-muted mt-0.5">{s.label}</div>
           </div>
         ))}
       </div>
 
       {isShiftLeader && openSlChecks.length > 0 && (
-        <div className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 space-y-2">
-          <p className="text-sm font-semibold text-violet-950">
-            {openSlChecks.length} map{openSlChecks.length === 1 ? "" : "s"} waiting for SL check
+        <div className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 space-y-1.5">
+          <p className="text-xs font-semibold text-violet-950">
+            {openSlChecks.length} map{openSlChecks.length === 1 ? "" : "s"} need SL check
           </p>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-1.5">
             {openSlChecks.map((m) => (
               <button
                 key={m.id}
                 type="button"
                 disabled={slBusyId === m.id}
                 onClick={() => void handleClaimSlCheck(m)}
-                className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50"
+                className="text-[10px] font-semibold px-2 py-1 rounded-md bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50"
               >
                 Take {m.mapNumber}
                 {m.assignedSupervisor ? ` · ${shortName(m.assignedSupervisor.name)}` : ""}
               </button>
             ))}
           </div>
-          <p className="text-[11px] text-violet-800">
-            First shift leader to tap takes it. Accept or request corrections after you check.
+        </div>
+      )}
+
+      {isShiftLeader && myClaimedSlChecks.length > 0 && (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 space-y-1.5">
+          <p className="text-xs font-semibold text-emerald-950">
+            Your check — Yes / No
           </p>
+          <div className="space-y-1.5">
+            {myClaimedSlChecks.map((m) => (
+              <div
+                key={m.id}
+                className="flex flex-wrap items-center gap-1.5 rounded-md bg-white/80 border border-emerald-100 px-2 py-1.5"
+              >
+                <span className="text-[11px] font-semibold text-slate-900 min-w-0 flex-1 truncate">
+                  {m.mapNumber}
+                  {m.assignedSupervisor ? ` · ${shortName(m.assignedSupervisor.name)}` : ""}
+                </span>
+                <button
+                  type="button"
+                  disabled={slBusyId === m.id}
+                  onClick={() => void handleSlAccept(m)}
+                  className="text-[10px] font-bold px-2 py-1 rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  Yes
+                </button>
+                <button
+                  type="button"
+                  disabled={slBusyId === m.id}
+                  onClick={() => setSlNoteDialog({ mapId: m.id, note: "" })}
+                  className="text-[10px] font-bold px-2 py-1 rounded-md bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50"
+                >
+                  No
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
       {/* Search / filter bar — same idea as Updates */}
-      <div className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border border-border bg-white px-3 py-2.5 shadow-sm">
+      <div className="flex flex-col sm:flex-row sm:items-center gap-2 rounded-lg border border-border bg-white px-2.5 py-1.5 shadow-sm">
         <div className="flex-1 min-w-0">
           <label htmlFor="hub-map-search" className="sr-only">
             Search maps
@@ -944,16 +1131,16 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
             type="search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search map number, client, or supervisor name…"
-            className="w-full border border-border rounded-lg px-3 py-2 text-sm text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-brand-400/40 focus:border-brand-400"
+            placeholder="Search map, client, supervisor…"
+            className="w-full border border-border rounded-md px-2 py-1 text-xs text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-brand-400/40 focus:border-brand-400"
           />
         </div>
-        <label className="flex items-center gap-2 text-xs text-slate-600 shrink-0">
-          <span className="font-semibold uppercase tracking-wide">Supervisor</span>
+        <label className="flex items-center gap-1.5 text-[10px] text-slate-600 shrink-0">
+          <span className="font-semibold uppercase tracking-wide">Filter</span>
           <select
             value={filterSupervisorId}
             onChange={(e) => setFilterSupervisorId(e.target.value)}
-            className="border border-border rounded-lg px-2 py-1.5 text-sm text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-brand-400/40"
+            className="border border-border rounded-md px-1.5 py-1 text-xs text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-brand-400/40"
           >
             <option value="all">All on shift</option>
             {onShiftSupervisors.map((s) => (
@@ -966,34 +1153,41 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
       </div>
 
       {error && (
-        <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl px-4 py-2.5">
+        <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-1.5">
           {error}
         </p>
       )}
-
-      {!isOpsManager && !isShiftLeader && (
-        <p className="text-xs text-muted bg-slate-50 border border-border rounded-xl px-3 py-2">
-          You can only drag maps assigned to you. Maps on someone else&apos;s column are locked.
+      {notice && (
+        <p className="text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-1.5">
+          {notice}
         </p>
       )}
-      {isShiftLeader && !isOpsManager && (
-        <p className="text-xs text-muted bg-violet-50 border border-violet-200 rounded-xl px-3 py-2">
-          Shift leader — you can drag any active map to Completed / Uncompleted / Cancelled. Cancelled maps are OPS-only to restore.
-        </p>
+
+      {!isOpsManager && (
+        <SwapOffersPanel
+          compact
+          myActiveMaps={myActiveHubMaps}
+          otherActiveMaps={otherActiveHubMaps}
+          onChanged={() => void load(true)}
+        />
+      )}
+
+      {!isOpsManager && !isShiftLeader && (
+        <p className="text-[10px] text-muted">You can only move maps assigned to you.</p>
       )}
       {isOpsManager &&
         maps.some((m) => m.fieldWorkStatus === "CANCELLED" && m.onHubStatusBoard) && (
-        <p className="text-xs text-muted bg-brand-50 border border-brand-200 rounded-xl px-3 py-2">
-          Drag cancelled maps back to Intake or a supervisor column to restore them to today&apos;s list.
+        <p className="text-[10px] text-muted">
+          Drag cancelled maps back to Intake or a supervisor to restore.
         </p>
       )}
 
-      <div className="rounded-2xl border border-border bg-gradient-to-b from-white to-slate-50/80 p-4 sm:p-5 shadow-sm">
-        <div className="flex flex-col lg:flex-row gap-5 min-h-[380px]">
+      <div className="rounded-xl border border-border bg-gradient-to-b from-white to-slate-50/80 p-3 sm:p-4 shadow-sm">
+        <div className="flex flex-col lg:flex-row gap-4 min-h-0">
           {showIntake && (
-            <aside className="lg:w-52 shrink-0">
-              <div className="rounded-xl border border-brand-200 bg-brand-50/30 p-3 h-full">
-                <div className="flex items-center justify-between mb-3">
+            <aside className="lg:w-48 shrink-0">
+              <div className="rounded-xl border border-brand-200 bg-brand-50/30 p-2.5 h-full">
+                <div className="flex items-center justify-between mb-2">
                   <span className="text-xs font-bold uppercase tracking-wide text-brand-800">
                     Intake
                   </span>
@@ -1001,30 +1195,26 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
                     {stats.pool}
                   </span>
                 </div>
-                <p className="text-[11px] text-muted mb-2 leading-snug">
-                  Maps ready for supervisor assignment
-                </p>
-                {dropZone("pool", poolMaps(maps, onShiftIds), "", false, "Drag maps here to assign")}
+                {dropZone("pool", poolMaps(maps, onShiftIds), "", false, "Drop to unassign")}
               </div>
             </aside>
           )}
 
-          <div className="flex-1 min-w-0 space-y-5">
+          <div className="flex-1 min-w-0 space-y-4">
             <div>
-              <p className="text-xs font-bold uppercase tracking-wide text-muted mb-3">
-                Supervisors on shift today
+              <p className="text-xs font-bold uppercase tracking-wide text-muted mb-2">
+                On shift today
               </p>
               {showIntake && onShiftSupervisors.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-border bg-white px-4 py-10 text-center">
+                <div className="rounded-xl border border-dashed border-border bg-white px-4 py-8 text-center">
                   <p className="text-sm font-medium text-slate-800">No one on shift today</p>
                   <p className="text-xs text-muted mt-1 max-w-sm mx-auto">
-                    Only supervisors and shift leaders clocked in for today appear on the Hub.
-                    Assign a map to clock them in for this shift.
+                    Assign a map to clock someone in for this shift.
                   </p>
                 </div>
               ) : (
                 <>
-                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                <div className="flex gap-2.5 overflow-x-auto pb-1 -mx-0.5 px-0.5">
                   {onShiftSupervisors
                     .filter((sup) => {
                       if (filterSupervisorId !== "all" && filterSupervisorId !== sup.id) {
@@ -1041,11 +1231,11 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
                     return (
                       <div
                         key={sup.id}
-                        className="rounded-xl border border-border bg-white overflow-hidden shadow-sm"
+                        className="rounded-xl border border-border bg-white overflow-hidden shadow-sm w-[200px] sm:w-[220px] shrink-0"
                       >
-                        <div className="flex items-center gap-3 px-3 py-2.5 border-b border-border bg-slate-50/80">
+                        <div className="flex items-center gap-2 px-2.5 py-2 border-b border-border bg-slate-50/80">
                           <div
-                            className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${
+                            className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
                               memberIsShiftLeader(sup)
                                 ? "bg-violet-100 text-violet-800"
                                 : "bg-brand-100 text-brand-700"
@@ -1054,11 +1244,11 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
                             {sup.name.charAt(0)}
                           </div>
                           <div className="min-w-0 flex-1">
-                            <div className="font-semibold text-sm text-slate-900 truncate">
+                            <div className="font-semibold text-sm text-slate-900 truncate leading-tight">
                               {shortName(sup.name)}
                             </div>
-                            <div className="text-[11px] text-muted">
-                              {memberIsShiftLeader(sup) ? "Shift leader" : "Supervisor"}
+                            <div className="text-[11px] text-muted truncate">
+                              {memberIsShiftLeader(sup) ? "SL" : "Sup"}
                               {" · "}
                               {formatShiftStart(sup.shiftStartedAt)}
                             </div>
@@ -1067,8 +1257,8 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
                             {prepareMaps(supMaps).length}
                           </span>
                         </div>
-                        <div className="p-2.5">
-                          {dropZone(zone, supMaps, "min-h-[110px]", false)}
+                        <div className="p-2">
+                          {dropZone(zone, supMaps, "min-h-[64px]", false)}
                         </div>
                       </div>
                     );
@@ -1079,7 +1269,7 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
                     (sup) => prepareMaps(supervisorMaps(maps, sup.id)).length > 0
                   ) &&
                   prepareMaps(poolMaps(maps, onShiftIds)).length === 0 && (
-                    <p className="text-sm text-muted text-center py-6">
+                    <p className="text-xs text-muted text-center py-4">
                       No maps match &ldquo;{search.trim()}&rdquo;
                     </p>
                   )}
@@ -1088,7 +1278,7 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
             </div>
 
             <div>
-              <p className="text-xs font-bold uppercase tracking-wide text-muted mb-3">
+              <p className="text-xs font-bold uppercase tracking-wide text-muted mb-2">
                 End-of-day status
               </p>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -1098,7 +1288,7 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
                   return (
                     <div key={status} className="rounded-xl border border-border bg-white overflow-hidden shadow-sm">
                       <div
-                        className={`flex items-center gap-2 px-3 py-2 border-b text-sm font-semibold ${header}`}
+                        className={`flex items-center gap-2 px-2.5 py-2 border-b text-sm font-semibold ${header}`}
                       >
                         <span className={`w-2 h-2 rounded-full ${dot}`} />
                         {label}
@@ -1106,8 +1296,8 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
                           {prepareMaps(colMaps).length}
                         </span>
                       </div>
-                      <div className="p-2.5">
-                        {dropZone(zone, colMaps, `min-h-[100px] ${zoneClass}`, status === "UNCOMPLETED")}
+                      <div className="p-2">
+                        {dropZone(zone, colMaps, `min-h-[88px] ${zoneClass}`, status === "UNCOMPLETED")}
                       </div>
                     </div>
                   );
@@ -1252,7 +1442,7 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
             <div>
               <h3 className="text-base font-semibold text-slate-900">Not accepted — add comment</h3>
               <p className="text-xs text-muted mt-1">
-                Brief note for the supervisor (they check the work on another site).
+                Stays with the supervisor, or goes to Intake if it was completed without SL approval.
               </p>
             </div>
             <textarea

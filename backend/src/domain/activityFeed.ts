@@ -12,6 +12,7 @@ export const MILESTONE_ACTIONS = [
   "hub_uncompleted",
   "hub_cancelled",
   "hub_return_scheduled",
+  "mapper_not_arrived",
 ] as const;
 
 export type MilestoneAction = (typeof MILESTONE_ACTIONS)[number];
@@ -29,6 +30,7 @@ const OPS_MILESTONES = new Set<string>([
   "hub_uncompleted",
   "hub_cancelled",
   "hub_return_scheduled",
+  "mapper_not_arrived",
 ]);
 
 export function getActivityTeam(action: string): ActivityTeam {
@@ -48,6 +50,7 @@ export const ACTIVITY_LABELS: Record<string, string> = {
   hub_uncompleted: "Field mapping incomplete",
   hub_cancelled: "Map cancelled",
   hub_return_scheduled: "Return visit scheduled",
+  mapper_not_arrived: "Mapper has not arrived yet",
 };
 
 export function getActivityLabel(action: string): string {

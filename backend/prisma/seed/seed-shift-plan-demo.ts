@@ -1,7 +1,7 @@
 /**
  * Small shift-plan demo for checking auto-plan logic.
- * - 5 supervisors + 5 shift leaders (plan-sup-01..05 / plan-sl-01..05 @ops-demo.local)
- * - Removes older plan-sup-06+ / plan-sl-06+ and old FAKE maps
+ * - 3 supervisors + 3 shift leaders (plan-sup-01..03 / plan-sl-01..03 @ops-demo.local)
+ * - Removes older plan-* extras and old FAKE maps
  * - 60 FIELD maps for next week: 10/day Sun–Fri (count is even here for clarity;
  *   production can vary day-to-day)
  *
@@ -17,21 +17,9 @@ import {
 
 const prisma = new PrismaClient();
 
-const SUP_NAMES = [
-  "Eyal (Sup)",
-  "Bashar (Sup)",
-  "Cosmin (Sup)",
-  "Elodi (Sup)",
-  "Tal (Sup)",
-];
+const SUP_NAMES = ["Eyal (Sup)", "Bashar (Sup)", "Cosmin (Sup)"];
 
-const SL_NAMES = [
-  "Erez (SL)",
-  "Oren (SL)",
-  "Rachel (SL)",
-  "Talia (SL)",
-  "Aviad (SL)",
-];
+const SL_NAMES = ["Erez (SL)", "Oren (SL)", "Rachel (SL)"];
 
 function weekStartSunday(date = new Date()): Date {
   const d = new Date(date);
@@ -150,8 +138,8 @@ async function upsertStaff(params: {
  */
 function buildDayAvailability(kind: "sup" | "sl", index: number, fridayContract: boolean) {
   return [0, 1, 2, 3, 4, 5].map((dayOfWeek) => {
-    // SL 5: only Sun + Wed (scarce) — forces smart SL open/close
-    if (kind === "sl" && index === 5) {
+    // Rachel (SL 3): only Sun + Wed (scarce) — forces smart SL open/close
+    if (kind === "sl" && index === 3) {
       if (dayOfWeek === 0 || dayOfWeek === 3) {
         return {
           dayOfWeek,
@@ -170,8 +158,8 @@ function buildDayAvailability(kind: "sup" | "sl", index: number, fridayContract:
       };
     }
 
-    // Sup 5: mid-week off Tuesday
-    if (kind === "sup" && index === 5 && dayOfWeek === 2) {
+    // Cosmin (Sup 3): mid-week off Tuesday
+    if (kind === "sup" && index === 3 && dayOfWeek === 2) {
       return {
         dayOfWeek,
         canWork: false,
@@ -262,8 +250,8 @@ async function deleteExtraPlanUsers() {
   });
 
   const keep = new Set([
-    ...[1, 2, 3, 4, 5].map((i) => `plan-sup-${String(i).padStart(2, "0")}@ops-demo.local`),
-    ...[1, 2, 3, 4, 5].map((i) => `plan-sl-${String(i).padStart(2, "0")}@ops-demo.local`),
+    ...[1, 2, 3].map((i) => `plan-sup-${String(i).padStart(2, "0")}@ops-demo.local`),
+    ...[1, 2, 3].map((i) => `plan-sl-${String(i).padStart(2, "0")}@ops-demo.local`),
   ]);
 
   const toDelete = extras.filter((u) => !keep.has(u.email));
@@ -304,15 +292,15 @@ async function main() {
 
   const keepIds: string[] = [];
 
-  console.log("Seeding 5 supervisors…");
-  for (let i = 1; i <= 5; i++) {
+  console.log("Seeding 3 supervisors…");
+  for (let i = 1; i <= 3; i++) {
     const email = `plan-sup-${String(i).padStart(2, "0")}@ops-demo.local`;
-    const fridayContract = i === 1 || i === 4;
+    const fridayContract = i === 1;
     const user = await upsertStaff({
       email,
       name: SUP_NAMES[i - 1]!,
       role: RoleName.SUPERVISOR,
-      rating: i, // 1..5
+      rating: i, // 1..3
       fridayContract,
     });
     keepIds.push(user.id);
@@ -320,8 +308,8 @@ async function main() {
     console.log(`  ✓ ${SUP_NAMES[i - 1]} · rating ${i}`);
   }
 
-  console.log("Seeding 5 shift leaders…");
-  for (let i = 1; i <= 5; i++) {
+  console.log("Seeding 3 shift leaders…");
+  for (let i = 1; i <= 3; i++) {
     const email = `plan-sl-${String(i).padStart(2, "0")}@ops-demo.local`;
     const fridayContract = i % 2 === 0;
     const user = await upsertStaff({
@@ -385,7 +373,7 @@ async function main() {
   console.log(`  ✓ ${mapsData.length} maps (10 × 6 days)`);
   console.log("");
   console.log("Done. Scenario:");
-  console.log("  • 5 Sup + 5 SL only (for availability this week)");
+  console.log("  • 3 Sup + 3 SL only (for availability this week)");
   console.log("  • 60 maps next week · 10/day (mix of Israel start times)");
   console.log("  1. Login ops@ops-demo.local → Availability → Shift plan → Auto-plan");
   console.log("  2. Expect ~2 people/day at ~5 maps each (max 9), SL open/close spread");

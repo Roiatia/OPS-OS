@@ -121,7 +121,6 @@ export function useOpsUpdates(onActivity?: () => void) {
     dismissedAlerts,
     dismissedCount,
     unreadCount: visible.length + visibleAlerts.length,
-    isDemoPreview: visible.some((u) => u.id.startsWith("demo-")),
     dismiss,
     dismissAll,
     restore,
