@@ -9,6 +9,7 @@ import {
   permissionLabel,
   type Permission,
 } from "../lib/permissions";
+import { UserAccessGuide } from "../components/admin/UserAccessGuide";
 
 type Tab = "simple" | "advanced";
 /** undefined = inherit from roles, true = grant override, false = deny override */
@@ -54,6 +55,7 @@ export function AdminUsersPage() {
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
+  const [guideOpen, setGuideOpen] = useState(false);
 
   // Editing drafts for the selected user.
   const [draftRoles, setDraftRoles] = useState<RoleName[]>([]);
@@ -187,6 +189,7 @@ export function AdminUsersPage() {
 
   return (
     <div className="px-6 py-6">
+      <UserAccessGuide open={guideOpen} onClose={() => setGuideOpen(false)} />
       <div className="max-w-[1200px] mx-auto space-y-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
@@ -196,12 +199,24 @@ export function AdminUsersPage() {
               permissions in the Advanced tab.
             </p>
           </div>
-          <Link
-            to="/app/ops/hub"
-            className="text-sm text-muted hover:text-brand-600 transition-colors"
-          >
-            ← Back to OPS
-          </Link>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setGuideOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-brand-50 hover:text-brand-700 transition-colors"
+            >
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              Guide
+            </button>
+            <Link
+              to="/app/ops/hub"
+              className="text-sm text-muted hover:text-brand-600 transition-colors"
+            >
+              ← Back to OPS
+            </Link>
+          </div>
         </div>
 
         {error && (
