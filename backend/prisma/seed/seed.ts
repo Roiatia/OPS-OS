@@ -133,6 +133,8 @@ async function seedSampleMaps() {
 
 async function main() {
   await seedUsers();
+  const { seedRolePermissions } = await import("./role-permissions.js");
+  await seedRolePermissions(prisma);
   await seedSampleMaps();
   try {
     const { seedDemoReports } = await import("./seed-demo-reports.js");

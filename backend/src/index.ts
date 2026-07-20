@@ -7,6 +7,7 @@ import authRoutes from "./routes/auth.js";
 import mapsRoutes from "./routes/maps.js";
 import reportsRoutes from "./routes/reports.js";
 import availabilityRoutes from "./routes/availability.js";
+import adminUsersRoutes from "./routes/admin/users.js";
 import { attachRealtime } from "./lib/realtime.js";
 import {
   catchUpDailyReportIfNeeded,
@@ -41,6 +42,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/maps", mapsRoutes);
 app.use("/api/reports", reportsRoutes);
 app.use("/api/availability", availabilityRoutes);
+app.use("/api/admin", adminUsersRoutes);
 
 const REPORT_SCHEDULER_MS = 60_000;
 

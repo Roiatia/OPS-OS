@@ -18,6 +18,33 @@ enum RoleName {
   OPS_MANAGER_2
 }
 
+enum Permission {
+  // Maps / workflow
+  MAPS_VIEW
+  MAPS_ASSIGN_INSPECTOR
+  MAPS_ASSIGN_QA
+  MAPS_INSPECTOR_STATUS
+  MAPS_QA_REVIEW
+  MAPS_UPLOAD_REVIEW
+  MAPS_FIELD_UPDATE
+  MAPS_HUB_VIEW
+  MAPS_HUB_MANAGE
+  MAPS_HISTORY
+  MAPS_IMPORT_CSV
+  MAPS_SYNC_SPREADSHEET
+
+  // Team / ops
+  TEAM_VIEW
+  REPORTS_VIEW
+  AVAILABILITY_VIEW
+  AVAILABILITY_MANAGE
+  SHIFT_PLAN_MANAGE
+
+  // Admin
+  USERS_MANAGE
+  ROLES_MANAGE
+}
+
 enum MapPhase {
   INTAKE
   PREP
@@ -72,6 +99,7 @@ model User {
   fridayContract   Boolean  @default(false)
   hagimOk          Boolean  @default(false)
   roles     UserRole[]
+  permissionOverrides UserPermission[]
   assignedMapsAsInspector Map[]  @relation("InspectorMaps")
   assignedMapsAsQa      Map[]  @relation("QaMaps")
   assignedMapsAsSupervisor Map[] @relation("SupervisorMaps")
@@ -95,6 +123,28 @@ model UserRole {
   user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, role])
+}
+
+/** Maps a role to the permissions it grants. Seeded to mirror today's requireRoles() behavior. */
+model RolePermission {
+  id         String     @id @default(cuid())
+  role       RoleName
+  permission Permission
+
+  @@unique([role, permission])
+  @@index([role])
+}
+
+/** Per-user permission overrides (advanced tab). granted=true grants, granted=false denies. */
+model UserPermission {
+  id         String     @id @default(cuid())
+  userId     String
+  permission Permission
+  granted    Boolean    @default(true)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, permission])
+  @@index([userId])
 }
 
 model Map {

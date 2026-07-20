@@ -12,6 +12,7 @@ import { OpsManagerDashboardPage } from "./pages/OpsManagerDashboardPage";
 import { SupervisorDashboardPage } from "./pages/SupervisorDashboardPage";
 import { InspectorDashboardPage, QaDashboardPage } from "./pages/InspectorDashboardPage";
 import { MapDetailPage } from "./pages/MapDetailPage";
+import { AdminUsersPage } from "./pages/AdminUsersPage";
 import { Layout } from "@/components/common/Layout";
 import { api } from "./api";
 
@@ -94,6 +95,15 @@ function AppRoutes() {
           element={
             <RoleRoute allow={(u) => hasRole(u, "GRAPHIC_QA")}>
               <QaDashboardPage />
+            </RoleRoute>
+          }
+        />
+
+        <Route
+          path="admin/users"
+          element={
+            <RoleRoute allow={hasOpsManagerRole}>
+              <AdminUsersPage />
             </RoleRoute>
           }
         />

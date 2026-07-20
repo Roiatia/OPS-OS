@@ -1,4 +1,4 @@
-import { RoleName } from "@prisma/client";
+import { RoleName, Permission } from "@prisma/client";
 import { isOpsManagerRole } from "../domain/roles.js";
 
 export const ROLE_LABELS: Record<string, string> = {
@@ -27,6 +27,8 @@ export type AuthUser = {
   name: string;
   avatarUrl: string | null;
   roles: RoleName[];
+  /** Effective permissions, computed per-request in authMiddleware (not stored in the JWT). */
+  permissions?: Permission[];
 };
 
 export function hasRole(user: AuthUser, ...roles: RoleName[]) {

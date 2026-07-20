@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { api, setAuthToken } from "../api";
 import type { User } from "../types";
+import type { Permission } from "../lib/permissions";
 
 interface AuthContextValue {
   user: User | null;
@@ -61,4 +62,13 @@ export function useAuth() {
 
 export function hasRole(user: User, ...roles: string[]) {
   return roles.some((r) => user.roles.includes(r as User["roles"][number]));
+}
+
+/** True when the user holds at least one of the given permissions. */
+export function hasPermission(
+  user: User | null | undefined,
+  ...perms: Permission[]
+): boolean {
+  if (!user?.permissions) return false;
+  return perms.some((p) => user.permissions!.includes(p));
 }
