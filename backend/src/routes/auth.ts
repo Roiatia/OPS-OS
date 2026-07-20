@@ -4,6 +4,7 @@ import { RoleName } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { authMiddleware, signToken, type AuthedRequest } from "../middleware/auth.js";
 import { ROLE_LABELS } from "../lib/types.js";
+import { effectivePermissions } from "../domain/permissions.js";
 import { env } from "../lib/env.js";
 
 const router = Router();
@@ -75,12 +76,14 @@ router.post("/google", async (req, res) => {
       });
     }
 
+    const roles = user.roles.map((r) => r.role);
     const authUser = {
       id: user.id,
       email: user.email,
       name: user.name,
       avatarUrl: user.avatarUrl,
-      roles: user.roles.map((r) => r.role),
+      roles,
+      permissions: effectivePermissions(roles),
     };
 
     res.json({ token: signToken(authUser), user: authUser });
@@ -111,12 +114,14 @@ router.post("/demo", async (req, res) => {
     return;
   }
 
+  const roles = user.roles.map((r) => r.role);
   const authUser = {
     id: user.id,
     email: user.email,
     name: user.name,
     avatarUrl: user.avatarUrl,
-    roles: user.roles.map((r) => r.role),
+    roles,
+    permissions: effectivePermissions(roles),
   };
 
   res.json({ token: signToken(authUser), user: authUser });

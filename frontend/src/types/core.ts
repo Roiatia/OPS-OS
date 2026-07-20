@@ -35,6 +35,8 @@ export interface User {
   name: string;
   avatarUrl: string | null;
   roles: RoleName[];
+  /** Effective permissions from GET /api/auth/me (roles ∪ grants − denies). */
+  permissions?: import("../lib/permissions").Permission[];
 }
 
 export interface Task {

@@ -30,6 +30,9 @@ const QaDashboardPage = lazy(() =>
 const MapDetailPage = lazy(() =>
   import("./pages/MapDetailPage").then((m) => ({ default: m.MapDetailPage }))
 );
+const AdminUsersPage = lazy(() =>
+  import("./pages/AdminUsersPage").then((m) => ({ default: m.AdminUsersPage }))
+);
 
 function RouteFallback() {
   return (
@@ -117,6 +120,15 @@ function AppRoutes() {
           element={
             <RoleRoute allow={(u) => hasRole(u, "GRAPHIC_QA")}>
               <QaDashboardPage />
+            </RoleRoute>
+          }
+        />
+
+        <Route
+          path="admin/users"
+          element={
+            <RoleRoute allow={hasOpsManagerRole}>
+              <AdminUsersPage />
             </RoleRoute>
           }
         />

@@ -3,6 +3,7 @@ import type { Request, Response, NextFunction } from "express";
 import { RoleName } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { isOpsManagerRole, OPS_MANAGER_ROLE_NAMES } from "../domain/roles.js";
+import { effectivePermissions } from "../domain/permissions.js";
 import type { AuthUser } from "../lib/types.js";
 import { env } from "../lib/env.js";
 
@@ -66,7 +67,7 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
 
   const dbUser = await prisma.user.findUnique({
     where: { id: payload.id },
-    include: { roles: true },
+    include: { roles: true, permissionOverrides: true },
   });
 
   if (!dbUser) {
@@ -75,12 +76,21 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
     return;
   }
 
+  const roles = dbUser.roles.map((r) => r.role);
+
   const authUser: AuthUser = {
     id: dbUser.id,
     email: dbUser.email,
     name: dbUser.name,
     avatarUrl: dbUser.avatarUrl,
-    roles: dbUser.roles.map((r) => r.role),
+    roles,
+    permissions: effectivePermissions(
+      roles,
+      dbUser.permissionOverrides.map((o) => ({
+        permission: o.permission,
+        granted: o.granted,
+      }))
+    ),
   };
 
   userCache.set(payload.id, { user: authUser, expiresAt: now + USER_CACHE_TTL_MS });

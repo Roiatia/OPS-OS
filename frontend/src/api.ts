@@ -557,6 +557,31 @@ export const api = {
       body: JSON.stringify(body ?? {}),
     }),
 
+  // --- Admin: user access ---
+
+  getAdminUsers: () => request<import("./types/admin").AdminUser[]>("/admin/users"),
+
+  getPermissionCatalog: () =>
+    request<import("./types/admin").PermissionCatalog>("/admin/permissions"),
+
+  setUserRoles: (userId: string, roles: import("./types/core").RoleName[]) =>
+    request<import("./types/admin").AdminUser>(`/admin/users/${userId}/roles`, {
+      method: "PATCH",
+      body: JSON.stringify({ roles }),
+    }),
+
+  setUserPermissions: (
+    userId: string,
+    body: {
+      grants: import("./lib/permissions").Permission[];
+      denies: import("./lib/permissions").Permission[];
+    }
+  ) =>
+    request<import("./types/admin").AdminUser>(`/admin/users/${userId}/permissions`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
   getPublishedSchedule: (weekStart?: string) =>
     request<import("./types/availability").PublishedScheduleView>(
       `/availability/schedule${buildQuery({ weekStart })}`
