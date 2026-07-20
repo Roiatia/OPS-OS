@@ -17,6 +17,10 @@ export const mapDetailIncludes = {
   assignedInspector: { select: { id: true, name: true, email: true } },
   assignedQa: { select: { id: true, name: true, email: true } },
   assignedSupervisor: { select: { id: true, name: true, email: true } },
+  slCheckRequestedBy: { select: { id: true, name: true } },
+  slCheckClaimedBy: { select: { id: true, name: true } },
+  swapOfferedBy: { select: { id: true, name: true } },
+  helpAskBy: { select: { id: true, name: true } },
   tasks: {
     include: {
       assignedTo: { select: { id: true, name: true } },
@@ -46,30 +50,28 @@ export const mapDetailIncludes = {
 /**
  * Lighter shape for list queries + realtime broadcasts. Attachments carry
  * metadata only (the base64 `data` @db.Text field is omitted) and events are
- * capped low (not rendered in lists). Assignees, tasks, phaseHistory and notes
- * are kept — the active-maps tables read note bodies straight from list data.
+ * capped low (not rendered in lists). `notes` are capped to the 3 most recent
+ * (the active-maps tables only render a short preview/last-few from list data).
+ * `phaseHistory` and `tasks` are deliberately omitted — boards never read them
+ * (verified: task filters derive from a computed task-type, not `map.tasks`;
+ * `phaseHistory` is only used by the archived HistoryPanel and MapDetailPage,
+ * which use `mapHistoryIncludes` / `mapDetailIncludes` respectively). At scale
+ * this keeps unbounded relation tails out of every list query and broadcast.
  */
 export const mapListIncludes = {
   assignedInspector: { select: { id: true, name: true, email: true } },
   assignedQa: { select: { id: true, name: true, email: true } },
   assignedSupervisor: { select: { id: true, name: true, email: true } },
-  tasks: {
-    include: {
-      assignedTo: { select: { id: true, name: true } },
-      createdBy: { select: { id: true, name: true } },
-    },
-    orderBy: { createdAt: "asc" as const },
-  },
+  slCheckRequestedBy: { select: { id: true, name: true } },
+  slCheckClaimedBy: { select: { id: true, name: true } },
+  swapOfferedBy: { select: { id: true, name: true } },
+  helpAskBy: { select: { id: true, name: true } },
   events: {
     include: { user: { select: { id: true, name: true } } },
     orderBy: { createdAt: "desc" as const },
     // Lists/boards + realtime broadcasts don't render per-map events (only the
     // detail page does, via mapDetailIncludes). Keep a small recent slice.
     take: 5,
-  },
-  phaseHistory: {
-    include: { user: { select: { id: true, name: true } } },
-    orderBy: { enteredAt: "asc" as const },
   },
   attachments: {
     // Metadata only — deliberately omits the base64 `data` field.
@@ -85,7 +87,25 @@ export const mapListIncludes = {
   },
   notes: {
     include: { user: { select: { id: true, name: true } } },
-    orderBy: { createdAt: "asc" as const },
+    // Only the 3 most recent — the tables show a preview/last-few, not the full
+    // thread (which lives on the detail page). desc+take keeps the query bounded;
+    // the tables sort-normalize for display so order stays consistent.
+    orderBy: { createdAt: "desc" as const },
+    take: 3,
+  },
+};
+
+/**
+ * History/archived-list shape. Same lightweight payload as `mapListIncludes`
+ * but re-adds `phaseHistory`, which `HistoryPanel` renders for archived maps.
+ * Used by `listHistoryMaps` (the lazily-loaded History tab) so trimming the
+ * active list shape stays safe.
+ */
+export const mapHistoryIncludes = {
+  ...mapListIncludes,
+  phaseHistory: {
+    include: { user: { select: { id: true, name: true } } },
+    orderBy: { enteredAt: "asc" as const },
   },
 };
 

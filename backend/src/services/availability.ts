@@ -40,6 +40,7 @@ const submissionInclude = {
       name: true,
       email: true,
       fridayContract: true,
+      sundayOk: true,
       hagimOk: true,
       roles: { select: { role: true } },
     },
@@ -50,6 +51,7 @@ type SubmissionRow = {
   id: string;
   weekStart: Date;
   fridayContract: boolean;
+  sundayOk: boolean;
   hagimOk: boolean;
   note: string | null;
   submittedAt: Date | null;
@@ -69,6 +71,7 @@ type SubmissionRow = {
     name: string;
     email: string;
     fridayContract: boolean;
+    sundayOk: boolean;
     hagimOk: boolean;
     roles: { role: RoleName }[];
   };
@@ -136,7 +139,8 @@ function serializeSubmission(
     id: sub.id,
     weekStart: toIsoDate(sub.weekStart),
     fridayContract: sub.fridayContract,
-    hagimOk: sub.hagimOk,
+    sundayOk: sub.sundayOk,
+    hagimOk: sub.hagimOk || sub.fridayContract,
     note: sub.note,
     submittedAt: sub.submittedAt?.toISOString() ?? null,
     user: {
@@ -212,7 +216,8 @@ export async function getMyAvailability(user: AuthUser, weekStartRaw?: string) {
         userId: user.id,
         weekStart,
         fridayContract: dbUser?.fridayContract ?? false,
-        hagimOk: dbUser?.hagimOk ?? false,
+        sundayOk: dbUser?.sundayOk ?? true,
+        hagimOk: dbUser?.fridayContract ?? false,
       },
       include: submissionInclude,
     });
@@ -226,6 +231,7 @@ export async function saveMyAvailability(
   data: {
     weekStart?: string;
     fridayContract: boolean;
+    sundayOk?: boolean;
     hagimOk?: boolean;
     note?: string | null;
     days: AvailabilityDayInput[];
@@ -237,16 +243,26 @@ export async function saveMyAvailability(
 
   const weekStart = parseWeekStart(data.weekStart);
   const priorWeekNightCount = await getPriorWeekNightCount(user.id, weekStart);
-  const errors = validateAvailabilityDays(data.days, data.fridayContract, priorWeekNightCount);
+  const profile = await prisma.user.findUnique({
+    where: { id: user.id },
+    select: { maxRequestedHours: true },
+  });
+  const sundayOk = data.sundayOk ?? !data.fridayContract;
+  const errors = validateAvailabilityDays(data.days, data.fridayContract, priorWeekNightCount, {
+    sundayOk,
+    weekStart,
+    maxRequestedHours: profile?.maxRequestedHours,
+  });
   if (errors.length > 0) {
     throw new Error(errors.join(" "));
   }
 
-  const hagimOk = Boolean(data.hagimOk);
+  // Hagim follows Friday form only
+  const hagimOk = data.fridayContract;
 
   await prisma.user.update({
     where: { id: user.id },
-    data: { fridayContract: data.fridayContract, hagimOk },
+    data: { fridayContract: data.fridayContract, sundayOk, hagimOk },
   });
 
   const submission = await prisma.availabilitySubmission.upsert({
@@ -255,6 +271,7 @@ export async function saveMyAvailability(
       userId: user.id,
       weekStart,
       fridayContract: data.fridayContract,
+      sundayOk,
       hagimOk,
       note: null,
       submittedAt: new Date(),
@@ -273,6 +290,7 @@ export async function saveMyAvailability(
     },
     update: {
       fridayContract: data.fridayContract,
+      sundayOk,
       hagimOk,
       note: null,
       submittedAt: new Date(),
@@ -335,7 +353,10 @@ export async function getAvailabilityRoster(user: AuthUser, weekStartRaw?: strin
         roles: sup.roles.map((r) => r.role),
         isShiftLeader: sup.roles.some((r) => r.role === RoleName.SUPERVISOR_SHIFT_LEADER),
         fridayContract: sub?.fridayContract ?? sup.fridayContract,
-        hagimOk: sub?.hagimOk ?? sup.hagimOk,
+        sundayOk: sub?.sundayOk ?? (sup as { sundayOk?: boolean }).sundayOk ?? true,
+        hagimOk: (sub?.fridayContract ?? sup.fridayContract)
+          ? true
+          : Boolean(sub?.hagimOk ?? sup.hagimOk),
       },
       submission: sub ? serializeSubmission(sub) : null,
     };
@@ -371,7 +392,8 @@ export async function getAvailabilityRoster(user: AuthUser, weekStartRaw?: strin
 export async function validateAvailabilityDraft(
   days: AvailabilityDayInput[],
   fridayContract: boolean,
-  priorWeekNightCount = 0
+  priorWeekNightCount = 0,
+  opts?: { sundayOk?: boolean; hagimOk?: boolean; weekStart?: Date; maxRequestedHours?: number | null }
 ) {
-  return validateAvailabilityDays(days, fridayContract, priorWeekNightCount);
+  return validateAvailabilityDays(days, fridayContract, priorWeekNightCount, opts);
 }

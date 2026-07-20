@@ -1,7 +1,7 @@
-import type { MapPhase, MapRecord } from "../types";
+import type { MapPhase, MapRecord, MapStation, MapTask } from "../types";
 
-/** Short station label for the pipeline table */
-export const STATION_LABELS: Record<MapPhase, string> = {
+/** @deprecated Phase step labels — prefer board station (OPS/GRAPHICS). Kept for OPS pipeline UI. */
+export const PHASE_STATION_LABELS: Record<MapPhase, string> = {
   INTAKE: "Intake",
   PREP: "Prep",
   UPLOAD_REVIEW: "QA",
@@ -10,6 +10,26 @@ export const STATION_LABELS: Record<MapPhase, string> = {
   QA_REVIEW: "QA",
   APPROVED: "Done",
   CANCELLED: "Cancelled",
+};
+
+/** @deprecated Use PHASE_STATION_LABELS */
+export const STATION_LABELS = PHASE_STATION_LABELS;
+
+export const MAP_TASK_OPTIONS: { value: MapTask; label: string }[] = [
+  { value: "UPLOAD", label: "Upload" },
+  { value: "UPLOADED", label: "Uploaded" },
+  { value: "POLISH", label: "Polish" },
+];
+
+export const MAP_STATION_OPTIONS: { value: MapStation; label: string }[] = [
+  { value: "OPS", label: "OPS" },
+  { value: "GRAPHICS", label: "GRAPHICS" },
+];
+
+export const MAP_TASK_LABELS: Record<MapTask, string> = {
+  UPLOAD: "Upload",
+  UPLOADED: "Uploaded",
+  POLISH: "Polish",
 };
 
 /** Canonical workflow states — inspector & QA only may change these */
@@ -32,8 +52,14 @@ export const INSPECTOR_STATES = ["Accepted", "Processing", "Done", "FixDone"] as
 /** QA-owned states */
 export const QA_STATES = ["Fix", "Approved"] as const;
 
+/** Phase step label (legacy / OPS boards). Not the board Station column. */
+export function getPhaseStationLabel(map: MapRecord): string {
+  return PHASE_STATION_LABELS[map.phase];
+}
+
+/** @deprecated Use getPhaseStationLabel or getMapStation */
 export function getMapStation(map: MapRecord): string {
-  return STATION_LABELS[map.phase];
+  return map.station ?? "GRAPHICS";
 }
 
 /** Single display state for the State column — synced from inspector & QA updates only */
@@ -80,12 +106,35 @@ export function countMapsForMember(maps: MapRecord[], userId: string): number {
   ).length;
 }
 
-export type TaskType = "Upload" | "Polish";
+export type TaskType = "Upload" | "Uploaded" | "Polish";
 
-export function getTaskType(map: MapRecord): TaskType | null {
-  if (["INTAKE", "PREP", "UPLOAD_REVIEW"].includes(map.phase)) return "Upload";
-  if (["POLISH", "QA_REVIEW"].includes(map.phase)) return "Polish";
-  return null;
+export function getTaskType(map: MapRecord): TaskType {
+  const task = map.task ?? "UPLOAD";
+  return MAP_TASK_LABELS[task] as TaskType;
+}
+
+export function taskTone(task: MapTask | TaskType | string): string {
+  const t = typeof task === "string" && task === task.toUpperCase() ? task : undefined;
+  const key = (t ??
+    (task === "Upload"
+      ? "UPLOAD"
+      : task === "Uploaded"
+        ? "UPLOADED"
+        : task === "Polish"
+          ? "POLISH"
+          : "UPLOAD")) as MapTask;
+  switch (key) {
+    case "UPLOADED":
+      return "UPLOAD_REVIEW";
+    case "POLISH":
+      return "POLISH";
+    default:
+      return "PREP";
+  }
+}
+
+export function stationTone(station: MapStation | string): string {
+  return station === "OPS" ? "FIELD" : "PREP";
 }
 
 export function canAssignInspector(map: MapRecord): boolean {
@@ -168,6 +217,7 @@ export function getActiveWorkForMember(maps: MapRecord[], userId: string): MapRe
 export type MapColumnFilters = {
   map: string;
   client: string;
+  batch: string;
   task: string;
   station: string;
   state: string;
@@ -178,6 +228,7 @@ export type MapColumnFilters = {
 export const EMPTY_COLUMN_FILTERS: MapColumnFilters = {
   map: "",
   client: "",
+  batch: "",
   task: "",
   station: "",
   state: "",
@@ -188,14 +239,18 @@ export const EMPTY_COLUMN_FILTERS: MapColumnFilters = {
 export function matchesColumnFilters(map: MapRecord, filters: MapColumnFilters): boolean {
   const mapLabel = map.mapNumber.toLowerCase();
   const client = map.client.toLowerCase();
-  const task = getTaskType(map) ?? "—";
-  const station = getMapStation(map);
+  const task = getTaskType(map);
+  const station = map.station ?? "GRAPHICS";
   const state = getMapDisplayState(map);
   const inspector = getInspectorLabel(map);
   const qa = getQaLabel(map);
 
   if (filters.map && !mapLabel.includes(filters.map.toLowerCase())) return false;
   if (filters.client && !client.includes(filters.client.toLowerCase())) return false;
+  if (filters.batch) {
+    const mapBatch = map.batch?.trim() || "—";
+    if (mapBatch !== filters.batch) return false;
+  }
   if (filters.task && task !== filters.task) return false;
   if (filters.station && station !== filters.station) return false;
   if (filters.state && state !== filters.state) return false;

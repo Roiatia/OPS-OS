@@ -1,23 +1,39 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { api } from "../api";
+import { Suspense, lazy, useCallback, useMemo } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { MapHubBoard } from "../components/hub/MapHubBoard";
-import { CompanyDashboardPanel } from "../components/leader/CompanyDashboardPanel";
 import { SettingsPanel } from "../components/leader/SettingsPanel";
-import { SupervisorMapsBoard } from "../components/supervisor/SupervisorMapsBoard";
 import { SupervisorSidebar, type SupervisorSection } from "../components/supervisor/SupervisorSidebar";
-import { SupervisorTeamPanel } from "../components/supervisor/SupervisorTeamPanel";
 import { ConfluencePanel } from "../components/shared/ConfluencePanel";
-import { SupervisorAvailabilityForm } from "../components/availability/SupervisorAvailabilityForm";
+import { AvailabilityPanel } from "../components/shared/AvailabilityPanel";
 import { AvailabilityReminderModal } from "../components/availability/AvailabilityReminderModal";
+
+// Non-default sections are code-split so the Hub (default) paints without the
+// maps board, team panel, company dashboard or availability form in the chunk.
+const SupervisorMapsBoard = lazy(() =>
+  import("../components/supervisor/SupervisorMapsBoard").then((m) => ({
+    default: m.SupervisorMapsBoard,
+  }))
+);
+const SupervisorTeamPanel = lazy(() =>
+  import("../components/supervisor/SupervisorTeamPanel").then((m) => ({
+    default: m.SupervisorTeamPanel,
+  }))
+);
+const CompanyDashboardPanel = lazy(() =>
+  import("../components/leader/CompanyDashboardPanel").then((m) => ({
+    default: m.CompanyDashboardPanel,
+  }))
+);
 import { getSupervisorFieldStatus } from "../lib/supervisorDisplay";
 import { useSectionRoute } from "@/hooks/useSectionRoute";
-import { useMapsRealtime } from "@/hooks/useMapsRealtime";
-import { applyMapUpsert, removeMapsById, useDebouncedCallback } from "../lib/mapsLive";
+import { useDashboardQuery } from "@/hooks/queries";
+import { patchDashboardMaps, queryKeys } from "../lib/mapsCache";
+import { applyMapUpsert } from "../lib/mapsLive";
 import { patchMapInList } from "../lib/mapSync";
 import { useAuth } from "../context/AuthContext";
 import { hasSupervisorRole } from "../lib/roles";
 import { useAvailabilityReminder } from "@/hooks/useAvailabilityReminder";
-import type { MapRecord, TeamMember } from "../types";
+import type { MapRecord } from "../types";
 
 const SUPERVISOR_SECTIONS = [
   "hub",
@@ -30,24 +46,21 @@ const SUPERVISOR_SECTIONS = [
 ] as const satisfies readonly SupervisorSection[];
 
 const SECTION_TITLES: Record<SupervisorSection, { title: string; subtitle: string }> = {
-  hub: { title: "Hub", subtitle: "Drag your assigned maps — shift leaders can move any map" },
+  hub: { title: "Hub", subtitle: "" },
   maps: { title: "Maps", subtitle: "" },
-  team: { title: "Team", subtitle: "All supervisors on the field ops team" },
-  "company-dashboard": { title: "Dashboard", subtitle: "Field ops metrics and coverage" },
+  team: { title: "Team", subtitle: "" },
+  "company-dashboard": { title: "Dashboard", subtitle: "" },
   availability: {
     title: "Availability",
-    subtitle: "Submit your weekly shifts — due every Sunday",
+    subtitle: "",
   },
-  confluence: { title: "Confluence", subtitle: "Coming soon" },
-  settings: { title: "Settings", subtitle: "Workspace preferences" },
+  confluence: { title: "Confluence", subtitle: "" },
+  settings: { title: "Settings", subtitle: "" },
 };
 
 export function SupervisorDashboardPage() {
   const { user } = useAuth();
-  const [maps, setMaps] = useState<MapRecord[]>([]);
-  const [teamFieldMaps, setTeamFieldMaps] = useState<MapRecord[]>([]);
-  const [team, setTeam] = useState<TeamMember[]>([]);
-  const [loading, setLoading] = useState(true);
+  const qc = useQueryClient();
   const [activeSection, setActiveSection] = useSectionRoute(
     "/app/supervisor",
     SUPERVISOR_SECTIONS,
@@ -61,72 +74,38 @@ export function SupervisorDashboardPage() {
     void availabilityReminder.refresh();
   }
 
-  const load = useCallback((silent = false) => {
-    if (!silent) setLoading(true);
-    return api
-      .getDashboard()
-      .then((d) => {
-        setMaps(d.maps);
-        setTeamFieldMaps(d.teamFieldMaps);
-        setTeam(d.team);
-      })
-      .catch(() => api.getMaps().then(setMaps))
-      .finally(() => {
-        if (!silent) setLoading(false);
-      });
-  }, []);
+  const { data, isLoading } = useDashboardQuery();
+  const maps = useMemo(() => data?.maps ?? [], [data]);
+  const teamFieldMaps = useMemo(() => data?.teamFieldMaps ?? [], [data]);
+  const team = useMemo(() => data?.team ?? [], [data]);
+  // Only gate on the cold load; background revalidation keeps `data` populated.
+  const loading = isLoading && !data;
 
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  /** Slow backstop — realtime carries changes; poll catches newly in-scope maps. */
-  useEffect(() => {
-    const interval = setInterval(() => load(true), 60_000);
-    return () => clearInterval(interval);
-  }, [load]);
-
-  const reloadMaps = useDebouncedCallback(() => load(true));
-
-  useMapsRealtime({
-    onUpsert: (incoming) => {
-      setMaps((prev) => {
-        const { next, needReload } = applyMapUpsert(prev, incoming);
-        if (needReload) reloadMaps();
-        return next;
-      });
-      setTeamFieldMaps((prev) => {
-        const { next, needReload } = applyMapUpsert(prev, incoming);
-        if (needReload) reloadMaps();
-        return next;
-      });
-    },
-    onDeleted: (ids) => {
-      setMaps((prev) => removeMapsById(prev, ids));
-      setTeamFieldMaps((prev) => removeMapsById(prev, ids));
-    },
-    onInvalidate: reloadMaps,
-  });
+  const load = useCallback(
+    () => void qc.invalidateQueries({ queryKey: queryKeys.dashboard }),
+    [qc]
+  );
+  const reloadMaps = load;
 
   const handleHubMutate = useCallback(
     (updated?: MapRecord) => {
       if (updated) {
-        setMaps((prev) => patchMapInList(prev, updated));
+        patchDashboardMaps(qc, (prev) => patchMapInList(prev, updated));
       }
     },
-    []
+    [qc]
   );
 
   /** Patch a single map from a Maps-board mutation response — no full refetch. */
   const patchMap = useCallback(
     (updated: MapRecord) => {
-      setMaps((prev) => {
+      patchDashboardMaps(qc, (prev) => {
         const { next, needReload } = applyMapUpsert(prev, [updated]);
         if (needReload) reloadMaps();
         return next;
       });
     },
-    [reloadMaps]
+    [qc, reloadMaps]
   );
 
   const stats = useMemo(() => {
@@ -136,7 +115,10 @@ export function SupervisorDashboardPage() {
     return { total: maps.length, uncompleted, completed, cancelled };
   }, [maps]);
 
-  const supervisors = team.filter((m) => m.roles.some((r) => r.role === "SUPERVISOR"));
+  const supervisors = useMemo(
+    () => team.filter((m) => m.roles.some((r) => r.role === "SUPERVISOR")),
+    [team]
+  );
 
   const { title, subtitle } = SECTION_TITLES[activeSection];
 
@@ -168,6 +150,7 @@ export function SupervisorDashboardPage() {
             {subtitle && <p className="text-muted mt-1">{subtitle}</p>}
           </div>
 
+          <Suspense fallback={<p className="text-muted">Loading...</p>}>
           {activeSection === "hub" && user ? (
             <MapHubBoard
               mode="supervisor"
@@ -197,7 +180,7 @@ export function SupervisorDashboardPage() {
                   </div>
                   <SupervisorMapsBoard
                     maps={maps}
-                    onRefresh={() => load(true)}
+                    onRefresh={load}
                     onPatch={patchMap}
                   />
                 </>
@@ -215,7 +198,7 @@ export function SupervisorDashboardPage() {
               {activeSection === "company-dashboard" && <CompanyDashboardPanel />}
 
               {activeSection === "availability" && (
-                <SupervisorAvailabilityForm onSubmitted={() => void availabilityReminder.refresh()} />
+                <AvailabilityPanel onAvailabilitySubmitted={() => void availabilityReminder.refresh()} />
               )}
 
               {activeSection === "confluence" && <ConfluencePanel />}
@@ -223,6 +206,7 @@ export function SupervisorDashboardPage() {
               {activeSection === "settings" && <SettingsPanel />}
             </>
           )}
+          </Suspense>
         </div>
       </div>
     </div>

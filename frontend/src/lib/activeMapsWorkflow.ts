@@ -158,6 +158,22 @@ export function getQaStatusOptions(map: MapRecord): StatusOption[] {
   return [];
 }
 
+/**
+ * Status transitions the graphics team leader can drive from their board — the
+ * union of what the assigned inspector / QA could do at the map's current
+ * phase. Prep/Polish expose the inspector moves; the review phases expose the
+ * QA moves. Other phases (intake, field, archived) offer nothing to change.
+ */
+export function getLeaderStatusOptions(map: MapRecord): StatusOption[] {
+  if (["PREP", "POLISH"].includes(map.phase)) {
+    return getInspectorStatusOptions(map);
+  }
+  if (["UPLOAD_REVIEW", "QA_REVIEW"].includes(map.phase)) {
+    return getQaStatusOptions(map);
+  }
+  return [];
+}
+
 export function getCurrentStatusValue(map: MapRecord, role: "inspector" | "qa"): string {
   const display = getMapDisplayState(map);
   if (display === "In QA") return role === "qa" ? "in_qa" : "DONE";
@@ -186,7 +202,9 @@ export function statusRowClass(map: MapRecord): string {
 
 export function formatNotePreview(notes: MapRecord["notes"]): string {
   if (!notes?.length) return "";
-  const last = notes[notes.length - 1]!;
+  // Pick the newest note regardless of array order — the slimmed list payload
+  // returns notes newest-first (capped), while detail payloads are oldest-first.
+  const last = notes.reduce((a, b) => (a.createdAt >= b.createdAt ? a : b));
   const prefix = last.user.name.split(" ")[0];
   const roleTag = notes.length > 0 ? `[${prefix}] ` : "";
   return `${roleTag}${last.body}`;

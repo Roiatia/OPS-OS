@@ -56,6 +56,25 @@ enum MapPhase {
   CANCELLED
 }
 
+/** Schedule unit shown in the shift planner (maps + internal events). */
+enum ScheduleTaskKind {
+  MAP
+  HAPPY_HOUR
+  COMPANY_MEETING
+  MAPPING_REFRESH
+}
+/** Leader-controlled work kind — independent of MapPhase / station. */
+enum MapTask {
+  UPLOAD
+  UPLOADED
+  POLISH
+}
+/** Leader-controlled ownership station — independent of MapPhase / task. */
+enum MapStation {
+  OPS
+  GRAPHICS
+}
+
 enum InspectorStatus {
   ACCEPTED
   PROCESSING
@@ -71,6 +90,22 @@ enum SupervisorStatus {
 enum FieldWorkStatus {
   UNCOMPLETED
   COMPLETED
+  CANCELLED
+}
+
+/** Supervisor asked for shift-leader field check — first SL to claim wins. */
+enum SlCheckStatus {
+  OPEN
+  CLAIMED
+  ACCEPTED
+  NEEDS_CORRECTIONS
+}
+
+enum ShiftChangeStatus {
+  PENDING_COUNTERPART
+  PENDING_OPS
+  ACCEPTED
+  REJECTED
   CANCELLED
 }
 
@@ -97,12 +132,24 @@ model User {
   googleId  String?    @unique
   shiftStartedAt DateTime?
   fridayContract   Boolean  @default(false)
+  /** Can work Sunday — independent of Friday form (tap both for Friday+hagim+Sunday). */
+  sundayOk         Boolean  @default(true)
+  /** @deprecated Hagim follows Friday form; kept for older rows. */
   hagimOk          Boolean  @default(false)
+  /** Experience 1–5 — drives max maps they can supervise (up to 9). */
+  supervisorRating Int?
+  /** Preferred max hours per shift if less than 12. */
+  maxRequestedHours Int?
   roles     UserRole[]
   permissionOverrides UserPermission[]
   assignedMapsAsInspector Map[]  @relation("InspectorMaps")
   assignedMapsAsQa      Map[]  @relation("QaMaps")
   assignedMapsAsSupervisor Map[] @relation("SupervisorMaps")
+  slChecksRequested        Map[] @relation("SlCheckRequestedBy")
+  slChecksClaimed          Map[] @relation("SlCheckClaimedBy")
+  swapOffersCreated        Map[] @relation("SwapOfferedBy")
+  swapOfferDeclines        SwapOfferDecline[]
+  helpAsksCreated          Map[] @relation("HelpAskBy")
   assignedTasks           Task[]
   createdTasks            Task[] @relation("TaskCreator")
   events                  MapEvent[]
@@ -112,8 +159,24 @@ model User {
   availabilitySubmissions AvailabilitySubmission[]
   shiftPlansCreated       ShiftPlan[]           @relation("ShiftPlansCreated")
   shiftPlanAssignments    ShiftPlanAssignment[]
+  shiftChangesFrom        ShiftChangeRequest[]  @relation("ShiftChangeFrom")
+  shiftChangesTo          ShiftChangeRequest[]  @relation("ShiftChangeTo")
+  shiftChangesOps         ShiftChangeRequest[]  @relation("ShiftChangeOps")
+  supervisorClients       SupervisorClientCapability[]
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
+}
+
+/** Which clients a supervisor is cleared to supervise. */
+model SupervisorClientCapability {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  client    String
+  createdAt DateTime @default(now())
+
+  @@unique([userId, client])
+  @@index([client])
 }
 
 model UserRole {
@@ -152,6 +215,10 @@ model Map {
   mapNumber       String           @unique
   jiraTicketId    String?
   client          String
+  /** Shift-plan task kind — map work vs happy hour / company meeting. */
+  taskKind        ScheduleTaskKind @default(MAP)
+  /** Optional scheduled end (minutes from midnight, same day). Short events still need a 6h stay. */
+  taskEndMinutes  Int?
   area            String?
   description     String?
   dueDate         DateTime?
@@ -165,9 +232,22 @@ model Map {
   onHubStatusBoard  Boolean          @default(false)
   /** null = N/A; true = SL approved complete; false = completed without SL approval */
   shiftLeaderApproved Boolean?
+  /** Ask-shift-leader-check flow */
+  slCheckStatus          SlCheckStatus?
+  slCheckRequestedAt     DateTime?
+  slCheckClaimedAt       DateTime?
+  slCheckNote            String?
+  slCheckRequestedById   String?
+  slCheckRequestedBy     User?   @relation("SlCheckRequestedBy", fields: [slCheckRequestedById], references: [id], onDelete: SetNull)
+  slCheckClaimedById     String?
+  slCheckClaimedBy       User?   @relation("SlCheckClaimedBy", fields: [slCheckClaimedById], references: [id], onDelete: SetNull)
   /** Scheduled return when incomplete/cancelled and mapper will continue later */
   returnVisitAt   DateTime?
   phase           MapPhase         @default(INTAKE)
+  /** Graphics board “Task” — Upload / Uploaded / Polish. Independent of phase. */
+  task            MapTask          @default(UPLOAD)
+  /** Graphics board “Station” — OPS or GRAPHICS. Independent of phase/task. */
+  station         MapStation       @default(GRAPHICS)
   inspectorStatus InspectorStatus?
   supervisorStatus SupervisorStatus?
   qaStatus        QaStatus?
@@ -180,6 +260,16 @@ model Map {
   assignedQa          User?        @relation("QaMaps", fields: [assignedQaId], references: [id])
   assignedSupervisorId String?
   assignedSupervisor   User?       @relation("SupervisorMaps", fields: [assignedSupervisorId], references: [id])
+  /** Open swap offer — same batchId groups maps from one “Call for a swap”. */
+  swapBatchId      String?
+  swapOfferedAt    DateTime?
+  swapOfferedById  String?
+  swapOfferedBy    User?   @relation("SwapOfferedBy", fields: [swapOfferedById], references: [id], onDelete: SetNull)
+  /** Help-others ask — requester waits for the map owner to accept/reject. */
+  helpAskBatchId   String?
+  helpAskAt        DateTime?
+  helpAskById      String?
+  helpAskBy        User?   @relation("HelpAskBy", fields: [helpAskById], references: [id], onDelete: SetNull)
   /** Spreadsheet import fields (Sam's Club / field ops CSV) — stored, not required in UI tables */
   batch                   String?
   building                String?
@@ -217,6 +307,21 @@ model Map {
   @@index([assignedQaId])
   @@index([assignedSupervisorId])
   @@index([phase, fieldWorkStatus])
+  @@index([phase, updatedAt])
+  @@index([swapBatchId])
+  @@index([helpAskBatchId])
+}
+
+/** Teammate declined (hid) a swap batch — offer stays open for others. */
+model SwapOfferDecline {
+  id        String   @id @default(cuid())
+  batchId   String
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([batchId, userId])
+  @@index([batchId])
 }
 
 model MapPhaseHistory {
@@ -311,6 +416,7 @@ model AvailabilitySubmission {
   user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   weekStart      DateTime @db.Date
   fridayContract Boolean  @default(false)
+  sundayOk       Boolean  @default(true)
   hagimOk        Boolean  @default(false)
   note           String?
   submittedAt    DateTime?
@@ -325,9 +431,12 @@ model AvailabilitySubmission {
 model ShiftPlan {
   id          String                @id @default(cuid())
   weekStart   DateTime              @db.Date
+  /** Set when OPS saves after review — schedule becomes visible to staff. */
+  publishedAt DateTime?
   createdById String?
   createdBy   User?                 @relation("ShiftPlansCreated", fields: [createdById], references: [id], onDelete: SetNull)
   assignments ShiftPlanAssignment[]
+  changeRequests ShiftChangeRequest[]
   createdAt   DateTime              @default(now())
   updatedAt   DateTime              @updatedAt
 
@@ -347,6 +456,33 @@ model ShiftPlanAssignment {
   @@index([planId])
   @@index([userId])
 }
+
+/** After publish: give up a rostered day to someone who offered availability (counterpart + OPS must accept). */
+model ShiftChangeRequest {
+  id             String            @id @default(cuid())
+  planId         String
+  plan           ShiftPlan         @relation(fields: [planId], references: [id], onDelete: Cascade)
+  weekStart      DateTime          @db.Date
+  dayOfWeek      Int
+  fromUserId     String
+  fromUser       User              @relation("ShiftChangeFrom", fields: [fromUserId], references: [id], onDelete: Cascade)
+  toUserId       String
+  toUser         User              @relation("ShiftChangeTo", fields: [toUserId], references: [id], onDelete: Cascade)
+  status         ShiftChangeStatus @default(PENDING_COUNTERPART)
+  note           String?
+  counterpartAt  DateTime?
+  opsAt          DateTime?
+  opsById        String?
+  opsBy          User?             @relation("ShiftChangeOps", fields: [opsById], references: [id], onDelete: SetNull)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@index([planId, status])
+  @@index([fromUserId, status])
+  @@index([toUserId, status])
+  @@index([weekStart, dayOfWeek])
+}
+
 model AvailabilityDay {
   id           String   @id @default(cuid())
   submissionId String

@@ -1,18 +1,31 @@
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, useCallback, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { AssignmentBoard } from "../components/leader/AssignmentBoard";
-import { CompanyDashboardPanel } from "../components/leader/CompanyDashboardPanel";
 import { CsvImportPanel } from "../components/leader/CsvImportPanel";
-import { HistoryPanel } from "../components/leader/HistoryPanel";
 import { LeaderSidebar, type LeaderSection } from "../components/leader/LeaderSidebar";
 import { SettingsPanel } from "../components/leader/SettingsPanel";
-import { TeamPanel } from "../components/leader/TeamPanel";
+
+// The default "maps" section (AssignmentBoard) stays eager; the other sections
+// are code-split so they don't bloat the leader's initial chunk.
+const CompanyDashboardPanel = lazy(() =>
+  import("../components/leader/CompanyDashboardPanel").then((m) => ({
+    default: m.CompanyDashboardPanel,
+  }))
+);
+const HistoryPanel = lazy(() =>
+  import("../components/leader/HistoryPanel").then((m) => ({ default: m.HistoryPanel }))
+);
+const TeamPanel = lazy(() =>
+  import("../components/leader/TeamPanel").then((m) => ({ default: m.TeamPanel }))
+);
 import { getIdleInspectors } from "../lib/assignment";
 import { needsQaAssignment } from "../lib/mapDisplay";
 import { useSectionRoute } from "@/hooks/useSectionRoute";
-import { useMapsRealtime } from "@/hooks/useMapsRealtime";
-import { applyMapUpsert, removeMapsById, useDebouncedCallback } from "../lib/mapsLive";
-import type { MapRecord, TeamMember } from "../types";
+import { useDashboardQuery, useHistoryQuery } from "@/hooks/queries";
+import { patchDashboardMaps, queryKeys } from "../lib/mapsCache";
+import { applyMapUpsert } from "../lib/mapsLive";
+import type { MapRecord } from "../types";
 
 const LEADER_SECTIONS = [
   "maps",
@@ -46,10 +59,7 @@ const SECTION_TITLES: Record<LeaderSection, { title: string; subtitle: string }>
 };
 
 export function LeaderDashboardPage() {
-  const [maps, setMaps] = useState<MapRecord[]>([]);
-  const [historyMaps, setHistoryMaps] = useState<MapRecord[]>([]);
-  const [team, setTeam] = useState<TeamMember[]>([]);
-  const [loading, setLoading] = useState(true);
+  const qc = useQueryClient();
   const [showAddMap, setShowAddMap] = useState(false);
   const [showCsvImport, setShowCsvImport] = useState(false);
   const [error, setError] = useState("");
@@ -67,54 +77,34 @@ export function LeaderDashboardPage() {
     dueDate: "",
   });
 
-  function load(silent = false) {
-    if (!silent) setLoading(true);
-    api
-      .getDashboard()
-      .then((d) => {
-        setMaps(d.maps);
-        setHistoryMaps(d.history);
-        setTeam(d.team);
-      })
-      .catch(() => {
-        Promise.all([api.getMaps(), api.getTeam()]).then(([m, t]) => {
-          setMaps(m);
-          setTeam(t);
-        });
-      })
-      .finally(() => {
-        if (!silent) setLoading(false);
-      });
-  }
+  const { data, isLoading } = useDashboardQuery();
+  const maps = useMemo(() => data?.maps ?? [], [data]);
+  const team = useMemo(() => data?.team ?? [], [data]);
+  // Only gate on the cold load; background revalidation keeps `data` populated.
+  const loading = isLoading && !data;
 
-  useEffect(() => {
-    load();
-  }, []);
+  // History is heavy at scale — load it lazily the first time the History tab
+  // opens (the shared cache keeps it live via realtime after that).
+  const { data: historyData } = useHistoryQuery(activeSection === "history");
+  const historyMaps = useMemo(() => historyData ?? [], [historyData]);
 
-  const reload = useDebouncedCallback(() => load(true));
+  const load = useCallback(
+    () => void qc.invalidateQueries({ queryKey: queryKeys.dashboard }),
+    [qc]
+  );
+  const reload = load;
 
   /** Patch a single map from a mutation response — no full dashboard refetch. */
-  const patchMap = (updated: MapRecord) => {
-    setMaps((prev) => {
-      const { next, needReload } = applyMapUpsert(prev, [updated]);
-      if (needReload) reload();
-      return next;
-    });
-  };
-
-  useMapsRealtime({
-    onUpsert: (incoming) =>
-      setMaps((prev) => {
-        const { next, needReload } = applyMapUpsert(prev, incoming);
+  const patchMap = useCallback(
+    (updated: MapRecord) => {
+      patchDashboardMaps(qc, (prev) => {
+        const { next, needReload } = applyMapUpsert(prev, [updated]);
         if (needReload) reload();
         return next;
-      }),
-    onDeleted: (ids) => {
-      setMaps((prev) => removeMapsById(prev, ids));
-      setHistoryMaps((prev) => removeMapsById(prev, ids));
+      });
     },
-    onInvalidate: reload,
-  });
+    [qc, reload]
+  );
 
   async function handleAddMap(e: React.FormEvent) {
     e.preventDefault();
@@ -192,6 +182,7 @@ export function LeaderDashboardPage() {
             )}
           </div>
 
+          <Suspense fallback={<p className="text-muted">Loading...</p>}>
           {loading ? (
             <p className="text-muted">Loading...</p>
           ) : (
@@ -308,6 +299,7 @@ export function LeaderDashboardPage() {
               {activeSection === "settings" && <SettingsPanel />}
             </>
           )}
+          </Suspense>
         </div>
       </div>
     </div>

@@ -109,9 +109,6 @@ export function OpsHistoryPanel({ activeMaps, historyMaps, team }: Props) {
           <h3 className="text-sm font-semibold text-amber-900 mb-2">
             On shift — recently done ({onShiftCompleted.length})
           </h3>
-          <p className="text-xs text-muted mb-3">
-            Maps finished by part-time staff still on shift today.
-          </p>
           <div className="flex flex-wrap gap-2">
             {onShiftCompleted.slice(0, 8).map((map) => (
               <Link

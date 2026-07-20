@@ -17,6 +17,12 @@ export type MapPhase =
   | "APPROVED"
   | "CANCELLED";
 
+/** Board Task — independent of MapPhase / station */
+export type MapTask = "UPLOAD" | "UPLOADED" | "POLISH";
+
+/** Board Station — independent of MapPhase / task */
+export type MapStation = "OPS" | "GRAPHICS";
+
 export type InspectorStatus = "ACCEPTED" | "PROCESSING" | "DONE";
 export type SupervisorStatus = "ACCEPTED" | "PROCESSING" | "DONE";
 export type FieldWorkStatus = "UNCOMPLETED" | "COMPLETED" | "CANCELLED";
@@ -96,7 +102,25 @@ export interface MapRecord {
   /** null = N/A; false = completed without shift-leader approval (highlight) */
   shiftLeaderApproved?: boolean | null;
   returnVisitAt?: string | null;
+  slCheckStatus?: "OPEN" | "CLAIMED" | "ACCEPTED" | "NEEDS_CORRECTIONS" | null;
+  slCheckRequestedAt?: string | null;
+  slCheckClaimedAt?: string | null;
+  slCheckNote?: string | null;
+  slCheckRequestedBy?: { id: string; name: string } | null;
+  slCheckClaimedBy?: { id: string; name: string } | null;
+  swapBatchId?: string | null;
+  swapOfferedAt?: string | null;
+  swapOfferedBy?: { id: string; name: string } | null;
+  helpAskBatchId?: string | null;
+  helpAskAt?: string | null;
+  helpAskBy?: { id: string; name: string } | null;
   phase: MapPhase;
+  /** Board Task — Upload / Uploaded / Polish (independent of phase) */
+  task: MapTask;
+  /** Board Station — OPS or GRAPHICS (independent of phase/task) */
+  station: MapStation;
+  /** CSV Batch column */
+  batch?: string | null;
   inspectorStatus: InspectorStatus | null;
   supervisorStatus: SupervisorStatus | null;
   qaStatus: QaStatus | null;

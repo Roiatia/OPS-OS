@@ -1,7 +1,7 @@
-import { Prisma, MapPhase, InspectorStatus, SupervisorStatus, FieldWorkStatus, QaStatus, TaskStatus, RoleName } from "@prisma/client";
+import { Prisma, MapPhase, MapTask, MapStation, InspectorStatus, SupervisorStatus, FieldWorkStatus, QaStatus, TaskStatus, RoleName, SlCheckStatus } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
-import { mapListIncludes, mapDetailIncludes } from "../lib/mapIncludes.js";
-import { broadcastMapsInvalidate } from "../lib/realtimeBus.js";
+import { mapListIncludes, mapDetailIncludes, mapHistoryIncludes } from "../lib/mapIncludes.js";
+import { broadcastMapsInvalidate, broadcastMapsUpsert, withSuppressedBroadcasts } from "../lib/realtimeBus.js";
 import { assertUploadCompleteForMapping } from "../domain/pipeline.js";
 import {
   getActivityLabel,
@@ -27,6 +27,26 @@ export interface AttachmentInput {
 }
 
 const ARCHIVED_PHASES: MapPhase[] = [MapPhase.APPROVED, MapPhase.CANCELLED];
+
+/**
+ * After a bulk mutation, re-read the affected maps in list shape and push them
+ * as a single surgical `maps:upsert` so clients patch those rows in place
+ * instead of refetching every board. Falls back to a coarse invalidate if the
+ * read fails, so clients never end up with stale data.
+ */
+async function broadcastChangedMaps(mapIds: string[]): Promise<void> {
+  if (mapIds.length === 0) return;
+  try {
+    const changed = await prisma.map.findMany({
+      where: { id: { in: mapIds } },
+      include: mapListIncludes,
+    });
+    if (changed.length > 0) broadcastMapsUpsert(changed);
+    else broadcastMapsInvalidate();
+  } catch {
+    broadcastMapsInvalidate();
+  }
+}
 
 // Resolved shapes of the reshaping read used to return mutation responses.
 type MapDetailPayload = Prisma.MapGetPayload<{ include: typeof mapDetailIncludes }>;
@@ -143,6 +163,9 @@ const hubMapIncludes = {
   assignedInspector: { select: { id: true, name: true, email: true } },
   assignedQa: { select: { id: true, name: true, email: true } },
   assignedSupervisor: { select: { id: true, name: true, email: true } },
+  swapOfferedBy: { select: { id: true, name: true } },
+  slCheckRequestedBy: { select: { id: true, name: true } },
+  slCheckClaimedBy: { select: { id: true, name: true } },
 };
 
 export async function listMapsForUser(user: AuthUser) {
@@ -188,7 +211,11 @@ export async function listMapsForUser(user: AuthUser) {
     return prisma.map.findMany({
       where: {
         phase: MapPhase.FIELD,
-        assignedSupervisorId: user.id,
+        OR: [
+          { assignedSupervisorId: user.id },
+          // SL check claim: also show on claimer's Maps list (owner still has hub column)
+          { slCheckStatus: "CLAIMED", slCheckClaimedById: user.id },
+        ],
       },
       include: mapListIncludes,
       orderBy: { updatedAt: "desc" },
@@ -213,22 +240,10 @@ export async function listTeamFieldMaps(user: AuthUser) {
   });
 }
 
-export async function swapSupervisorMaps(
-  mapIds: string[],
-  toSupervisorId: string,
-  user: AuthUser
-) {
+export async function createSwapOffer(mapIds: string[], user: AuthUser) {
   if (!userHasSupervisorRole(user)) {
-    throw new Error("Only supervisors can swap assignments");
+    throw new Error("Only supervisors can call for a swap");
   }
-  if (toSupervisorId === user.id) {
-    throw new Error("Cannot swap maps to yourself");
-  }
-
-  const toSupervisor = await prisma.user.findFirst({
-    where: { id: toSupervisorId, ...supervisorRolesWhere() },
-  });
-  if (!toSupervisor) throw new Error("Target supervisor not found");
 
   const maps = await prisma.map.findMany({
     where: {
@@ -236,29 +251,582 @@ export async function swapSupervisorMaps(
       assignedSupervisorId: user.id,
       phase: MapPhase.FIELD,
       fieldWorkStatus: FieldWorkStatus.UNCOMPLETED,
+      onHubStatusBoard: false,
     },
+    select: { id: true, mapNumber: true },
   });
   if (maps.length === 0) {
-    throw new Error("No eligible maps to swap");
+    throw new Error("No eligible maps to offer");
   }
+
+  const batchId = `swap_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  const now = new Date();
+  const ids = maps.map((m) => m.id);
+
+  await prisma.$transaction([
+    prisma.map.updateMany({
+      where: { id: { in: ids } },
+      data: {
+        swapBatchId: batchId,
+        swapOfferedAt: now,
+        swapOfferedById: user.id,
+      },
+    }),
+    prisma.mapEvent.createMany({
+      data: maps.map((map) => ({
+        mapId: map.id,
+        userId: user.id,
+        action: "swap_offer_created",
+        note: `${user.name} called for a swap on ${map.mapNumber}`,
+      })),
+    }),
+  ]);
+
+  return { batchId, offered: maps.length };
+}
+
+/** Open swap offers visible to this user (excludes own + declined). */
+export async function listOpenSwapOffers(user: AuthUser) {
+  if (!userHasSupervisorRole(user)) {
+    return [];
+  }
+
+  const declined = await prisma.swapOfferDecline.findMany({
+    where: { userId: user.id },
+    select: { batchId: true },
+  });
+  const declinedBatches = new Set(declined.map((d) => d.batchId));
+
+  const maps = await prisma.map.findMany({
+    where: {
+      swapBatchId: { not: null },
+      phase: MapPhase.FIELD,
+      fieldWorkStatus: FieldWorkStatus.UNCOMPLETED,
+      onHubStatusBoard: false,
+      NOT: { assignedSupervisorId: user.id },
+    },
+    include: {
+      assignedSupervisor: { select: { id: true, name: true, email: true } },
+      swapOfferedBy: { select: { id: true, name: true } },
+    },
+    orderBy: { swapOfferedAt: "asc" },
+  });
+
+  const byBatch = new Map<
+    string,
+    {
+      batchId: string;
+      offeredAt: string;
+      from: { id: string; name: string };
+      maps: Array<{
+        id: string;
+        mapNumber: string;
+        client: string;
+        assignedSupervisor: { id: string; name: string; email: string } | null;
+      }>;
+    }
+  >();
 
   for (const map of maps) {
-    await prisma.map.update({
-      where: { id: map.id },
-      data: {
-        assignedSupervisorId: toSupervisorId,
-        supervisorStatus: null,
-      },
+    const batchId = map.swapBatchId;
+    if (!batchId || declinedBatches.has(batchId)) continue;
+    const from = map.swapOfferedBy;
+    if (!from) continue;
+    let group = byBatch.get(batchId);
+    if (!group) {
+      group = {
+        batchId,
+        offeredAt: (map.swapOfferedAt ?? map.updatedAt).toISOString(),
+        from: { id: from.id, name: from.name },
+        maps: [],
+      };
+      byBatch.set(batchId, group);
+    }
+    group.maps.push({
+      id: map.id,
+      mapNumber: map.mapNumber,
+      client: map.client,
+      assignedSupervisor: map.assignedSupervisor,
     });
-    await logEvent(
-      map.id,
-      user.id,
-      "supervisor_swap",
-      `Shift swap → ${toSupervisor.name}`
-    );
   }
 
+  return [...byBatch.values()];
+}
+
+/** My open offers (so I can cancel). */
+export async function listMySwapOffers(user: AuthUser) {
+  if (!userHasSupervisorRole(user)) return [];
+
+  const maps = await prisma.map.findMany({
+    where: {
+      swapBatchId: { not: null },
+      swapOfferedById: user.id,
+      assignedSupervisorId: user.id,
+      phase: MapPhase.FIELD,
+      fieldWorkStatus: FieldWorkStatus.UNCOMPLETED,
+    },
+    include: {
+      swapOfferedBy: { select: { id: true, name: true } },
+    },
+    orderBy: { swapOfferedAt: "asc" },
+  });
+
+  const byBatch = new Map<
+    string,
+    {
+      batchId: string;
+      offeredAt: string;
+      maps: Array<{ id: string; mapNumber: string; client: string }>;
+    }
+  >();
+
+  for (const map of maps) {
+    const batchId = map.swapBatchId;
+    if (!batchId) continue;
+    let group = byBatch.get(batchId);
+    if (!group) {
+      group = {
+        batchId,
+        offeredAt: (map.swapOfferedAt ?? map.updatedAt).toISOString(),
+        maps: [],
+      };
+      byBatch.set(batchId, group);
+    }
+    group.maps.push({
+      id: map.id,
+      mapNumber: map.mapNumber,
+      client: map.client,
+    });
+  }
+
+  return [...byBatch.values()];
+}
+
+/** Ask to take another supervisor's maps — owner must accept/reject. */
+export async function createHelpAsk(mapIds: string[], user: AuthUser) {
+  if (!userHasSupervisorRole(user)) {
+    throw new Error("Only supervisors can ask to help take maps");
+  }
+
+  const maps = await prisma.map.findMany({
+    where: {
+      id: { in: mapIds },
+      phase: MapPhase.FIELD,
+      fieldWorkStatus: FieldWorkStatus.UNCOMPLETED,
+      onHubStatusBoard: false,
+      assignedSupervisorId: { not: null },
+      helpAskBatchId: null,
+      NOT: { assignedSupervisorId: user.id },
+    },
+    select: { id: true, mapNumber: true, assignedSupervisorId: true },
+  });
+  if (maps.length === 0) {
+    throw new Error("No maps available to ask for");
+  }
+
+  const byOwner = new Map<string, typeof maps>();
+  for (const map of maps) {
+    const ownerId = map.assignedSupervisorId!;
+    const list = byOwner.get(ownerId) ?? [];
+    list.push(map);
+    byOwner.set(ownerId, list);
+  }
+
+  const now = new Date();
+  const batches: Array<{ batchId: string; asked: number; ownerId: string }> = [];
+
+  await prisma.$transaction(async (tx) => {
+    for (const [ownerId, ownerMaps] of byOwner) {
+      const batchId = `help_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      const ids = ownerMaps.map((m) => m.id);
+      await tx.map.updateMany({
+        where: { id: { in: ids } },
+        data: {
+          helpAskBatchId: batchId,
+          helpAskAt: now,
+          helpAskById: user.id,
+        },
+      });
+      await tx.mapEvent.createMany({
+        data: ownerMaps.map((map) => ({
+          mapId: map.id,
+          userId: user.id,
+          action: "help_ask_created",
+          note: `${user.name} asked to take ${map.mapNumber}`,
+        })),
+      });
+      batches.push({ batchId, asked: ownerMaps.length, ownerId });
+    }
+  });
+
+  return { batches, asked: maps.length };
+}
+
+/** Incoming help asks on my maps (I accept/reject). */
+export async function listIncomingHelpAsks(user: AuthUser) {
+  if (!userHasSupervisorRole(user)) return [];
+
+  const maps = await prisma.map.findMany({
+    where: {
+      helpAskBatchId: { not: null },
+      assignedSupervisorId: user.id,
+      phase: MapPhase.FIELD,
+      fieldWorkStatus: FieldWorkStatus.UNCOMPLETED,
+    },
+    include: {
+      helpAskBy: { select: { id: true, name: true } },
+    },
+    orderBy: { helpAskAt: "asc" },
+  });
+
+  const byBatch = new Map<
+    string,
+    {
+      batchId: string;
+      askedAt: string;
+      from: { id: string; name: string };
+      maps: Array<{ id: string; mapNumber: string; client: string }>;
+    }
+  >();
+
+  for (const map of maps) {
+    const batchId = map.helpAskBatchId;
+    const from = map.helpAskBy;
+    if (!batchId || !from) continue;
+    let group = byBatch.get(batchId);
+    if (!group) {
+      group = {
+        batchId,
+        askedAt: (map.helpAskAt ?? map.updatedAt).toISOString(),
+        from: { id: from.id, name: from.name },
+        maps: [],
+      };
+      byBatch.set(batchId, group);
+    }
+    group.maps.push({
+      id: map.id,
+      mapNumber: map.mapNumber,
+      client: map.client,
+    });
+  }
+
+  return [...byBatch.values()];
+}
+
+/** My outgoing help asks (so I can cancel). */
+export async function listMyHelpAsks(user: AuthUser) {
+  if (!userHasSupervisorRole(user)) return [];
+
+  const maps = await prisma.map.findMany({
+    where: {
+      helpAskBatchId: { not: null },
+      helpAskById: user.id,
+      phase: MapPhase.FIELD,
+      fieldWorkStatus: FieldWorkStatus.UNCOMPLETED,
+    },
+    include: {
+      assignedSupervisor: { select: { id: true, name: true } },
+    },
+    orderBy: { helpAskAt: "asc" },
+  });
+
+  const byBatch = new Map<
+    string,
+    {
+      batchId: string;
+      askedAt: string;
+      to: { id: string; name: string } | null;
+      maps: Array<{ id: string; mapNumber: string; client: string }>;
+    }
+  >();
+
+  for (const map of maps) {
+    const batchId = map.helpAskBatchId;
+    if (!batchId) continue;
+    let group = byBatch.get(batchId);
+    if (!group) {
+      group = {
+        batchId,
+        askedAt: (map.helpAskAt ?? map.updatedAt).toISOString(),
+        to: map.assignedSupervisor
+          ? { id: map.assignedSupervisor.id, name: map.assignedSupervisor.name }
+          : null,
+        maps: [],
+      };
+      byBatch.set(batchId, group);
+    }
+    group.maps.push({
+      id: map.id,
+      mapNumber: map.mapNumber,
+      client: map.client,
+    });
+  }
+
+  return [...byBatch.values()];
+}
+
+function clearHelpAskData() {
+  return {
+    helpAskBatchId: null as string | null,
+    helpAskAt: null as Date | null,
+    helpAskById: null as string | null,
+  };
+}
+
+/** Owner accepts — maps move to the requester. */
+export async function acceptHelpAsk(batchId: string, user: AuthUser) {
+  if (!userHasSupervisorRole(user)) {
+    throw new Error("Only supervisors can accept help asks");
+  }
+
+  const maps = await prisma.map.findMany({
+    where: {
+      helpAskBatchId: batchId,
+      assignedSupervisorId: user.id,
+      phase: MapPhase.FIELD,
+      fieldWorkStatus: FieldWorkStatus.UNCOMPLETED,
+      helpAskById: { not: null },
+    },
+    select: { id: true, mapNumber: true, helpAskById: true },
+  });
+  if (maps.length === 0) {
+    throw new Error("No help ask found for you to accept");
+  }
+
+  const requesterId = maps[0].helpAskById!;
+  if (maps.some((m) => m.helpAskById !== requesterId)) {
+    throw new Error("Invalid help ask batch");
+  }
+
+  const shiftStart = new Date();
+  shiftStart.setSeconds(0, 0);
+  const ids = maps.map((m) => m.id);
+
+  await prisma.$transaction([
+    prisma.user.update({
+      where: { id: requesterId },
+      data: { shiftStartedAt: shiftStart },
+    }),
+    prisma.map.updateMany({
+      where: { id: { in: ids } },
+      data: {
+        assignedSupervisorId: requesterId,
+        supervisorStatus: null,
+        swapBatchId: null,
+        swapOfferedAt: null,
+        swapOfferedById: null,
+        onHubStatusBoard: false,
+        ...clearHelpAskData(),
+      },
+    }),
+    prisma.mapEvent.createMany({
+      data: maps.map((map) => ({
+        mapId: map.id,
+        userId: user.id,
+        action: "help_ask_accepted",
+        note: `${user.name} accepted help — ${map.mapNumber} moved`,
+      })),
+    }),
+  ]);
+
+  return { accepted: maps.length };
+}
+
+/** Owner rejects the help ask. */
+export async function rejectHelpAsk(batchId: string, user: AuthUser) {
+  if (!userHasSupervisorRole(user)) {
+    throw new Error("Only supervisors can reject help asks");
+  }
+
+  const maps = await prisma.map.findMany({
+    where: {
+      helpAskBatchId: batchId,
+      assignedSupervisorId: user.id,
+    },
+    select: { id: true, mapNumber: true },
+  });
+  if (maps.length === 0) {
+    throw new Error("No help ask found for you to reject");
+  }
+
+  const ids = maps.map((m) => m.id);
+  await prisma.$transaction([
+    prisma.map.updateMany({
+      where: { id: { in: ids } },
+      data: clearHelpAskData(),
+    }),
+    prisma.mapEvent.createMany({
+      data: maps.map((map) => ({
+        mapId: map.id,
+        userId: user.id,
+        action: "help_ask_rejected",
+        note: `${user.name} rejected help ask on ${map.mapNumber}`,
+      })),
+    }),
+  ]);
+
+  return { rejected: maps.length };
+}
+
+/** Requester cancels their own help ask. */
+export async function cancelHelpAsk(batchId: string, user: AuthUser) {
+  if (!userHasSupervisorRole(user)) {
+    throw new Error("Only supervisors can cancel help asks");
+  }
+
+  const maps = await prisma.map.findMany({
+    where: {
+      helpAskBatchId: batchId,
+      helpAskById: user.id,
+    },
+    select: { id: true, mapNumber: true },
+  });
+  if (maps.length === 0) {
+    throw new Error("No help ask found to cancel");
+  }
+
+  const ids = maps.map((m) => m.id);
+  await prisma.$transaction([
+    prisma.map.updateMany({
+      where: { id: { in: ids } },
+      data: clearHelpAskData(),
+    }),
+    prisma.mapEvent.createMany({
+      data: maps.map((map) => ({
+        mapId: map.id,
+        userId: user.id,
+        action: "help_ask_cancelled",
+        note: `${user.name} cancelled help ask on ${map.mapNumber}`,
+      })),
+    }),
+  ]);
+
+  return { cancelled: maps.length };
+}
+
+/** Take one or more offered maps onto my shift. */
+export async function takeSwapMaps(mapIds: string[], user: AuthUser) {
+  if (!userHasSupervisorRole(user)) {
+    throw new Error("Only supervisors can take a swap");
+  }
+
+  const maps = await prisma.map.findMany({
+    where: {
+      id: { in: mapIds },
+      swapBatchId: { not: null },
+      phase: MapPhase.FIELD,
+      fieldWorkStatus: FieldWorkStatus.UNCOMPLETED,
+      onHubStatusBoard: false,
+      NOT: { assignedSupervisorId: user.id },
+    },
+    select: { id: true, mapNumber: true },
+  });
+  if (maps.length === 0) {
+    throw new Error("No offered maps to take");
+  }
+
+  const shiftStart = new Date();
+  shiftStart.setSeconds(0, 0);
+  const ids = maps.map((m) => m.id);
+
+  await prisma.$transaction([
+    prisma.user.update({
+      where: { id: user.id },
+      data: { shiftStartedAt: shiftStart },
+    }),
+    prisma.map.updateMany({
+      where: { id: { in: ids } },
+      data: {
+        assignedSupervisorId: user.id,
+        supervisorStatus: null,
+        swapBatchId: null,
+        swapOfferedAt: null,
+        swapOfferedById: null,
+        onHubStatusBoard: false,
+        ...clearHelpAskData(),
+      },
+    }),
+    prisma.mapEvent.createMany({
+      data: maps.map((map) => ({
+        mapId: map.id,
+        userId: user.id,
+        action: "swap_offer_taken",
+        note: `${user.name} took swap for ${map.mapNumber}`,
+      })),
+    }),
+  ]);
+
   return maps.length;
+}
+
+/** Hide this swap batch for me — others can still take it. */
+export async function declineSwapOffer(batchId: string, user: AuthUser) {
+  if (!userHasSupervisorRole(user)) {
+    throw new Error("Only supervisors can decline a swap");
+  }
+  if (!batchId.trim()) throw new Error("batchId required");
+
+  await prisma.swapOfferDecline.upsert({
+    where: {
+      batchId_userId: { batchId, userId: user.id },
+    },
+    create: { batchId, userId: user.id },
+    update: {},
+  });
+
+  return { declined: true };
+}
+
+/** Cancel my open offer (maps stay with me). */
+export async function cancelSwapOffer(batchId: string, user: AuthUser) {
+  if (!userHasSupervisorRole(user)) {
+    throw new Error("Only supervisors can cancel a swap");
+  }
+
+  const maps = await prisma.map.findMany({
+    where: {
+      swapBatchId: batchId,
+      swapOfferedById: user.id,
+      assignedSupervisorId: user.id,
+    },
+    select: { id: true, mapNumber: true },
+  });
+  if (maps.length === 0) {
+    throw new Error("No open swap offer to cancel");
+  }
+
+  const ids = maps.map((m) => m.id);
+  await prisma.$transaction([
+    prisma.map.updateMany({
+      where: { id: { in: ids } },
+      data: {
+        swapBatchId: null,
+        swapOfferedAt: null,
+        swapOfferedById: null,
+      },
+    }),
+    prisma.mapEvent.createMany({
+      data: maps.map((map) => ({
+        mapId: map.id,
+        userId: user.id,
+        action: "swap_offer_cancelled",
+        note: `${user.name} cancelled swap offer on ${map.mapNumber}`,
+      })),
+    }),
+    prisma.swapOfferDecline.deleteMany({ where: { batchId } }),
+  ]);
+
+  return { cancelled: maps.length };
+}
+
+/** @deprecated use createSwapOffer / takeSwapMaps — kept for old clients */
+export async function swapSupervisorMaps(
+  mapIds: string[],
+  toSupervisorId: string,
+  user: AuthUser
+) {
+  void toSupervisorId;
+  return createSwapOffer(mapIds, user).then((r) => r.offered);
 }
 
 export async function releaseToGraphics(mapId: string, user: AuthUser) {
@@ -388,13 +956,16 @@ export async function shuffleAssignSupervisors(
     note: `Shuffle assigned to ${supervisorName}`,
   }));
 
-  await prisma.$transaction([
-    ...updateManyOps,
-    prisma.mapEvent.createMany({ data: eventRows }),
-  ]);
+  await withSuppressedBroadcasts(() =>
+    prisma.$transaction([
+      ...updateManyOps,
+      prisma.mapEvent.createMany({ data: eventRows }),
+    ])
+  );
 
-  // Bulk change: tell clients to refetch (overrides any mid-transaction upserts).
-  broadcastMapsInvalidate();
+  // Surgical realtime: push the exact changed rows so clients patch in place
+  // instead of refetching every board.
+  await broadcastChangedMaps(assignments.map((a) => a.mapId));
 
   const distribution = supervisors.map((supervisor) => ({
     supervisorId: supervisor.id,
@@ -415,7 +986,7 @@ export async function listHistoryMaps(user: AuthUser) {
 
   return prisma.map.findMany({
     where: { phase: { in: ARCHIVED_PHASES } },
-    include: mapListIncludes,
+    include: mapHistoryIncludes,
     orderBy: { updatedAt: "desc" },
   });
 }
@@ -646,14 +1217,17 @@ export async function shuffleAssignInspectors(
     note: `Shuffle assigned to ${inspectorName}`,
   }));
 
-  await prisma.$transaction([
-    ...updateManyOps,
-    prisma.mapPhaseHistory.createMany({ data: phaseHistoryRows }),
-    prisma.mapEvent.createMany({ data: eventRows }),
-  ]);
+  await withSuppressedBroadcasts(() =>
+    prisma.$transaction([
+      ...updateManyOps,
+      prisma.mapPhaseHistory.createMany({ data: phaseHistoryRows }),
+      prisma.mapEvent.createMany({ data: eventRows }),
+    ])
+  );
 
-  // Bulk change: tell clients to refetch (overrides any mid-transaction upserts).
-  broadcastMapsInvalidate();
+  // Surgical realtime: push the exact changed rows so clients patch in place
+  // instead of refetching every board.
+  await broadcastChangedMaps(assignments.map((a) => a.mapId));
 
   const distribution = inspectors.map((inspector) => ({
     inspectorId: inspector.id,
@@ -680,27 +1254,29 @@ export async function unassignInspectors(mapIds: string[], user: AuthUser) {
   const eligibleIds = maps.filter((m) => m.phase === MapPhase.PREP).map((m) => m.id);
 
   if (eligibleIds.length > 0) {
-    await prisma.$transaction([
-      prisma.map.updateMany({
-        where: { id: { in: eligibleIds } },
-        data: {
-          assignedInspectorId: null,
-          phase: MapPhase.INTAKE,
-          inspectorStatus: null,
-          qaStatus: null,
-        },
-      }),
-      prisma.mapEvent.createMany({
-        data: eligibleIds.map((id) => ({
-          mapId: id,
-          userId: user.id,
-          action: "unassigned_inspector",
-          note: "Unassigned — returned to queue",
-        })),
-      }),
-    ]);
+    await withSuppressedBroadcasts(() =>
+      prisma.$transaction([
+        prisma.map.updateMany({
+          where: { id: { in: eligibleIds } },
+          data: {
+            assignedInspectorId: null,
+            phase: MapPhase.INTAKE,
+            inspectorStatus: null,
+            qaStatus: null,
+          },
+        }),
+        prisma.mapEvent.createMany({
+          data: eligibleIds.map((id) => ({
+            mapId: id,
+            userId: user.id,
+            action: "unassigned_inspector",
+            note: "Unassigned — returned to queue",
+          })),
+        }),
+      ])
+    );
 
-    broadcastMapsInvalidate();
+    await broadcastChangedMaps(eligibleIds);
   }
 
   return { unassigned: eligibleIds.length };
@@ -720,25 +1296,27 @@ export async function unassignSupervisors(mapIds: string[], user: AuthUser) {
     .map((m) => m.id);
 
   if (eligibleIds.length > 0) {
-    await prisma.$transaction([
-      prisma.map.updateMany({
-        where: { id: { in: eligibleIds } },
-        data: {
-          assignedSupervisorId: null,
-          supervisorStatus: null,
-        },
-      }),
-      prisma.mapEvent.createMany({
-        data: eligibleIds.map((id) => ({
-          mapId: id,
-          userId: user.id,
-          action: "unassigned_supervisor",
-          note: "Supervisor unassigned",
-        })),
-      }),
-    ]);
+    await withSuppressedBroadcasts(() =>
+      prisma.$transaction([
+        prisma.map.updateMany({
+          where: { id: { in: eligibleIds } },
+          data: {
+            assignedSupervisorId: null,
+            supervisorStatus: null,
+          },
+        }),
+        prisma.mapEvent.createMany({
+          data: eligibleIds.map((id) => ({
+            mapId: id,
+            userId: user.id,
+            action: "unassigned_supervisor",
+            note: "Supervisor unassigned",
+          })),
+        }),
+      ])
+    );
 
-    broadcastMapsInvalidate();
+    await broadcastChangedMaps(eligibleIds);
   }
 
   return { unassigned: eligibleIds.length };
@@ -812,7 +1390,9 @@ export async function updateInspectorStatus(
 ) {
   const map = await prisma.map.findUnique({ where: { id: mapId } });
   if (!map) throw new Error("Map not found");
-  if (map.assignedInspectorId !== user.id) {
+  // The assigned inspector owns this status, but the graphics team leader (and
+  // OPS admin) may override it from their board to correct/nudge the pipeline.
+  if (map.assignedInspectorId !== user.id && !isLeaderOrAdmin(user)) {
     throw new Error("Not assigned to this map");
   }
   if (map.phase !== MapPhase.PREP && map.phase !== MapPhase.POLISH) {
@@ -849,6 +1429,44 @@ export async function updateInspectorStatus(
   ops.push(prisma.map.findUnique({ where: { id: mapId }, include: mapDetailIncludes }));
   const results = await prisma.$transaction(ops);
   return results[results.length - 1] as MapDetailPayload | null;
+}
+
+/**
+ * Status transitions the graphics team leader (or OPS admin) may drive from the
+ * assignment board — the same moves the assigned inspector / QA can make, but
+ * unlocked for the leader so they can correct or advance a map. Each branch
+ * reuses the canonical workflow function (which does the phase transition,
+ * history + event logging, and — via the Prisma extension — broadcasts the
+ * change to every connected client so all users see it live).
+ */
+export type LeaderStatusAction =
+  | { kind: "inspector"; status: InspectorStatus }
+  | { kind: "qa_review"; status: "fix" | "fix_done" | "approved" }
+  | { kind: "upload_review"; approved: boolean };
+
+export async function setMapStatusAsLeader(
+  mapId: string,
+  action: LeaderStatusAction,
+  user: AuthUser,
+  note?: string
+) {
+  if (!isLeaderOrAdmin(user)) {
+    throw new Error("Only the graphics team leader can change status here");
+  }
+
+  switch (action.kind) {
+    case "inspector":
+      if (!Object.values(InspectorStatus).includes(action.status)) {
+        throw new Error("Invalid inspector status");
+      }
+      return updateInspectorStatus(mapId, action.status, user, note);
+    case "upload_review":
+      return qaUploadDecision(mapId, action.approved, user, note);
+    case "qa_review":
+      return qaPolishDecision(mapId, action.status, user, note);
+    default:
+      throw new Error("Invalid status action");
+  }
 }
 
 export async function addMapNote(mapId: string, userId: string, body: string) {
@@ -1313,6 +1931,107 @@ export async function updateMapDueDate(mapId: string, dueDate: string | null, us
   return map;
 }
 
+const MAP_TASKS = new Set<string>(Object.values(MapTask));
+const MAP_STATIONS = new Set<string>(Object.values(MapStation));
+
+/**
+ * Set board Task and/or Station. Independent of MapPhase — no phase
+ * restrictions; graphics team leader (or OPS admin) may change anytime.
+ */
+export async function setMapTaskStation(
+  mapId: string,
+  patch: { task?: MapTask; station?: MapStation },
+  user: AuthUser
+) {
+  if (!isLeaderOrAdmin(user)) {
+    throw new Error("Only the graphics team leader can change task or station");
+  }
+  if (patch.task === undefined && patch.station === undefined) {
+    throw new Error("task or station required");
+  }
+  if (patch.task !== undefined && !MAP_TASKS.has(patch.task)) {
+    throw new Error("Invalid task");
+  }
+  if (patch.station !== undefined && !MAP_STATIONS.has(patch.station)) {
+    throw new Error("Invalid station");
+  }
+
+  const existing = await prisma.map.findUnique({ where: { id: mapId } });
+  if (!existing) throw new Error("Map not found");
+
+  const map = await prisma.map.update({
+    where: { id: mapId },
+    data: {
+      ...(patch.task !== undefined ? { task: patch.task } : {}),
+      ...(patch.station !== undefined ? { station: patch.station } : {}),
+    },
+    include: mapDetailIncludes,
+  });
+
+  const parts: string[] = [];
+  if (patch.task !== undefined && patch.task !== existing.task) parts.push(`task → ${patch.task}`);
+  if (patch.station !== undefined && patch.station !== existing.station) {
+    parts.push(`station → ${patch.station}`);
+  }
+  if (parts.length) {
+    await logEvent(mapId, user.id, "task_station_updated", parts.join(", "));
+  }
+  return map;
+}
+
+/** Bulk set board Task and/or Station on many maps (no phase restrictions). */
+export async function bulkSetMapTaskStation(
+  mapIds: string[],
+  patch: { task?: MapTask; station?: MapStation },
+  user: AuthUser
+) {
+  if (!isLeaderOrAdmin(user)) {
+    throw new Error("Only the graphics team leader can change task or station");
+  }
+  if (!mapIds.length) throw new Error("mapIds required");
+  if (patch.task === undefined && patch.station === undefined) {
+    throw new Error("task or station required");
+  }
+  if (patch.task !== undefined && !MAP_TASKS.has(patch.task)) {
+    throw new Error("Invalid task");
+  }
+  if (patch.station !== undefined && !MAP_STATIONS.has(patch.station)) {
+    throw new Error("Invalid station");
+  }
+
+  const uniqueIds = [...new Set(mapIds)];
+  const data: Prisma.MapUpdateManyMutationInput = {};
+  if (patch.task !== undefined) data.task = patch.task;
+  if (patch.station !== undefined) data.station = patch.station;
+
+  await prisma.map.updateMany({
+    where: { id: { in: uniqueIds } },
+    data,
+  });
+
+  const noteParts: string[] = [];
+  if (patch.task !== undefined) noteParts.push(`task → ${patch.task}`);
+  if (patch.station !== undefined) noteParts.push(`station → ${patch.station}`);
+  const note = `Bulk ${noteParts.join(", ")} (${uniqueIds.length} maps)`;
+
+  await prisma.mapEvent.createMany({
+    data: uniqueIds.map((mapId) => ({
+      mapId,
+      userId: user.id,
+      action: "task_station_updated",
+      note,
+    })),
+  });
+
+  broadcastMapsInvalidate();
+
+  const maps = await prisma.map.findMany({
+    where: { id: { in: uniqueIds } },
+    include: mapListIncludes,
+  });
+  return { updated: maps.length, maps };
+}
+
 export async function listTeamMembers() {
   return prisma.user.findMany({
     where: {
@@ -1349,6 +2068,9 @@ export async function listHubMaps(user: AuthUser) {
     throw new Error("Not allowed to view hub");
   }
 
+  // Claimed SL must answer before leaving shift — release stale claims
+  await releaseStaleSlClaims();
+
   // Full board for everyone with hub access (managers, shift leaders, supervisors).
   // Drag/update is enforced in updateHubMap + frontend canDrag — supervisors
   // may only move maps assigned to them.
@@ -1357,6 +2079,67 @@ export async function listHubMaps(user: AuthUser) {
     include: hubMapIncludes,
     orderBy: [{ fieldDate: "asc" }, { updatedAt: "desc" }],
   });
+}
+
+/**
+ * If an SL claimed a check then left today's shift without Yes/No,
+ * release the claim so another on-shift SL can take it.
+ */
+async function releaseStaleSlClaims() {
+  const claimed = await prisma.map.findMany({
+    where: {
+      phase: MapPhase.FIELD,
+      slCheckStatus: SlCheckStatus.CLAIMED,
+      slCheckClaimedById: { not: null },
+    },
+    select: {
+      id: true,
+      mapNumber: true,
+      fieldWorkStatus: true,
+      shiftLeaderApproved: true,
+      slCheckClaimedById: true,
+      slCheckClaimedBy: { select: { id: true, name: true, shiftStartedAt: true } },
+    },
+  });
+
+  const dayStart = startOfToday();
+  const dayEnd = endOfToday();
+
+  for (const map of claimed) {
+    const start = map.slCheckClaimedBy?.shiftStartedAt;
+    const onShift = !!start && start >= dayStart && start <= dayEnd;
+    if (onShift) continue;
+
+    const wasCompletedWithoutApproval =
+      map.fieldWorkStatus === FieldWorkStatus.COMPLETED && map.shiftLeaderApproved === false;
+
+    await prisma.map.update({
+      where: { id: map.id },
+      data: wasCompletedWithoutApproval
+        ? {
+            slCheckStatus: null,
+            slCheckClaimedById: null,
+            slCheckClaimedAt: null,
+            slCheckRequestedById: null,
+            slCheckRequestedAt: null,
+            slCheckNote: null,
+          }
+        : {
+            slCheckStatus: SlCheckStatus.OPEN,
+            slCheckClaimedById: null,
+            slCheckClaimedAt: null,
+            slCheckNote: null,
+          },
+    });
+
+    const who = map.slCheckClaimedBy?.name ?? "Shift leader";
+    await logEvent(
+      map.id,
+      map.slCheckClaimedById!,
+      "sl_check_released",
+      `${who} left shift without answering — check released on ${map.mapNumber}`
+    );
+  }
 }
 
 export async function listHubSupervisors() {
@@ -1541,8 +2324,20 @@ export async function updateHubMap(
     throw new Error("Only OPS manager can restore a cancelled map");
   }
 
+  // OPS + shift leaders can reassign across Intake / supervisor columns
   if (!isOps && data.assignedSupervisorId !== undefined) {
-    throw new Error("Only OPS manager can reassign supervisors in the hub");
+    if (!isShiftLeader) {
+      throw new Error("Only OPS manager or shift leader can reassign supervisors in the hub");
+    }
+    if (data.assignedSupervisorId) {
+      const target = await prisma.user.findUnique({
+        where: { id: data.assignedSupervisorId },
+        include: { roles: true },
+      });
+      if (!target || !userHasSupervisorRole({ roles: target.roles.map((r) => r.role) })) {
+        throw new Error("Target must be a supervisor or shift leader");
+      }
+    }
   }
 
   if (
@@ -1575,6 +2370,15 @@ export async function updateHubMap(
     opsManagerComment?: string | null;
     shiftLeaderApproved?: boolean | null;
     returnVisitAt?: Date | null;
+    slCheckStatus?: SlCheckStatus | null;
+    slCheckRequestedById?: string | null;
+    slCheckClaimedById?: string | null;
+    slCheckRequestedAt?: Date | null;
+    slCheckClaimedAt?: Date | null;
+    slCheckNote?: string | null;
+    swapBatchId?: string | null;
+    swapOfferedAt?: Date | null;
+    swapOfferedById?: string | null;
   } = {};
 
   if (data.opsManagerComment !== undefined) {
@@ -1595,6 +2399,10 @@ export async function updateHubMap(
       patch.fieldWorkStatus = FieldWorkStatus.UNCOMPLETED;
       patch.supervisorStatus = null;
       patch.onHubStatusBoard = false;
+      // Clear any open swap offer when ownership changes
+      patch.swapBatchId = null;
+      patch.swapOfferedAt = null;
+      patch.swapOfferedById = null;
       const shiftStart = new Date();
       shiftStart.setSeconds(0, 0);
       await prisma.user.update({
@@ -1605,6 +2413,34 @@ export async function updateHubMap(
         patch.fieldDate = new Date();
       }
     }
+  }
+
+  const movingOntoStatusBoard =
+    data.fieldWorkStatus !== undefined &&
+    data.assignedSupervisorId === undefined &&
+    (data.onHubStatusBoard === true ||
+      (data.onHubStatusBoard === undefined && data.fieldWorkStatus !== undefined));
+
+  // Open / claimed SL check must be answered (Yes/No) before anyone moves the map
+  if (
+    movingOntoStatusBoard &&
+    (map.slCheckStatus === SlCheckStatus.OPEN || map.slCheckStatus === SlCheckStatus.CLAIMED)
+  ) {
+    throw new Error(
+      map.slCheckStatus === SlCheckStatus.CLAIMED
+        ? "Shift leader must answer Yes or No before this map can be moved"
+        : "Cancel or finish the SL check before moving this map"
+    );
+  }
+
+  // After SL Yes: only the assigned owner (or OPS) moves the map — not the checking SL
+  if (
+    movingOntoStatusBoard &&
+    map.slCheckStatus === SlCheckStatus.ACCEPTED &&
+    !isOps &&
+    !isAssignedSupervisor
+  ) {
+    throw new Error("Only the supervisor who owns this map can move it after SL approval");
   }
 
   if (data.fieldWorkStatus !== undefined) {
@@ -1620,7 +2456,12 @@ export async function updateHubMap(
         // Supervisors must answer the SL-approval question
         throw new Error("Confirm whether a shift leader approved this map");
       }
-      if (isShiftLeader && data.shiftLeaderApproved === undefined) {
+      // Only auto-approve when the assigned owner (who is also SL) completes — not a checker
+      if (
+        isShiftLeader &&
+        isAssignedSupervisor &&
+        data.shiftLeaderApproved === undefined
+      ) {
         patch.shiftLeaderApproved = true;
       }
     } else if (data.fieldWorkStatus === FieldWorkStatus.UNCOMPLETED) {
@@ -1634,6 +2475,19 @@ export async function updateHubMap(
 
   if (data.onHubStatusBoard !== undefined) {
     patch.onHubStatusBoard = data.onHubStatusBoard;
+  }
+
+  // Owner moved after SL Yes — clear check workflow; keep shiftLeaderApproved
+  if (
+    (patch.onHubStatusBoard === true || data.onHubStatusBoard === true) &&
+    map.slCheckStatus === SlCheckStatus.ACCEPTED
+  ) {
+    patch.slCheckStatus = null;
+    patch.slCheckRequestedById = null;
+    patch.slCheckClaimedById = null;
+    patch.slCheckRequestedAt = null;
+    patch.slCheckClaimedAt = null;
+    patch.slCheckNote = null;
   }
 
   // Return visit: schedule on that day as active field work (off status board)
@@ -1665,7 +2519,14 @@ export async function updateHubMap(
     // Don't auto-complete when marking uncompleted (may still report 100% then incomplete)
     const markingIncomplete =
       data.fieldWorkStatus === FieldWorkStatus.UNCOMPLETED && data.onHubStatusBoard === true;
-    if (data.fieldProgressPercent === 100 && !markingIncomplete && !returnVisitDate) {
+    const slCheckBlocksComplete =
+      map.slCheckStatus === SlCheckStatus.OPEN || map.slCheckStatus === SlCheckStatus.CLAIMED;
+    if (
+      data.fieldProgressPercent === 100 &&
+      !markingIncomplete &&
+      !returnVisitDate &&
+      !slCheckBlocksComplete
+    ) {
       patch.fieldWorkStatus = FieldWorkStatus.COMPLETED;
       patch.supervisorStatus = SupervisorStatus.DONE;
       patch.onHubStatusBoard = true;
@@ -1753,6 +2614,329 @@ export async function updateHubMap(
     data: patch,
     include: hubMapIncludes,
   });
+}
+
+async function assertOnShiftToday(userId: string) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { shiftStartedAt: true },
+  });
+  const start = user?.shiftStartedAt;
+  if (!start || start < startOfToday() || start > endOfToday()) {
+    throw new Error("You must be on today’s shift to do this");
+  }
+}
+
+/** Assigned supervisor reports that the mapper has not arrived — shows in OPS Updates. */
+export async function reportMapperNotArrived(mapId: string, user: AuthUser) {
+  const map = await prisma.map.findUnique({ where: { id: mapId } });
+  if (!map) throw new Error("Map not found");
+  if (map.phase !== MapPhase.FIELD) throw new Error("Only field maps");
+  if (!map.assignedSupervisorId) {
+    throw new Error("Map must have an assigned supervisor");
+  }
+  if (map.fieldWorkStatus !== FieldWorkStatus.UNCOMPLETED) {
+    throw new Error("Only active (uncompleted) maps");
+  }
+
+  if (map.assignedSupervisorId !== user.id) {
+    throw new Error("Only the assigned supervisor can report that the mapper has not arrived");
+  }
+
+  const recent = await prisma.mapEvent.findFirst({
+    where: {
+      mapId,
+      action: "mapper_not_arrived",
+      createdAt: { gt: new Date(Date.now() - 30 * 60 * 1000) },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+  if (recent) {
+    throw new Error("Already reported in the last 30 minutes");
+  }
+
+  await logEvent(
+    mapId,
+    user.id,
+    "mapper_not_arrived",
+    `${user.name}: mapper has not arrived yet for ${map.mapNumber}`
+  );
+
+  return prisma.map.findUnique({
+    where: { id: mapId },
+    include: hubMapIncludes,
+  });
+}
+
+/** Assigned supervisor asks on-shift shift leaders to check this map (before status). */
+export async function requestSlCheck(mapId: string, user: AuthUser) {
+  const map = await prisma.map.findUnique({ where: { id: mapId } });
+  if (!map) throw new Error("Map not found");
+  if (map.phase !== MapPhase.FIELD) throw new Error("Only field maps");
+  if (map.assignedSupervisorId !== user.id && !isOpsManager(user)) {
+    throw new Error("Only the assigned supervisor can ask for SL check");
+  }
+  if (map.onHubStatusBoard) {
+    throw new Error("Ask for SL check before moving the map to a status column");
+  }
+  if (map.fieldWorkStatus === FieldWorkStatus.COMPLETED || map.fieldWorkStatus === FieldWorkStatus.CANCELLED) {
+    throw new Error("Cannot ask for SL check on a completed or cancelled map");
+  }
+  // Shift leaders supervising their own maps check themselves — no Ask SL
+  if (userHasShiftLeaderRole(user) && map.assignedSupervisorId === user.id) {
+    throw new Error("Shift leaders do not need an SL check on their own maps");
+  }
+  if (map.assignedSupervisorId) {
+    const owner = await prisma.user.findUnique({
+      where: { id: map.assignedSupervisorId },
+      include: { roles: true },
+    });
+    if (owner && userIsShiftLeader(owner)) {
+      throw new Error("Shift leaders do not need an SL check on their own maps");
+    }
+  }
+  if (map.slCheckStatus === SlCheckStatus.OPEN || map.slCheckStatus === SlCheckStatus.CLAIMED) {
+    throw new Error("A shift-leader check is already in progress");
+  }
+
+  const updated = await prisma.map.update({
+    where: { id: mapId },
+    data: {
+      slCheckStatus: SlCheckStatus.OPEN,
+      slCheckRequestedById: user.id,
+      slCheckRequestedAt: new Date(),
+      slCheckClaimedById: null,
+      slCheckClaimedAt: null,
+      slCheckNote: null,
+    },
+    include: hubMapIncludes,
+  });
+
+  await logEvent(
+    mapId,
+    user.id,
+    "sl_check_requested",
+    `${user.name} asked shift leaders to check ${map.mapNumber}`
+  );
+
+  return updated;
+}
+
+/** First on-shift shift leader to claim wins.
+ *  Also allows claiming completed maps that still need SL approval. */
+export async function claimSlCheck(mapId: string, user: AuthUser) {
+  if (!userHasShiftLeaderRole(user)) {
+    throw new Error("Only shift leaders can claim a check");
+  }
+  await assertOnShiftToday(user.id);
+
+  const current = await prisma.map.findUnique({ where: { id: mapId } });
+  if (!current) throw new Error("Map not found");
+  if (current.phase !== MapPhase.FIELD) throw new Error("Only field maps");
+  if (current.slCheckStatus === SlCheckStatus.CLAIMED) {
+    throw new Error("This check was already taken by another shift leader");
+  }
+
+  const needsApprovalReview =
+    current.fieldWorkStatus === FieldWorkStatus.COMPLETED &&
+    current.shiftLeaderApproved === false &&
+    (current.slCheckStatus === null || current.slCheckStatus === SlCheckStatus.NEEDS_CORRECTIONS);
+
+  const openCheck = current.slCheckStatus === SlCheckStatus.OPEN;
+
+  if (!openCheck && !needsApprovalReview) {
+    throw new Error("No open SL check on this map");
+  }
+
+  let claimedCount = 0;
+  if (openCheck) {
+    const claimed = await prisma.map.updateMany({
+      where: { id: mapId, slCheckStatus: SlCheckStatus.OPEN },
+      data: {
+        slCheckStatus: SlCheckStatus.CLAIMED,
+        slCheckClaimedById: user.id,
+        slCheckClaimedAt: new Date(),
+      },
+    });
+    claimedCount = claimed.count;
+  } else {
+    const claimed = await prisma.map.updateMany({
+      where: {
+        id: mapId,
+        fieldWorkStatus: FieldWorkStatus.COMPLETED,
+        shiftLeaderApproved: false,
+        OR: [{ slCheckStatus: null }, { slCheckStatus: SlCheckStatus.NEEDS_CORRECTIONS }],
+      },
+      data: {
+        slCheckStatus: SlCheckStatus.CLAIMED,
+        slCheckClaimedById: user.id,
+        slCheckClaimedAt: new Date(),
+        slCheckRequestedById: current.slCheckRequestedById ?? current.assignedSupervisorId,
+        slCheckRequestedAt: current.slCheckRequestedAt ?? new Date(),
+      },
+    });
+    claimedCount = claimed.count;
+  }
+  if (claimedCount === 0) {
+    throw new Error("This check was already taken by another shift leader");
+  }
+
+  await logEvent(mapId, user.id, "sl_check_claimed", `${user.name} claimed the SL check`);
+
+  return prisma.map.findUniqueOrThrow({
+    where: { id: mapId },
+    include: hubMapIncludes,
+  });
+}
+
+/**
+ * Claimed SL must answer Yes or No (must be on today's shift).
+ * Yes → map is completed with SL approval.
+ * No → if under a supervisor: stay there; if completed without SL approval: Intake + comment.
+ */
+export async function resolveSlCheck(
+  mapId: string,
+  user: AuthUser,
+  decision: "accept" | "need_corrections",
+  note?: string | null
+) {
+  if (!userHasShiftLeaderRole(user)) {
+    throw new Error("Only shift leaders can resolve a check");
+  }
+  await assertOnShiftToday(user.id);
+
+  const map = await prisma.map.findUnique({ where: { id: mapId } });
+  if (!map) throw new Error("Map not found");
+  if (map.slCheckStatus !== SlCheckStatus.CLAIMED) {
+    throw new Error("This check is not claimed");
+  }
+  if (map.slCheckClaimedById !== user.id && !isOpsManager(user)) {
+    throw new Error("Only the shift leader who claimed this map can resolve it");
+  }
+
+  const cleanNote = note?.trim() || null;
+
+  if (decision === "accept") {
+    const updated = await prisma.map.update({
+      where: { id: mapId },
+      data: {
+        slCheckStatus: null,
+        slCheckRequestedById: null,
+        slCheckClaimedById: null,
+        slCheckRequestedAt: null,
+        slCheckClaimedAt: null,
+        slCheckNote: cleanNote,
+        shiftLeaderApproved: true,
+        fieldWorkStatus: FieldWorkStatus.COMPLETED,
+        fieldProgressPercent: 100,
+        supervisorStatus: SupervisorStatus.DONE,
+        onHubStatusBoard: true,
+      },
+      include: hubMapIncludes,
+    });
+    await logEvent(
+      mapId,
+      user.id,
+      "sl_check_accepted",
+      `${user.name} approved ${map.mapNumber} — completed`
+    );
+    return updated;
+  }
+
+  if (!cleanNote) {
+    throw new Error("Add a short comment explaining why the check was not accepted");
+  }
+
+  const wasCompletedWithoutApproval =
+    map.fieldWorkStatus === FieldWorkStatus.COMPLETED && map.shiftLeaderApproved === false;
+
+  const comment = `SL checked — no approve: ${cleanNote}`;
+
+  if (wasCompletedWithoutApproval) {
+    // Day-after / no-SL-on-shift completion → back to Intake
+    const updated = await prisma.map.update({
+      where: { id: mapId },
+      data: {
+        slCheckStatus: null,
+        slCheckRequestedById: null,
+        slCheckClaimedById: null,
+        slCheckRequestedAt: null,
+        slCheckClaimedAt: null,
+        slCheckNote: null,
+        shiftLeaderApproved: null,
+        assignedSupervisorId: null,
+        onHubStatusBoard: false,
+        fieldWorkStatus: FieldWorkStatus.UNCOMPLETED,
+        supervisorStatus: null,
+        opsManagerComment: comment,
+      },
+      include: hubMapIncludes,
+    });
+    await logEvent(
+      mapId,
+      user.id,
+      "sl_check_corrections",
+      `${user.name} did not accept ${map.mapNumber} — sent to Intake: ${cleanNote}`
+    );
+    return updated;
+  }
+
+  // Asked while under a supervisor — stay on that supervisor's column
+  const updated = await prisma.map.update({
+    where: { id: mapId },
+    data: {
+      slCheckStatus: null,
+      slCheckRequestedById: null,
+      slCheckClaimedById: null,
+      slCheckRequestedAt: null,
+      slCheckClaimedAt: null,
+      slCheckNote: null,
+      shiftLeaderApproved: null,
+      onHubStatusBoard: false,
+      fieldWorkStatus: FieldWorkStatus.UNCOMPLETED,
+      supervisorStatus: null,
+      opsManagerComment: comment,
+    },
+    include: hubMapIncludes,
+  });
+  await logEvent(
+    mapId,
+    user.id,
+    "sl_check_corrections",
+    `${user.name} did not accept ${map.mapNumber} — stays with supervisor: ${cleanNote}`
+  );
+  return updated;
+}
+
+/** Cancel an open check before anyone takes it (requesting supervisor or OPS). */
+export async function cancelSlCheck(mapId: string, user: AuthUser) {
+  const map = await prisma.map.findUnique({ where: { id: mapId } });
+  if (!map) throw new Error("Map not found");
+  const isRequester = map.slCheckRequestedById === user.id || map.assignedSupervisorId === user.id;
+  if (!isRequester && !isOpsManager(user)) {
+    throw new Error("Not allowed to cancel this SL check");
+  }
+  if (map.slCheckStatus === SlCheckStatus.CLAIMED) {
+    throw new Error("Shift leader must answer Yes or No — cancel is only before someone takes the check");
+  }
+  if (map.slCheckStatus !== SlCheckStatus.OPEN) {
+    throw new Error("Nothing to cancel");
+  }
+
+  const updated = await prisma.map.update({
+    where: { id: mapId },
+    data: {
+      slCheckStatus: null,
+      slCheckRequestedById: null,
+      slCheckClaimedById: null,
+      slCheckRequestedAt: null,
+      slCheckClaimedAt: null,
+      slCheckNote: null,
+    },
+    include: hubMapIncludes,
+  });
+  await logEvent(mapId, user.id, "sl_check_cancelled", `${user.name} cancelled the SL check request`);
+  return updated;
 }
 
 /** Backfill phase history from map creation for maps missing entries */

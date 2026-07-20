@@ -1,17 +1,21 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { api } from "../../api";
 import { useAuth } from "../../context/AuthContext";
 import type { MapRecord, TeamMember } from "../../types";
-import { ROLE_LABELS } from "../../types";
 import {
   FIELD_WORK_STATUS_LABELS,
   fieldWorkStatusTone,
   formatFieldDateTime,
   getSupervisorFieldStatus,
 } from "../../lib/supervisorDisplay";
+import {
+  isOnShiftToday,
+  isSupervisorRole,
+  memberIsShiftLeader,
+} from "../../lib/roles";
+import { formatShiftStart } from "../../lib/hubDisplay";
 import { Badge } from "@/components/common/Badge";
-import { Modal } from "@/components/common/Modal";
+import { SwapOffersPanel } from "./SwapOffersPanel";
 
 interface Props {
   team: TeamMember[];
@@ -20,17 +24,45 @@ interface Props {
   onRefresh: () => void;
 }
 
+type TeamTab = "on_shift" | "all";
+
 export function SupervisorTeamPanel({ team, teamFieldMaps, myMaps, onRefresh }: Props) {
   const { user } = useAuth();
+  const [tab, setTab] = useState<TeamTab>("on_shift");
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [swapOpen, setSwapOpen] = useState(false);
-  const [swapTargetId, setSwapTargetId] = useState("");
-  const [selectedMapIds, setSelectedMapIds] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
 
-  const supervisors = team.filter((m) => m.roles.some((r) => r.role === "SUPERVISOR"));
-  const otherSupervisors = supervisors.filter((m) => m.id !== user?.id);
+  const supervisors = useMemo(
+    () => team.filter((m) => m.roles.some((r) => isSupervisorRole(r.role))),
+    [team]
+  );
+
+  const onShiftToday = useMemo(
+    () =>
+      supervisors
+        .filter((m) => isOnShiftToday(m.shiftStartedAt))
+        .sort((a, b) => {
+          const aLeader = memberIsShiftLeader(a) ? 0 : 1;
+          const bLeader = memberIsShiftLeader(b) ? 0 : 1;
+          return (
+            aLeader - bLeader ||
+            (a.shiftStartedAt ?? "").localeCompare(b.shiftStartedAt ?? "") ||
+            a.name.localeCompare(b.name)
+          );
+        }),
+    [supervisors]
+  );
+
+  const allOps = useMemo(
+    () =>
+      [...supervisors].sort((a, b) => {
+        const aOn = isOnShiftToday(a.shiftStartedAt) ? 0 : 1;
+        const bOn = isOnShiftToday(b.shiftStartedAt) ? 0 : 1;
+        return aOn - bOn || a.name.localeCompare(b.name);
+      }),
+    [supervisors]
+  );
+
+  const members = tab === "on_shift" ? onShiftToday : allOps;
 
   const mapsForMember = useMemo(() => {
     if (!selectedId) return [];
@@ -42,8 +74,24 @@ export function SupervisorTeamPanel({ team, teamFieldMaps, myMaps, onRefresh }: 
   }, [teamFieldMaps, selectedId]);
 
   const myActiveMaps = useMemo(
-    () => myMaps.filter((m) => getSupervisorFieldStatus(m) === "UNCOMPLETED"),
-    [myMaps]
+    () =>
+      myMaps.filter(
+        (m) =>
+          getSupervisorFieldStatus(m) === "UNCOMPLETED" &&
+          m.assignedSupervisor?.id === user?.id
+      ),
+    [myMaps, user?.id]
+  );
+
+  const otherActiveMaps = useMemo(
+    () =>
+      teamFieldMaps.filter(
+        (m) =>
+          m.assignedSupervisor &&
+          m.assignedSupervisor.id !== user?.id &&
+          getSupervisorFieldStatus(m) === "UNCOMPLETED"
+      ),
+    [teamFieldMaps, user?.id]
   );
 
   const activeCountBySupervisor = useMemo(() => {
@@ -59,86 +107,102 @@ export function SupervisorTeamPanel({ team, teamFieldMaps, myMaps, onRefresh }: 
     return counts;
   }, [teamFieldMaps]);
 
-  const selectedMember = supervisors.find((m) => m.id === selectedId) ?? null;
+  const selectedMember = members.find((m) => m.id === selectedId) ?? null;
 
-  function openSwap() {
-    setSelectedMapIds(new Set(myActiveMaps.map((m) => m.id)));
-    setSwapTargetId(otherSupervisors[0]?.id ?? "");
-    setSwapOpen(true);
-    setError("");
-  }
-
-  async function confirmSwap() {
-    if (!swapTargetId || selectedMapIds.size === 0) {
-      setError("Pick a teammate and at least one map.");
-      return;
-    }
-    setLoading(true);
-    setError("");
-    try {
-      await api.swapSupervisorMaps([...selectedMapIds], swapTargetId);
-      setSwapOpen(false);
-      onRefresh();
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }
+  const tabs: { id: TeamTab; label: string; count: number }[] = [
+    { id: "on_shift", label: "On shift today", count: onShiftToday.length },
+    { id: "all", label: "All supervisors", count: allOps.length },
+  ];
 
   return (
     <section className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h2 className="text-lg font-semibold">Team</h2>
-          <p className="text-sm text-muted mt-0.5">All supervisors — tap a member to see their active maps</p>
-        </div>
-        {myActiveMaps.length > 0 && otherSupervisors.length > 0 && (
+      <SwapOffersPanel
+        myActiveMaps={myActiveMaps}
+        otherActiveMaps={otherActiveMaps}
+        onChanged={onRefresh}
+      />
+
+      <div className="flex flex-wrap gap-2">
+        {tabs.map((t) => (
           <button
+            key={t.id}
             type="button"
-            onClick={openSwap}
-            className="px-4 py-2 text-sm font-medium rounded-xl bg-amber-500 text-white hover:bg-amber-600"
+            onClick={() => {
+              setTab(t.id);
+              setSelectedId(null);
+            }}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium inline-flex items-center gap-2 ${
+              tab === t.id
+                ? "bg-brand-600 text-white"
+                : "bg-white border border-border text-slate-600 hover:bg-brand-50"
+            }`}
           >
-            Call for a swap
-          </button>
-        )}
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {supervisors.map((member) => {
-          const isMe = member.id === user?.id;
-          const active = activeCountBySupervisor.get(member.id) ?? 0;
-          const selected = selectedId === member.id;
-
-          return (
-            <button
-              key={member.id}
-              type="button"
-              onClick={() => setSelectedId(selected ? null : member.id)}
-              className={`text-left bg-card border rounded-xl p-4 shadow-sm transition-all ${
-                selected
-                  ? "border-brand-500 ring-2 ring-brand-200"
-                  : "border-border hover:border-brand-300"
+            {t.label}
+            <span
+              className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
+                tab === t.id ? "bg-white/20 text-white" : "bg-slate-100 text-slate-600"
               }`}
             >
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <p className="font-semibold">{member.name}</p>
-                  <p className="text-xs text-muted">{member.email}</p>
-                </div>
-                <span className="text-xs font-medium text-brand-700 bg-brand-50 px-2 py-1 rounded-full">
-                  {ROLE_LABELS.SUPERVISOR}
-                </span>
-              </div>
-              <p className="text-sm text-muted mt-3">
-                Active maps:{" "}
-                <span className="font-semibold text-slate-800">{active}</span>
-              </p>
-              {isMe && <p className="text-xs text-brand-600 mt-2 font-medium">You</p>}
-            </button>
-          );
-        })}
+              {t.count}
+            </span>
+          </button>
+        ))}
       </div>
+
+      {tab === "on_shift" && onShiftToday.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-border bg-slate-50 px-4 py-10 text-center">
+          <p className="text-sm font-medium text-slate-800">No one on shift today yet</p>
+        </div>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {members.map((member) => {
+            const isMe = member.id === user?.id;
+            const active = activeCountBySupervisor.get(member.id) ?? 0;
+            const selected = selectedId === member.id;
+            const isSl = memberIsShiftLeader(member);
+            const onShift = isOnShiftToday(member.shiftStartedAt);
+
+            return (
+              <button
+                key={member.id}
+                type="button"
+                onClick={() => setSelectedId(selected ? null : member.id)}
+                className={`text-left bg-card border rounded-xl p-4 shadow-sm transition-all ${
+                  selected
+                    ? "border-brand-500 ring-2 ring-brand-200"
+                    : "border-border hover:border-brand-300"
+                }`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="font-semibold">{member.name}</p>
+                    <p className="text-xs text-muted">{member.email}</p>
+                  </div>
+                  <span
+                    className={`text-xs font-medium px-2 py-1 rounded-full ${
+                      isSl
+                        ? "text-violet-800 bg-violet-50"
+                        : "text-brand-700 bg-brand-50"
+                    }`}
+                  >
+                    {isSl ? "Shift leader" : "Supervisor"}
+                  </span>
+                </div>
+                <p className="text-sm text-muted mt-3">
+                  Active maps:{" "}
+                  <span className="font-semibold text-slate-800">{active}</span>
+                </p>
+                {onShift && member.shiftStartedAt && (
+                  <p className="text-xs text-emerald-700 mt-1 font-medium">
+                    On shift · {formatShiftStart(member.shiftStartedAt)}
+                  </p>
+                )}
+                {isMe && <p className="text-xs text-brand-600 mt-2 font-medium">You</p>}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {selectedMember && (
         <div className="bg-white border border-border rounded-xl overflow-hidden">
@@ -170,6 +234,11 @@ export function SupervisorTeamPanel({ team, teamFieldMaps, myMaps, onRefresh }: 
                         >
                           {map.mapNumber}
                         </Link>
+                        {map.swapBatchId && (
+                          <span className="ml-2 text-[10px] font-semibold text-amber-700">
+                            Swap open
+                          </span>
+                        )}
                       </td>
                       <td className="px-4 py-3">{map.client}</td>
                       <td className="px-4 py-3 text-muted">
@@ -189,66 +258,6 @@ export function SupervisorTeamPanel({ team, teamFieldMaps, myMaps, onRefresh }: 
             </table>
           )}
         </div>
-      )}
-
-      {swapOpen && (
-      <Modal onClose={() => setSwapOpen(false)} title="Call for a swap">
-        <p className="text-sm text-muted mb-4">
-          Leaving your shift? Move your maps to a teammate. Changes update immediately in Maps.
-        </p>
-        {error && (
-          <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2 mb-3">{error}</p>
-        )}
-        <label className="block text-sm font-medium mb-1">Transfer to</label>
-        <select
-          value={swapTargetId}
-          onChange={(e) => setSwapTargetId(e.target.value)}
-          className="w-full border border-border rounded-lg px-3 py-2 text-sm mb-4"
-        >
-          {otherSupervisors.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name}
-            </option>
-          ))}
-        </select>
-        <p className="text-sm font-medium mb-2">Your maps to transfer</p>
-        <div className="space-y-2 max-h-48 overflow-y-auto mb-4">
-          {myActiveMaps.map((map) => (
-            <label key={map.id} className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={selectedMapIds.has(map.id)}
-                onChange={(e) => {
-                  setSelectedMapIds((prev) => {
-                    const next = new Set(prev);
-                    if (e.target.checked) next.add(map.id);
-                    else next.delete(map.id);
-                    return next;
-                  });
-                }}
-              />
-              {map.mapNumber} — {map.client}
-            </label>
-          ))}
-        </div>
-        <div className="flex gap-2 justify-end">
-          <button
-            type="button"
-            onClick={() => setSwapOpen(false)}
-            className="px-4 py-2 text-sm text-muted"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            disabled={loading}
-            onClick={confirmSwap}
-            className="px-4 py-2 text-sm font-medium rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50"
-          >
-            {loading ? "Swapping…" : "Confirm swap"}
-          </button>
-        </div>
-      </Modal>
       )}
     </section>
   );

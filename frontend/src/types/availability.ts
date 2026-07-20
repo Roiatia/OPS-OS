@@ -34,6 +34,7 @@ export interface AvailabilitySubmission {
   id: string;
   weekStart: string;
   fridayContract: boolean;
+  sundayOk: boolean;
   hagimOk: boolean;
   note: string | null;
   submittedAt: string | null;
@@ -108,6 +109,8 @@ export interface ShiftPlanDay {
   assignments: ShiftPlanAssignment[];
   ok: boolean;
   issues: string[];
+  /** TEMPORARY auto-plan logic explainers — remove later */
+  logicNotes?: string[];
 }
 
 export interface ShiftPlanStaff {
@@ -115,18 +118,54 @@ export interface ShiftPlanStaff {
   name: string;
   isShiftLeader: boolean;
   submitted: boolean;
-  days: { dayOfWeek: number; canWork: boolean }[];
+  fridayContract?: boolean;
+  hagimOk?: boolean;
+  supervisorRating?: number | null;
+  allowedClients?: string[];
+  /** How many Sun–Fri days they marked available */
+  daysOffered?: number;
+  days: {
+    dayOfWeek: number;
+    canWork: boolean;
+    allDay?: boolean;
+    startMinutes?: number | null;
+    endMinutes?: number | null;
+    startMinutes2?: number | null;
+    endMinutes2?: number | null;
+    hoursLabel?: string;
+  }[];
+}
+
+export type ScheduleTaskKind =
+  | "MAP"
+  | "HAPPY_HOUR"
+  | "COMPANY_MEETING"
+  | "MAPPING_REFRESH";
+
+export interface ShiftPlanMap {
+  id: string;
+  mapNumber: string;
+  client: string;
+  /** Schedule task kind — map / happy hour / company meeting / mapping refresh */
+  taskKind?: ScheduleTaskKind;
+  fieldDate?: string | null;
+  mapperName?: string | null;
+  startMinutes?: number | null;
+  /** Scheduled event end (minutes). Assignees still stay ≥6h even if the event is shorter. */
+  endMinutes?: number | null;
 }
 
 export interface ShiftPlanView {
   weekStart: string;
   weekLabel: string;
-  mapsPerDay: { dayOfWeek: number; count: number; maps: { id: string; mapNumber: string; client: string }[] }[];
+  mapsPerDay: { dayOfWeek: number; count: number; maps: ShiftPlanMap[] }[];
   staff: ShiftPlanStaff[];
   assignments: ShiftPlanAssignment[];
   dayPlans: ShiftPlanDay[];
   warnings: string[];
   saved: boolean;
+  published: boolean;
+  publishedAt: string | null;
 }
 
 export interface ShiftPlanSaveResult {
@@ -134,4 +173,55 @@ export interface ShiftPlanSaveResult {
   dayPlans: ShiftPlanDay[];
   warnings: string[];
   saved: boolean;
+  published?: boolean;
+  publishedAt?: string | null;
+}
+
+export interface PublishedScheduleView {
+  weekStart: string;
+  weekLabel: string;
+  published: boolean;
+  publishedAt: string | null;
+  mapsPerDay: { dayOfWeek: number; count: number; maps: { id: string; mapNumber: string; client: string }[] }[];
+  assignments: ShiftPlanAssignment[];
+  dayPlans: ShiftPlanDay[];
+  warnings: string[];
+  viewerUserId: string;
+}
+
+export type ShiftChangeStatus =
+  | "PENDING_COUNTERPART"
+  | "PENDING_OPS"
+  | "ACCEPTED"
+  | "REJECTED"
+  | "CANCELLED";
+
+export interface ShiftChangeCandidate {
+  userId: string;
+  name: string;
+  email: string;
+  isShiftLeader: boolean;
+  hoursLabel: string | null;
+}
+
+export interface ShiftChangeRequest {
+  id: string;
+  planId: string;
+  weekStart: string;
+  dayOfWeek: number;
+  status: ShiftChangeStatus;
+  note: string | null;
+  counterpartAt: string | null;
+  opsAt: string | null;
+  createdAt: string;
+  fromUser: { id: string; name: string; email: string };
+  toUser: { id: string; name: string; email: string };
+  opsBy: { id: string; name: string; email: string } | null;
+}
+
+export interface ShiftChangeList {
+  weekStart: string;
+  incoming: ShiftChangeRequest[];
+  outgoing: ShiftChangeRequest[];
+  pendingOps: ShiftChangeRequest[];
 }

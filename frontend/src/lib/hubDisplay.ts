@@ -25,9 +25,11 @@ export function formatShiftStart(iso: string | null | undefined): string {
 
 export function formatMapTime(iso: string | null): string {
   if (!iso) return "—";
-  return new Date(iso).toLocaleTimeString(undefined, {
-    hour: "numeric",
+  return new Date(iso).toLocaleTimeString("en-GB", {
+    timeZone: "Asia/Jerusalem",
+    hour: "2-digit",
     minute: "2-digit",
+    hourCycle: "h23",
   });
 }
 
@@ -41,6 +43,16 @@ export function poolMaps(maps: MapRecord[], onShiftSupervisorIds?: Set<string>):
     }
     return false;
   });
+}
+
+/** Unassigned only (not maps tied to off-shift supervisors). */
+export function unassignedPoolMaps(maps: MapRecord[]): MapRecord[] {
+  return maps.filter(
+    (m) =>
+      m.fieldWorkStatus === "UNCOMPLETED" &&
+      !m.onHubStatusBoard &&
+      !m.assignedSupervisor
+  );
 }
 
 export function supervisorMaps(maps: MapRecord[], supervisorId: string): MapRecord[] {

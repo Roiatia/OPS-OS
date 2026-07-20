@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { api } from "../../api";
-import type { AvailabilityRoster, AvailabilityRosterEntry } from "../../types/availability";
+import { useMemo, useState } from "react";
+import { useAvailabilityRosterQuery } from "@/hooks/queries";
+import type { AvailabilityRosterEntry } from "../../types/availability";
 import {
   AVAILABILITY_DAYS,
   DAY_LABELS,
@@ -28,8 +28,8 @@ function compareRows(a: AvailabilityRosterEntry, b: AvailabilityRosterEntry, sor
     return a.user.name.localeCompare(b.user.name);
   }
   if (sort === "hagim") {
-    const aH = Boolean(a.submission?.hagimOk ?? a.user.hagimOk);
-    const bH = Boolean(b.submission?.hagimOk ?? b.user.hagimOk);
+    const aH = Boolean(a.submission?.fridayContract ?? a.user.fridayContract);
+    const bH = Boolean(b.submission?.fridayContract ?? b.user.fridayContract);
     if (aH !== bH) return aH ? -1 : 1;
     return a.user.name.localeCompare(b.user.name);
   }
@@ -38,9 +38,6 @@ function compareRows(a: AvailabilityRosterEntry, b: AvailabilityRosterEntry, sor
 
 export function OpsAvailabilityRoster() {
   const [weekStart, setWeekStart] = useState(() => defaultSubmissionWeekStart());
-  const [data, setData] = useState<AvailabilityRoster | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
   const [filter, setFilter] = useState<"all" | "submitted" | "missing">(() =>
     isMondayEvening() ? "missing" : "all"
   );
@@ -48,22 +45,10 @@ export function OpsAvailabilityRoster() {
 
   const mondayEvening = isMondayEvening();
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const roster = await api.getAvailabilityRoster(isoWeekStart(weekStart));
-      setData(roster);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, [weekStart]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const rosterQuery = useAvailabilityRosterQuery(isoWeekStart(weekStart));
+  const data = rosterQuery.data ?? null;
+  const loading = rosterQuery.isLoading;
+  const error = rosterQuery.error ? (rosterQuery.error as Error).message : "";
 
   function changeWeek(delta: number) {
     const d = new Date(weekStart);
@@ -111,7 +96,7 @@ export function OpsAvailabilityRoster() {
         </div>
         <button
           type="button"
-          onClick={() => void load()}
+          onClick={() => void rosterQuery.refetch()}
           className="text-sm text-brand-600 hover:underline"
         >
           Refresh
@@ -246,7 +231,9 @@ export function OpsAvailabilityRoster() {
             </thead>
             <tbody className="divide-y divide-border">
               {rows.map(({ user, submission }) => {
-                const hagim = Boolean(submission?.hagimOk ?? user.hagimOk);
+                const hagim = Boolean(
+                  submission?.fridayContract ?? user.fridayContract
+                );
                 return (
                   <tr key={user.id} className="hover:bg-slate-50/50 align-top">
                     <td className="px-3 py-3 font-medium sticky left-0 bg-white">{user.name}</td>

@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { api } from "../api";
+import { useCallback, useEffect, useMemo } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../context/AuthContext";
 import { ActiveMapsTable } from "../components/workflow/ActiveMapsTable";
 import { InspectorInboxTable } from "../components/workflow/InspectorInboxTable";
@@ -8,45 +8,40 @@ import {
   isInspectorInbox,
   isQaActive,
 } from "../lib/activeMapsWorkflow";
-import { useMapsRealtime } from "@/hooks/useMapsRealtime";
-import { applyMapUpsertReplaceOnly, removeMapsById, useDebouncedCallback } from "../lib/mapsLive";
+import { useMapsQuery } from "@/hooks/queries";
+import { queryKeys } from "../lib/mapsCache";
+import { applyMapUpsertReplaceOnly } from "../lib/mapsLive";
 import type { MapRecord } from "../types";
 
 export function InspectorDashboardPage() {
   const { user } = useAuth();
-  const [maps, setMaps] = useState<MapRecord[]>([]);
-  const [loading, setLoading] = useState(true);
+  const qc = useQueryClient();
+  const { data, isLoading } = useMapsQuery();
+  const maps = useMemo(() => data ?? [], [data]);
+  const loading = isLoading;
 
-  const load = useCallback((silent = false) => {
-    if (!silent) setLoading(true);
-    return api
-      .getMaps()
-      .then(setMaps)
-      .finally(() => {
-        if (!silent) setLoading(false);
-      });
-  }, []);
-
+  // Silent 60s backstop — realtime carries most changes.
   useEffect(() => {
-    load();
-  }, [load]);
-
-  useEffect(() => {
-    const interval = setInterval(load, 60_000);
+    const interval = setInterval(
+      () => void qc.invalidateQueries({ queryKey: queryKeys.maps }),
+      60_000
+    );
     return () => clearInterval(interval);
-  }, [load]);
+  }, [qc]);
 
-  const reload = useDebouncedCallback(() => load(true));
+  const load = useCallback(
+    () => void qc.invalidateQueries({ queryKey: queryKeys.maps }),
+    [qc]
+  );
 
-  const patchMap = useCallback((updated: MapRecord) => {
-    setMaps((prev) => applyMapUpsertReplaceOnly(prev, [updated]));
-  }, []);
-
-  useMapsRealtime({
-    onUpsert: (incoming) => setMaps((prev) => applyMapUpsertReplaceOnly(prev, incoming)),
-    onDeleted: (ids) => setMaps((prev) => removeMapsById(prev, ids)),
-    onInvalidate: reload,
-  });
+  const patchMap = useCallback(
+    (updated: MapRecord) => {
+      qc.setQueryData<MapRecord[]>(queryKeys.maps, (prev) =>
+        prev ? applyMapUpsertReplaceOnly(prev, [updated]) : prev
+      );
+    },
+    [qc]
+  );
 
   const inbox = useMemo(
     () => maps.filter((m) => isInspectorInbox(m, user!.id)),
@@ -83,7 +78,7 @@ export function InspectorDashboardPage() {
             </p>
             <InspectorInboxTable
               maps={inbox}
-              onRefresh={() => load(true)}
+              onRefresh={load}
               onPatch={patchMap}
             />
           </section>
@@ -101,7 +96,7 @@ export function InspectorDashboardPage() {
             <ActiveMapsTable
               maps={active}
               role="inspector"
-              onRefresh={() => load(true)}
+              onRefresh={load}
               onPatch={patchMap}
             />
           </section>
@@ -112,39 +107,33 @@ export function InspectorDashboardPage() {
 }
 
 export function QaDashboardPage() {
-  const [maps, setMaps] = useState<MapRecord[]>([]);
-  const [loading, setLoading] = useState(true);
+  const qc = useQueryClient();
+  const { data, isLoading } = useMapsQuery();
+  const maps = useMemo(() => data ?? [], [data]);
+  const loading = isLoading;
 
-  const load = useCallback((silent = false) => {
-    if (!silent) setLoading(true);
-    return api
-      .getMaps()
-      .then(setMaps)
-      .finally(() => {
-        if (!silent) setLoading(false);
-      });
-  }, []);
-
+  // Silent 60s backstop — realtime carries most changes.
   useEffect(() => {
-    load();
-  }, [load]);
-
-  useEffect(() => {
-    const interval = setInterval(load, 60_000);
+    const interval = setInterval(
+      () => void qc.invalidateQueries({ queryKey: queryKeys.maps }),
+      60_000
+    );
     return () => clearInterval(interval);
-  }, [load]);
+  }, [qc]);
 
-  const reload = useDebouncedCallback(() => load(true));
+  const load = useCallback(
+    () => void qc.invalidateQueries({ queryKey: queryKeys.maps }),
+    [qc]
+  );
 
-  const patchMap = useCallback((updated: MapRecord) => {
-    setMaps((prev) => applyMapUpsertReplaceOnly(prev, [updated]));
-  }, []);
-
-  useMapsRealtime({
-    onUpsert: (incoming) => setMaps((prev) => applyMapUpsertReplaceOnly(prev, incoming)),
-    onDeleted: (ids) => setMaps((prev) => removeMapsById(prev, ids)),
-    onInvalidate: reload,
-  });
+  const patchMap = useCallback(
+    (updated: MapRecord) => {
+      qc.setQueryData<MapRecord[]>(queryKeys.maps, (prev) =>
+        prev ? applyMapUpsertReplaceOnly(prev, [updated]) : prev
+      );
+    },
+    [qc]
+  );
 
   const active = useMemo(() => maps.filter(isQaActive), [maps]);
 
@@ -170,7 +159,7 @@ export function QaDashboardPage() {
           <ActiveMapsTable
             maps={active}
             role="qa"
-            onRefresh={() => load(true)}
+            onRefresh={load}
             onPatch={patchMap}
           />
         </section>

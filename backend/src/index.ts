@@ -64,3 +64,14 @@ server.listen(port, () => {
   console.log(`Realtime WebSocket on ws://localhost:${port}/api/ws`);
   console.log("Daily reports scheduled for 08:00 local time (previous day)");
 });
+
+// Crash guards: log loudly and keep the server alive rather than letting a
+// stray unhandled error take down the process. In dev this matters because a
+// crash would leave port 3001 dead until the next file save restarts tsx watch.
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled promise rejection:", reason);
+});
+
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught exception:", err);
+});

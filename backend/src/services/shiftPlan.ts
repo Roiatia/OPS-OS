@@ -1,6 +1,6 @@
 import { RoleName } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
-import { formatWeekRange, weekStartSunday, isNightShift } from "../domain/availabilityRules.js";
+import { formatWeekRange, weekStartSunday, isNightShift, availableDaysCount, formatAvailabilityWindow, clockMinutesFromDate } from "../domain/availabilityRules.js";
 import {
   autoPlanShifts,
   validatePlanAssignments,
@@ -8,7 +8,7 @@ import {
   type PlannerStaff,
 } from "../domain/shiftPlanner.js";
 import type { AuthUser } from "../lib/types.js";
-import { supervisorRolesWhere, userHasOpsManagerRole } from "../domain/roles.js";
+import { supervisorRolesWhere, userHasOpsManagerRole, userHasSupervisorRole } from "../domain/roles.js";
 import { getPriorWeekNightCount } from "./availability.js";
 
 function parseWeekStart(raw?: string): Date {
@@ -43,7 +43,7 @@ async function loadPlannerContext(weekStart: Date) {
 
   const supervisors = await prisma.user.findMany({
     where: supervisorRolesWhere(),
-    include: { roles: true },
+    include: { roles: true, supervisorClients: true },
     orderBy: { name: "asc" },
   });
 
@@ -58,16 +58,43 @@ async function loadPlannerContext(weekStart: Date) {
       phase: "FIELD",
       fieldDate: { gte: weekStart, lt: weekEnd },
     },
-    select: { id: true, mapNumber: true, client: true, fieldDate: true },
+    select: {
+      id: true,
+      mapNumber: true,
+      client: true,
+      taskKind: true,
+      taskEndMinutes: true,
+      fieldDate: true,
+      mapperName: true,
+    },
     orderBy: { fieldDate: "asc" },
   });
 
   const mapsPerDay: Record<number, number> = {};
-  const mapsByDay: Record<number, { id: string; mapNumber: string; client: string }[]> = {};
+  const mapsByDay: Record<
+    number,
+    {
+      id: string;
+      mapNumber: string;
+      client: string;
+      taskKind: "MAP" | "HAPPY_HOUR" | "COMPANY_MEETING" | "MAPPING_REFRESH";
+      fieldDate: string | null;
+      mapperName: string | null;
+      startMinutes: number | null;
+      endMinutes: number | null;
+    }[]
+  > = {};
   for (const day of [0, 1, 2, 3, 4, 5]) {
     mapsPerDay[day] = 0;
     mapsByDay[day] = [];
   }
+
+  const taskKindOrder: Record<string, number> = {
+    MAP: 0,
+    MAPPING_REFRESH: 1,
+    HAPPY_HOUR: 2,
+    COMPANY_MEETING: 3,
+  };
 
   for (const map of maps) {
     if (!map.fieldDate) continue;
@@ -78,18 +105,38 @@ async function loadPlannerContext(weekStart: Date) {
       id: map.id,
       mapNumber: map.mapNumber,
       client: map.client,
+      taskKind: map.taskKind,
+      fieldDate: map.fieldDate.toISOString(),
+      mapperName: map.mapperName,
+      startMinutes: clockMinutesFromDate(map.fieldDate),
+      endMinutes: map.taskEndMinutes ?? null,
     });
+  }
+
+  for (const day of [0, 1, 2, 3, 4, 5]) {
+    mapsByDay[day].sort(
+      (a, b) =>
+        (taskKindOrder[a.taskKind] ?? 99) - (taskKindOrder[b.taskKind] ?? 99) ||
+        (a.startMinutes ?? 0) - (b.startMinutes ?? 0) ||
+        a.mapNumber.localeCompare(b.mapNumber)
+    );
   }
 
   const staff: PlannerStaff[] = await Promise.all(
     supervisors.map(async (sup) => {
       const sub = byUserId.get(sup.id);
       const priorWeekNights = await getPriorWeekNightCount(sup.id, weekStart);
+      const isShiftLeader = sup.roles.some((r) => r.role === RoleName.SUPERVISOR_SHIFT_LEADER);
       return {
         userId: sup.id,
         name: sup.name,
-        isShiftLeader: sup.roles.some((r) => r.role === RoleName.SUPERVISOR_SHIFT_LEADER),
+        isShiftLeader,
         submitted: Boolean(sub?.submittedAt),
+        fridayContract: sub?.fridayContract ?? sup.fridayContract,
+        hagimOk: sub?.hagimOk ?? sup.hagimOk,
+        // SLs are senior supervisors — always capacity as rating 5
+        supervisorRating: isShiftLeader ? 5 : sup.supervisorRating,
+        allowedClients: sup.supervisorClients.map((c) => c.client),
         days:
           sub?.days.map((d) => ({
             dayOfWeek: d.dayOfWeek,
@@ -97,6 +144,8 @@ async function loadPlannerContext(weekStart: Date) {
             allDay: d.allDay,
             startMinutes: d.startMinutes,
             endMinutes: d.endMinutes,
+            startMinutes2: d.startMinutes2,
+            endMinutes2: d.endMinutes2,
             isNight:
               d.canWork &&
               !d.allDay &&
@@ -109,7 +158,7 @@ async function loadPlannerContext(weekStart: Date) {
     })
   );
 
-  return { staff, mapsPerDay, mapsByDay };
+  return { staff, mapsPerDay, mapsByDay, weekStart };
 }
 
 function serializeAssignments(
@@ -158,6 +207,7 @@ export async function getShiftPlan(user: AuthUser, weekStartRaw?: string) {
     staff,
     assignments,
     mapsPerDay,
+    weekStart,
   });
 
   return {
@@ -168,17 +218,30 @@ export async function getShiftPlan(user: AuthUser, weekStartRaw?: string) {
       count,
       maps: mapsByDay[Number(day)] ?? [],
     })),
-    staff: staff.map((s) => ({
-      userId: s.userId,
-      name: s.name,
-      isShiftLeader: s.isShiftLeader,
-      submitted: s.submitted,
-      days: s.days,
-    })),
+    staff: staff.map((s) => {
+      const daysOffered = availableDaysCount(s.days);
+      return {
+        userId: s.userId,
+        name: s.name,
+        isShiftLeader: s.isShiftLeader,
+        submitted: s.submitted,
+        fridayContract: s.fridayContract,
+        hagimOk: s.hagimOk,
+        supervisorRating: s.supervisorRating,
+        allowedClients: s.allowedClients,
+        daysOffered,
+        days: s.days.map((d) => ({
+          ...d,
+          hoursLabel: formatAvailabilityWindow(d),
+        })),
+      };
+    }),
     assignments,
     dayPlans,
     warnings,
     saved: Boolean(plan),
+    published: Boolean(plan?.publishedAt),
+    publishedAt: plan?.publishedAt?.toISOString() ?? null,
   };
 }
 
@@ -197,6 +260,7 @@ export async function saveShiftPlan(
     staff,
     assignments: data.assignments,
     mapsPerDay,
+    weekStart,
   });
 
   const plan = await prisma.shiftPlan.upsert({
@@ -204,6 +268,7 @@ export async function saveShiftPlan(
     create: {
       weekStart,
       createdById: user.id,
+      publishedAt: new Date(),
       assignments: {
         create: data.assignments.map((a) => ({
           dayOfWeek: a.dayOfWeek,
@@ -213,6 +278,7 @@ export async function saveShiftPlan(
     },
     update: {
       createdById: user.id,
+      publishedAt: new Date(),
       assignments: {
         deleteMany: {},
         create: data.assignments.map((a) => ({
@@ -237,18 +303,115 @@ export async function saveShiftPlan(
     staff
   );
 
-  const { dayPlans } = validatePlanAssignments({ staff, assignments, mapsPerDay });
+  const { dayPlans } = validatePlanAssignments({ staff, assignments, mapsPerDay, weekStart });
 
-  return { assignments, dayPlans, warnings, saved: true };
+  return {
+    assignments,
+    dayPlans,
+    warnings,
+    saved: true,
+    published: true,
+    publishedAt: plan.publishedAt?.toISOString() ?? new Date().toISOString(),
+  };
 }
 
-export async function autoGenerateShiftPlan(user: AuthUser, weekStartRaw?: string) {
+export async function autoGenerateShiftPlan(
+  user: AuthUser,
+  weekStartRaw?: string,
+  opts?: {
+    dayOfWeek?: number;
+    lockedAssignments?: {
+      dayOfWeek: number;
+      userId: string;
+      userName: string;
+      isShiftLeader: boolean;
+    }[];
+    variant?: number;
+    avoidUserIds?: string[];
+  }
+) {
   if (!userHasOpsManagerRole(user)) {
     throw new Error("Only OPS managers can plan shifts");
   }
 
   const weekStart = parseWeekStart(weekStartRaw);
-  const { staff, mapsPerDay } = await loadPlannerContext(weekStart);
-  const { assignments, dayPlans, warnings } = autoPlanShifts({ staff, mapsPerDay });
-  return { assignments, dayPlans, warnings };
+  const { staff, mapsPerDay, mapsByDay } = await loadPlannerContext(weekStart);
+
+  const dayOfWeek = opts?.dayOfWeek;
+  const daysToPlan =
+    dayOfWeek != null && dayOfWeek >= 0 && dayOfWeek <= 5 ? [dayOfWeek] : undefined;
+
+  const lockedAssignments = daysToPlan
+    ? (opts?.lockedAssignments ?? []).filter((a) => a.dayOfWeek !== dayOfWeek)
+    : undefined;
+
+  const { assignments, dayPlans, warnings } = autoPlanShifts({
+    staff,
+    mapsPerDay,
+    mapsByDay,
+    weekStart,
+    daysToPlan,
+    lockedAssignments,
+    variant: opts?.variant,
+    avoidUserIds: opts?.avoidUserIds,
+  });
+  return { assignments, dayPlans, warnings, published: false };
+}
+
+/**
+ * Published weekly schedule — visible to OPS, supervisors, and shift leaders.
+ * Returns empty assignments until OPS saves (publishes) the plan.
+ */
+export async function getPublishedSchedule(user: AuthUser, weekStartRaw?: string) {
+  if (!userHasOpsManagerRole(user) && !userHasSupervisorRole(user)) {
+    throw new Error("Not allowed to view the shift schedule");
+  }
+
+  const weekStart = parseWeekStart(weekStartRaw);
+  const { staff, mapsPerDay, mapsByDay } = await loadPlannerContext(weekStart);
+
+  const plan = await prisma.shiftPlan.findUnique({
+    where: { weekStart },
+    include: {
+      assignments: {
+        include: { user: { select: { id: true, name: true } } },
+        orderBy: [{ dayOfWeek: "asc" }, { user: { name: "asc" } }],
+      },
+    },
+  });
+
+  const published = Boolean(plan?.publishedAt);
+  const assignments = published
+    ? serializeAssignments(
+        plan!.assignments.map((a) => ({
+          dayOfWeek: a.dayOfWeek,
+          userId: a.userId,
+          user: a.user,
+        })),
+        staff
+      )
+    : [];
+
+  const { dayPlans, warnings } = validatePlanAssignments({
+    staff,
+    assignments,
+    mapsPerDay,
+    weekStart,
+  });
+
+  return {
+    weekStart: toIsoDate(weekStart),
+    weekLabel: formatWeekRange(weekStart),
+    published,
+    publishedAt: plan?.publishedAt?.toISOString() ?? null,
+    mapsPerDay: Object.entries(mapsPerDay).map(([day, count]) => ({
+      dayOfWeek: Number(day),
+      count,
+      maps: (mapsByDay[Number(day)] ?? []).slice(0, 5),
+    })),
+    assignments,
+    dayPlans,
+    warnings: published ? warnings : [],
+    viewerUserId: user.id,
+  };
 }

@@ -127,6 +127,37 @@ router.post(
   }
 );
 
+router.post(
+  "/bulk-task-station",
+  requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN),
+  async (req, res) => {
+    try {
+      const { mapIds, task, station } = req.body as {
+        mapIds?: string[];
+        task?: string;
+        station?: string;
+      };
+      if (!mapIds?.length) {
+        res.status(400).json({ error: "mapIds required" });
+        return;
+      }
+      const result = await workflow.bulkSetMapTaskStation(
+        mapIds,
+        {
+          ...(task !== undefined ? { task: task as import("@prisma/client").MapTask } : {}),
+          ...(station !== undefined
+            ? { station: station as import("@prisma/client").MapStation }
+            : {}),
+        },
+        (req as AuthedRequest).user
+      );
+      res.json(result);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
 router.get("/hub", requireRoles(RoleName.OPS_ADMIN, RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (req, res) => {
   try {
     const user = (req as AuthedRequest).user;
@@ -175,7 +206,7 @@ router.patch("/:id/hub", requireRoles(RoleName.OPS_ADMIN, RoleName.SUPERVISOR, R
       returnVisitAt?: string | null;
     };
     const map = await workflow.updateHubMap(
-      req.params.id,
+      req.params.id as string,
       {
         fieldWorkStatus,
         fieldProgressPercent,
@@ -193,6 +224,87 @@ router.patch("/:id/hub", requireRoles(RoleName.OPS_ADMIN, RoleName.SUPERVISOR, R
   }
 });
 
+router.post(
+  "/:id/mapper-not-arrived",
+  requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER),
+  async (req, res) => {
+    try {
+      const map = await workflow.reportMapperNotArrived(
+        String(req.params.id),
+        (req as AuthedRequest).user
+      );
+      res.json(map);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+router.post(
+  "/:id/sl-check/request",
+  requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER, RoleName.OPS_ADMIN),
+  async (req, res) => {
+    try {
+      const map = await workflow.requestSlCheck(req.params.id as string, (req as AuthedRequest).user);
+      res.json(map);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+router.post(
+  "/:id/sl-check/claim",
+  requireRoles(RoleName.SUPERVISOR_SHIFT_LEADER, RoleName.OPS_ADMIN),
+  async (req, res) => {
+    try {
+      const map = await workflow.claimSlCheck(req.params.id as string, (req as AuthedRequest).user);
+      res.json(map);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+router.post(
+  "/:id/sl-check/resolve",
+  requireRoles(RoleName.SUPERVISOR_SHIFT_LEADER, RoleName.OPS_ADMIN),
+  async (req, res) => {
+    try {
+      const { decision, note } = req.body as {
+        decision?: "accept" | "need_corrections";
+        note?: string | null;
+      };
+      if (decision !== "accept" && decision !== "need_corrections") {
+        res.status(400).json({ error: "decision must be accept or need_corrections" });
+        return;
+      }
+      const map = await workflow.resolveSlCheck(
+        req.params.id as string,
+        (req as AuthedRequest).user,
+        decision,
+        note
+      );
+      res.json(map);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+router.post(
+  "/:id/sl-check/cancel",
+  requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER, RoleName.OPS_ADMIN),
+  async (req, res) => {
+    try {
+      const map = await workflow.cancelSlCheck(req.params.id as string, (req as AuthedRequest).user);
+      res.json(map);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
 router.get("/team-field", requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (req, res) => {
   try {
     const maps = await workflow.listTeamFieldMaps((req as AuthedRequest).user);
@@ -202,26 +314,153 @@ router.get("/team-field", requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_
   }
 });
 
-router.post("/swap-supervisor", requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (req, res) => {
+router.post("/swap-offer", requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (req, res) => {
   try {
-    const { mapIds, toSupervisorId } = req.body as {
-      mapIds?: string[];
-      toSupervisorId?: string;
-    };
+    const { mapIds } = req.body as { mapIds?: string[] };
     if (!mapIds?.length) {
       res.status(400).json({ error: "mapIds required" });
       return;
     }
-    if (!toSupervisorId) {
-      res.status(400).json({ error: "toSupervisorId required" });
+    const result = await workflow.createSwapOffer(mapIds, (req as AuthedRequest).user);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+router.get("/swap-offers", requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (req, res) => {
+  try {
+    const [open, mine] = await Promise.all([
+      workflow.listOpenSwapOffers((req as AuthedRequest).user),
+      workflow.listMySwapOffers((req as AuthedRequest).user),
+    ]);
+    res.json({ open, mine });
+  } catch (e) {
+    res.status(403).json({ error: (e as Error).message });
+  }
+});
+
+router.post("/swap-offers/take", requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (req, res) => {
+  try {
+    const { mapIds } = req.body as { mapIds?: string[] };
+    if (!mapIds?.length) {
+      res.status(400).json({ error: "mapIds required" });
       return;
     }
-    const count = await workflow.swapSupervisorMaps(
-      mapIds,
-      toSupervisorId,
-      (req as AuthedRequest).user
-    );
-    res.json({ swapped: count });
+    const taken = await workflow.takeSwapMaps(mapIds, (req as AuthedRequest).user);
+    res.json({ taken });
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+router.post("/help-ask", requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (req, res) => {
+  try {
+    const { mapIds } = req.body as { mapIds?: string[] };
+    if (!mapIds?.length) {
+      res.status(400).json({ error: "mapIds required" });
+      return;
+    }
+    const result = await workflow.createHelpAsk(mapIds, (req as AuthedRequest).user);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+router.get("/help-asks", requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (req, res) => {
+  try {
+    const user = (req as AuthedRequest).user;
+    const [incoming, mine] = await Promise.all([
+      workflow.listIncomingHelpAsks(user),
+      workflow.listMyHelpAsks(user),
+    ]);
+    res.json({ incoming, mine });
+  } catch (e) {
+    res.status(403).json({ error: (e as Error).message });
+  }
+});
+
+router.post("/help-asks/accept", requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (req, res) => {
+  try {
+    const { batchId } = req.body as { batchId?: string };
+    if (!batchId) {
+      res.status(400).json({ error: "batchId required" });
+      return;
+    }
+    const result = await workflow.acceptHelpAsk(batchId, (req as AuthedRequest).user);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+router.post("/help-asks/reject", requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (req, res) => {
+  try {
+    const { batchId } = req.body as { batchId?: string };
+    if (!batchId) {
+      res.status(400).json({ error: "batchId required" });
+      return;
+    }
+    const result = await workflow.rejectHelpAsk(batchId, (req as AuthedRequest).user);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+router.post("/help-asks/cancel", requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (req, res) => {
+  try {
+    const { batchId } = req.body as { batchId?: string };
+    if (!batchId) {
+      res.status(400).json({ error: "batchId required" });
+      return;
+    }
+    const result = await workflow.cancelHelpAsk(batchId, (req as AuthedRequest).user);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+router.post("/swap-offers/decline", requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (req, res) => {
+  try {
+    const { batchId } = req.body as { batchId?: string };
+    if (!batchId) {
+      res.status(400).json({ error: "batchId required" });
+      return;
+    }
+    const result = await workflow.declineSwapOffer(batchId, (req as AuthedRequest).user);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+router.post("/swap-offers/cancel", requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (req, res) => {
+  try {
+    const { batchId } = req.body as { batchId?: string };
+    if (!batchId) {
+      res.status(400).json({ error: "batchId required" });
+      return;
+    }
+    const result = await workflow.cancelSwapOffer(batchId, (req as AuthedRequest).user);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+/** @deprecated — creates an open swap offer (request), not an instant transfer */
+router.post("/swap-supervisor", requireRoles(RoleName.SUPERVISOR, RoleName.SUPERVISOR_SHIFT_LEADER), async (req, res) => {
+  try {
+    const { mapIds } = req.body as { mapIds?: string[]; toSupervisorId?: string };
+    if (!mapIds?.length) {
+      res.status(400).json({ error: "mapIds required" });
+      return;
+    }
+    const result = await workflow.createSwapOffer(mapIds, (req as AuthedRequest).user);
+    res.json({ swapped: result.offered, batchId: result.batchId });
   } catch (e) {
     res.status(400).json({ error: (e as Error).message });
   }
@@ -232,19 +471,20 @@ router.get("/team", requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMI
   res.json(team);
 });
 
-// Combined dashboard payload — one round-trip instead of 3 (maps + history +
-// team + supervisor field maps). Sub-lists the caller may not access resolve
-// to []. Realtime keeps this fresh after the initial load.
+// Combined dashboard payload for first paint — active maps + team + supervisor
+// field maps in one round-trip. History is deliberately NOT included: at scale
+// the archived list dominates the payload, so the frontend loads it lazily via
+// GET /maps/history only when the History tab opens. Sub-lists the caller may
+// not access resolve to []. Realtime keeps this fresh after the initial load.
 router.get("/dashboard", async (req, res) => {
   const user = (req as AuthedRequest).user;
   try {
-    const [maps, history, team, teamFieldMaps] = await Promise.all([
+    const [maps, team, teamFieldMaps] = await Promise.all([
       workflow.listMapsForUser(user),
-      workflow.listHistoryMaps(user).catch(() => []),
       workflow.listTeamMembers().catch(() => []),
       workflow.listTeamFieldMaps(user).catch(() => []),
     ]);
-    res.json({ maps, history, team, teamFieldMaps });
+    res.json({ maps, team, teamFieldMaps });
   } catch (e) {
     res.status(500).json({ error: (e as Error).message });
   }
@@ -421,6 +661,58 @@ router.patch("/:id/inspector-status", requireRoles(RoleName.MAPPING_INSPECTOR), 
     res.status(400).json({ error: (e as Error).message });
   }
 });
+
+// Graphics team leader override of a map's workflow status from the board.
+// Reuses the inspector / QA transitions; the change broadcasts to all clients.
+router.patch(
+  "/:id/leader-status",
+  requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN),
+  async (req, res) => {
+    try {
+      const { action, note } = req.body as {
+        action?: workflow.LeaderStatusAction;
+        note?: string;
+      };
+      if (!action || typeof action !== "object" || typeof action.kind !== "string") {
+        res.status(400).json({ error: "action required" });
+        return;
+      }
+      const map = await workflow.setMapStatusAsLeader(
+        req.params.id,
+        action,
+        (req as AuthedRequest).user,
+        note
+      );
+      res.json(map);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+// Board Task (Upload/Uploaded/Polish) and Station (OPS/GRAPHICS) — independent of phase.
+router.patch(
+  "/:id/task-station",
+  requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN),
+  async (req, res) => {
+    try {
+      const { task, station } = req.body as { task?: string; station?: string };
+      const map = await workflow.setMapTaskStation(
+        req.params.id,
+        {
+          ...(task !== undefined ? { task: task as import("@prisma/client").MapTask } : {}),
+          ...(station !== undefined
+            ? { station: station as import("@prisma/client").MapStation }
+            : {}),
+        },
+        (req as AuthedRequest).user
+      );
+      res.json(map);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
 
 router.post("/:id/notes", async (req, res) => {
   try {

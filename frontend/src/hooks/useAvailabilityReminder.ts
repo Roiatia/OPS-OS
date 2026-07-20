@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { api } from "@/api";
+import { useState } from "react";
+import { useMyAvailabilityQuery } from "@/hooks/queries";
 import {
   defaultSubmissionWeekStart,
   formatWeekRange,
@@ -34,29 +34,13 @@ export function useAvailabilityReminder(enabled: boolean) {
   const weekLabel = formatWeekRange(targetWeek);
   const [dismissedWeeks, setDismissedWeeks] = useState(loadDismissedWeeks);
   const [snoozed, setSnoozed] = useState(false);
-  const [missing, setMissing] = useState(false);
-  const [loading, setLoading] = useState(true);
 
-  const check = useCallback(async () => {
-    if (!enabled) {
-      setMissing(false);
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    try {
-      const data = await api.getMyAvailability(weekStart);
-      setMissing(!data.submittedAt);
-    } catch {
-      setMissing(false);
-    } finally {
-      setLoading(false);
-    }
-  }, [enabled, weekStart]);
-
-  useEffect(() => {
-    void check();
-  }, [check]);
+  // Shares the "my availability" cache with SupervisorAvailabilityForm, so the
+  // supervisor dashboard fetches it once and a fresh submission (which writes
+  // the cache) immediately clears the reminder.
+  const availabilityQuery = useMyAvailabilityQuery(weekStart, enabled);
+  const loading = enabled && availabilityQuery.isLoading;
+  const missing = enabled && availabilityQuery.data ? !availabilityQuery.data.submittedAt : false;
 
   const dismissed = dismissedWeeks.has(weekStart);
   const show =
@@ -100,6 +84,6 @@ export function useAvailabilityReminder(enabled: boolean) {
     snooze,
     unsnooze,
     promptNow,
-    refresh: check,
+    refresh: () => availabilityQuery.refetch(),
   };
 }

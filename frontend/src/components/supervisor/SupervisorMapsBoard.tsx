@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api } from "../../api";
 import type { FieldWorkStatus, MapRecord } from "../../types";
 import { Badge } from "@/components/common/Badge";
+import { useAuth } from "../../context/AuthContext";
 import {
   FIELD_WORK_STATUS_LABELS,
   fieldWorkStatusTone,
@@ -32,6 +33,7 @@ const filterInputClass =
   "w-full border border-border rounded px-2 py-1 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-brand-500";
 
 export function SupervisorMapsBoard({ maps, onRefresh, onPatch }: Props) {
+  const { user } = useAuth();
   const patch = (map: MapRecord) => (onPatch ? onPatch(map) : onRefresh());
   const [queue, setQueue] = useState<SupervisorMapQueue>("all");
   const [clientFilter, setClientFilter] = useState("");
@@ -188,7 +190,12 @@ export function SupervisorMapsBoard({ maps, onRefresh, onPatch }: Props) {
               filteredMaps.map((map) => {
                 const status = getSupervisorFieldStatus(map);
                 const draft = getDraft(map);
-                const readOnly = status === "CANCELLED" || status === "COMPLETED";
+                const slCheckOnly =
+                  map.slCheckStatus === "CLAIMED" &&
+                  map.slCheckClaimedBy?.id === user?.id &&
+                  map.assignedSupervisor?.id !== user?.id;
+                const readOnly =
+                  status === "CANCELLED" || status === "COMPLETED" || slCheckOnly;
                 const saving = savingId === map.id;
 
                 return (
@@ -208,6 +215,13 @@ export function SupervisorMapsBoard({ maps, onRefresh, onPatch }: Props) {
                         {map.mapNumber}
                       </Link>
                       {map.area && <p className="text-xs text-muted mt-0.5">{map.area}</p>}
+                      {map.slCheckStatus === "CLAIMED" &&
+                        map.slCheckClaimedBy &&
+                        map.assignedSupervisor?.id !== map.slCheckClaimedBy.id && (
+                          <p className="text-[10px] font-semibold text-violet-700 mt-0.5">
+                            SL check · {map.assignedSupervisor?.name ?? "owner"}
+                          </p>
+                        )}
                     </td>
                     <td className="px-3 py-3 font-medium">{map.client}</td>
                     <td className="px-3 py-3 text-center">

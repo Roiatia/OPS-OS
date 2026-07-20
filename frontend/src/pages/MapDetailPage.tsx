@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { hasSupervisorRole } from "../lib/roles";
 import { useAuth, hasRole } from "../context/AuthContext";
@@ -16,7 +16,12 @@ import { PHASE_LABELS } from "../types";
 
 export function MapDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const { user } = useAuth();
+
+  // Return to wherever the user opened this map from (Hub, Maps board, etc.)
+  // instead of bouncing to /app, which resets them to their default section.
+  const goBack = () => navigate(-1);
   const [map, setMap] = useState<MapRecord | null>(null);
   const [allMaps, setAllMaps] = useState<MapRecord[]>([]);
   const [team, setTeam] = useState<TeamMember[]>([]);
@@ -65,9 +70,13 @@ export function MapDetailPage() {
     return (
       <div className="min-h-[60vh] flex items-center justify-center">
         <div className="text-center">
-          <Link to="/app" className="text-sm text-brand-600 hover:underline">
+          <button
+            type="button"
+            onClick={goBack}
+            className="text-sm text-brand-600 hover:underline"
+          >
             ← Back to maps
-          </Link>
+          </button>
           <p className="mt-4 text-muted">{error || "Loading..."}</p>
         </div>
       </div>
@@ -81,12 +90,13 @@ export function MapDetailPage() {
   return (
     <div className="min-h-[calc(100vh-4rem)] bg-gradient-to-b from-slate-50 to-white py-8 px-4">
       <div className="max-w-xl mx-auto">
-        <Link
-          to="/app"
+        <button
+          type="button"
+          onClick={goBack}
           className="inline-flex items-center gap-1 text-sm text-brand-600 hover:text-brand-700 font-medium mb-6"
         >
           ← Back to maps
-        </Link>
+        </button>
 
         {/* Header */}
         <div className="text-center mb-8">
@@ -538,14 +548,16 @@ export function MapDetailPage() {
 
                 const taskPhase =
                   map.phase === "POLISH" || map.phase === "QA_REVIEW" ? "POLISH" : "PREP";
-                for (const inspector of shiftInspectors) {
-                  await api.createTask(map.id, {
-                    title: `${shift.label} shift — ${map.mapNumber}`,
-                    description: `Assigned to ${shift.label} shift (${shift.hours})`,
-                    assignedToId: inspector.id,
-                    phase: taskPhase,
-                  });
-                }
+                await Promise.all(
+                  shiftInspectors.map((inspector) =>
+                    api.createTask(map.id, {
+                      title: `${shift.label} shift — ${map.mapNumber}`,
+                      description: `Assigned to ${shift.label} shift (${shift.hours})`,
+                      assignedToId: inspector.id,
+                      phase: taskPhase,
+                    })
+                  )
+                );
                 load();
               }
               setAssignInspectorOpen(false);

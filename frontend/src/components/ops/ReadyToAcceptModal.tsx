@@ -50,9 +50,8 @@ export function ReadyToAcceptModal({ maps, open, onClose, onAccepted }: Props) {
     setLoading(true);
     setError("");
     try {
-      for (const map of targets) {
-        await api.fieldComplete(map.id);
-      }
+      // Fire the accepts in parallel rather than one round-trip at a time.
+      await Promise.all(targets.map((map) => api.fieldComplete(map.id)));
       setSelected(new Set());
       onAccepted();
       onClose();

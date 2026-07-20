@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/api";
 import { DEMO_OPS_UPDATES } from "@/lib/demoUpdates";
 import type { OpsActivityMessage, OpsShiftAlert } from "@/types/activity";
@@ -29,7 +29,7 @@ function withDemoFallback(notes: OpsActivityMessage[]): OpsActivityMessage[] {
   return DEMO_OPS_UPDATES;
 }
 
-export function useOpsUpdates(onActivity?: () => void) {
+export function useOpsUpdates(onActivity?: () => void, pollEnabled = true) {
   const [updates, setUpdates] = useState<OpsActivityMessage[]>([]);
   const [shiftAlerts, setShiftAlerts] = useState<OpsShiftAlert[]>([]);
   const [dismissed, setDismissed] = useState<Set<string>>(loadDismissedIds);
@@ -64,27 +64,48 @@ export function useOpsUpdates(onActivity?: () => void) {
     }
   }, []);
 
+  // Always do one initial load so the sidebar badge is populated, but only run
+  // the 15s live poll while the relevant section is open (gated by pollEnabled)
+  // to avoid constant background churn on unrelated sections.
   useEffect(() => {
     void poll(true);
-    const interval = setInterval(() => poll(false), 15_000);
-    return () => clearInterval(interval);
   }, [poll]);
 
-  const visible = updates.filter((m) => !dismissed.has(m.id));
-  const visibleAlerts = shiftAlerts.filter((a) => !dismissed.has(a.id));
-  const dismissedUpdates = updates.filter((m) => dismissed.has(m.id));
-  const dismissedAlerts = shiftAlerts.filter((a) => dismissed.has(a.id));
+  useEffect(() => {
+    if (!pollEnabled) return;
+    const interval = setInterval(() => poll(false), 15_000);
+    return () => clearInterval(interval);
+  }, [poll, pollEnabled]);
+
+  const visible = useMemo(
+    () => updates.filter((m) => !dismissed.has(m.id)),
+    [updates, dismissed]
+  );
+  const visibleAlerts = useMemo(
+    () => shiftAlerts.filter((a) => !dismissed.has(a.id)),
+    [shiftAlerts, dismissed]
+  );
+  const dismissedUpdates = useMemo(
+    () => updates.filter((m) => dismissed.has(m.id)),
+    [updates, dismissed]
+  );
+  const dismissedAlerts = useMemo(
+    () => shiftAlerts.filter((a) => dismissed.has(a.id)),
+    [shiftAlerts, dismissed]
+  );
   const dismissedCount = dismissedUpdates.length + dismissedAlerts.length;
 
-  function dismiss(id: string) {
+  // Stable identities so memoized rows/columns don't re-render when the parent
+  // dashboard re-renders for unrelated reasons.
+  const dismiss = useCallback((id: string) => {
     setDismissed((prev) => {
       const next = new Set(prev).add(id);
       saveDismissedIds(next);
       return next;
     });
-  }
+  }, []);
 
-  function dismissAll() {
+  const dismissAll = useCallback(() => {
     setDismissed((prev) => {
       const next = new Set(prev);
       for (const m of visible) next.add(m.id);
@@ -92,18 +113,18 @@ export function useOpsUpdates(onActivity?: () => void) {
       saveDismissedIds(next);
       return next;
     });
-  }
+  }, [visible, visibleAlerts]);
 
-  function restore(id: string) {
+  const restore = useCallback((id: string) => {
     setDismissed((prev) => {
       const next = new Set(prev);
       next.delete(id);
       saveDismissedIds(next);
       return next;
     });
-  }
+  }, []);
 
-  function restoreAll() {
+  const restoreAll = useCallback(() => {
     setDismissed((prev) => {
       if (prev.size === 0) return prev;
       const next = new Set(prev);
@@ -112,7 +133,7 @@ export function useOpsUpdates(onActivity?: () => void) {
       saveDismissedIds(next);
       return next;
     });
-  }
+  }, [dismissedUpdates, dismissedAlerts]);
 
   return {
     updates: visible,
@@ -121,7 +142,6 @@ export function useOpsUpdates(onActivity?: () => void) {
     dismissedAlerts,
     dismissedCount,
     unreadCount: visible.length + visibleAlerts.length,
-    isDemoPreview: visible.some((u) => u.id.startsWith("demo-")),
     dismiss,
     dismissAll,
     restore,
