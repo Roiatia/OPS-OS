@@ -2,6 +2,10 @@ import { useRef, useState, type PointerEvent } from "react";
 
 const HOURS = Array.from({ length: 25 }, (_, i) => i); // 0..24
 
+/** Night shift band: 22:00 → 06:00 (spans midnight on the day bar). */
+const NIGHT_START_HOUR = 22;
+const NIGHT_END_HOUR = 6;
+
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
@@ -17,6 +21,11 @@ function minutesToLabel(m: number): string {
   return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
 }
 
+function isNightHour(h: number): boolean {
+  // Hour slot [h, h+1). Night = 22–24 and 0–6
+  return h >= NIGHT_START_HOUR || h < NIGHT_END_HOUR;
+}
+
 type Props = {
   startMinutes: number;
   endMinutes: number;
@@ -28,7 +37,7 @@ type Props = {
 
 /**
  * Drag a block across a 00:00 → 00:00 (next) day bar.
- * endMinutes may be 1440 = midnight end of day.
+ * Night hours (22:00–06:00) are tinted yellow while dragging / selected.
  * Overnight work = select late hours on day A + early hours on day B.
  */
 export function DayHourDragBar({
@@ -90,8 +99,20 @@ export function DayHourDragBar({
     dragOrigin.current = null;
   }
 
-  const leftPct = hasRange ? (startH / 24) * 100 : 0;
-  const widthPct = hasRange ? ((endH - startH) / 24) * 100 : 0;
+  /** Selected segments split into day (blue) vs night (yellow). */
+  const selectionSegments: { left: number; width: number; night: boolean }[] = [];
+  if (hasRange) {
+    for (let h = Math.floor(startH); h < Math.ceil(endH) && h < 24; h++) {
+      const segStart = Math.max(startH, h);
+      const segEnd = Math.min(endH, h + 1);
+      if (segEnd <= segStart) continue;
+      selectionSegments.push({
+        left: (segStart / 24) * 100,
+        width: ((segEnd - segStart) / 24) * 100,
+        night: isNightHour(h),
+      });
+    }
+  }
 
   return (
     <div className="space-y-1.5 select-none">
@@ -118,6 +139,20 @@ export function DayHourDragBar({
         aria-valuemax={24}
         aria-label="Shift hours"
       >
+        {/* Night band background: 22:00–06:00 */}
+        <div
+          className="absolute top-0 bottom-0 bg-amber-100/90 pointer-events-none"
+          style={{ left: "0%", width: `${(NIGHT_END_HOUR / 24) * 100}%` }}
+          title="Night shift (00:00–06:00)"
+        />
+        <div
+          className="absolute top-0 bottom-0 bg-amber-100/90 pointer-events-none"
+          style={{
+            left: `${(NIGHT_START_HOUR / 24) * 100}%`,
+            width: `${((24 - NIGHT_START_HOUR) / 24) * 100}%`,
+          }}
+          title="Night shift (22:00–00:00)"
+        />
         <div className="absolute inset-0 flex pointer-events-none">
           {HOURS.slice(0, 24).map((h) => (
             <div
@@ -126,15 +161,20 @@ export function DayHourDragBar({
             />
           ))}
         </div>
-        {hasRange && (
+        {selectionSegments.map((seg, i) => (
           <div
-            className="absolute top-1 bottom-1 rounded-md bg-brand-500/90 shadow-sm pointer-events-none"
-            style={{ left: `${leftPct}%`, width: `${Math.max(widthPct, 1)}%` }}
+            key={i}
+            className={`absolute top-1 bottom-1 pointer-events-none shadow-sm first:rounded-l-md last:rounded-r-md ${
+              seg.night ? "bg-amber-400/95" : "bg-brand-500/90"
+            }`}
+            style={{ left: `${seg.left}%`, width: `${Math.max(seg.width, 0.4)}%` }}
           />
-        )}
+        ))}
       </div>
       <p className="text-[10px] text-muted leading-snug">
-        Overnight? Drag evening → 00:00 here, then 00:00 → morning on the next day.
+        <span className="text-amber-700 font-medium">Yellow = night</span>
+        {" "}
+        (22:00–06:00). Overnight? Drag evening → 00:00 here, then 00:00 → morning on the next day.
       </p>
     </div>
   );
