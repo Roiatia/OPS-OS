@@ -17,7 +17,7 @@ export const AVAILABILITY_DAYS = [0, 1, 2, 3, 4, 5] as const;
 
 export const MIN_SHIFT_MINUTES = 6 * 60;
 export const MAX_SHIFT_MINUTES = 12 * 60;
-export const NIGHT_START_MINUTES = 23 * 60;
+export const NIGHT_START_MINUTES = 22 * 60;
 export const MAX_NIGHT_SHIFTS_PER_TWO_WEEKS = 7;
 /** @deprecated use MAX_NIGHT_SHIFTS_PER_TWO_WEEKS */
 export const MAX_NIGHT_SHIFTS_PER_WEEK = 3;
@@ -300,7 +300,7 @@ export function countNightShiftsFromDays(
       endMinutes: d.endMinutes,
     }))
   );
-  // Night = block starts at/after 23:00 and lasts ≥ 6h (may span midnight via two days)
+  // Night = block starts at/after 22:00 and lasts ≥ 6h (may span midnight via two days)
   return blocks.filter(
     (b) => b.startMinutes >= NIGHT_START_MINUTES && b.duration >= MIN_SHIFT_MINUTES
   ).length;

@@ -52,7 +52,7 @@ export function minutesToInputValue(minutes: number | null | undefined): string 
 }
 
 /**
- * Demo week for OPS testing — maps + meeting + mapping refresh.
+ * Demo week for OPS testing — day maps + night maps (22:00) + meeting + mapping refresh.
  * Local only; never written to the DB.
  */
 export function buildDemoWeekTasks(): LocalPlannerMap[] {
@@ -117,7 +117,7 @@ export function buildDemoWeekTasks(): LocalPlannerMap[] {
       taskKind: "COMPANY_MEETING",
     },
 
-    // Monday — 4 maps + mapping refresh
+    // Monday — 3 day maps + 2 night (22:00) + mapping refresh
     {
       dayOfWeek: 1,
       mapNumber: "FAKE-M1",
@@ -144,10 +144,18 @@ export function buildDemoWeekTasks(): LocalPlannerMap[] {
     },
     {
       dayOfWeek: 1,
-      mapNumber: "FAKE-M4",
-      client: "Umbrella",
-      mapperName: "Ron",
-      startMinutes: t(15),
+      mapNumber: "FAKE-MN1",
+      client: "NightCo",
+      mapperName: "Eli",
+      startMinutes: t(22),
+      endMinutes: null,
+    },
+    {
+      dayOfWeek: 1,
+      mapNumber: "FAKE-MN2",
+      client: "NightCo",
+      mapperName: "Ruth",
+      startMinutes: t(22, 30),
       endMinutes: null,
     },
     {
@@ -195,7 +203,7 @@ export function buildDemoWeekTasks(): LocalPlannerMap[] {
       taskKind: "HAPPY_HOUR",
     },
 
-    // Wednesday — 2 maps + meeting
+    // Wednesday — 2 day maps + 2 night (22:00) + meeting
     {
       dayOfWeek: 3,
       mapNumber: "FAKE-W1",
@@ -214,6 +222,22 @@ export function buildDemoWeekTasks(): LocalPlannerMap[] {
     },
     {
       dayOfWeek: 3,
+      mapNumber: "FAKE-WN1",
+      client: "NightCo",
+      mapperName: "Eli",
+      startMinutes: t(22),
+      endMinutes: null,
+    },
+    {
+      dayOfWeek: 3,
+      mapNumber: "FAKE-WN2",
+      client: "NightCo",
+      mapperName: "Ruth",
+      startMinutes: t(23),
+      endMinutes: null,
+    },
+    {
+      dayOfWeek: 3,
       mapNumber: "MEET-WED",
       client: "Internal",
       mapperName: "",
@@ -222,7 +246,7 @@ export function buildDemoWeekTasks(): LocalPlannerMap[] {
       taskKind: "COMPANY_MEETING",
     },
 
-    // Thursday — 5 maps
+    // Thursday — 4 day maps + 1 night (22:00)
     {
       dayOfWeek: 4,
       mapNumber: "FAKE-TH1",
@@ -257,10 +281,10 @@ export function buildDemoWeekTasks(): LocalPlannerMap[] {
     },
     {
       dayOfWeek: 4,
-      mapNumber: "FAKE-TH5",
-      client: "Umbrella",
+      mapNumber: "FAKE-THN1",
+      client: "NightCo",
       mapperName: "Ron",
-      startMinutes: t(16),
+      startMinutes: t(22),
       endMinutes: null,
     },
 

@@ -8,6 +8,7 @@ import type {
 import {
   AVAILABILITY_DAYS,
   DAY_LABELS,
+  NIGHT_START_MINUTES,
   availabilityUtilization,
 } from "./availabilityRules";
 import {
@@ -143,9 +144,14 @@ export function autoPlanAvailability(input: {
       const sb = score(b);
       if (sa.avoidPenalty !== sb.avoidPenalty) return sa.avoidPenalty - sb.avoidPenalty;
       if (sa.overload !== sb.overload) return sa.overload - sb.overload;
-      // Lowest utilization first — Eyal at 0/6 beats Erez at 5/6
+      // Critical: nobody who offered stays at 0 while others get days
+      if (sa.assigned === 0 && sb.assigned > 0) return -1;
+      if (sb.assigned === 0 && sa.assigned > 0) return 1;
+      // Lowest utilization first — Lior 0/6 beats someone at 3/6
       if (Math.abs(sa.util - sb.util) > 0.001) return sa.util - sb.util;
       if (sa.assigned !== sb.assigned) return sa.assigned - sb.assigned;
+      // More days offered → slightly prefer (they committed more)
+      if (sa.offered !== sb.offered) return sb.offered - sa.offered;
       if (sa.salt !== sb.salt) return sa.salt - sb.salt;
       return a.name.localeCompare(b.name);
     };
@@ -159,19 +165,39 @@ export function autoPlanAvailability(input: {
       .filter((c): c is number => c != null);
     const earliest = mapClocks.length ? Math.min(...mapClocks) : null;
     const latest = mapClocks.length ? Math.max(...mapClocks) : null;
+    const nightClocks = mapClocks.filter((c) => c >= NIGHT_START_MINUTES);
+    const hasNightMaps = nightClocks.length > 0;
 
     const slPool = eligible.filter((s) => s.isShiftLeader);
     const supPool = eligible.filter((s) => !s.isShiftLeader);
 
-    // 1) Always one open SL (fair among SLs — not the same person every day)
+    const coversClock = (s: ShiftPlanStaff, clock: number | null) =>
+      clock == null || coversMapHour(s, dayOfWeek, clock);
+
+    /**
+     * Fairness first; clock cover only breaks ties when util is similar.
+     * (Night/early preference must not starve people at 0/6.)
+     */
+    const rankForBand = (
+      a: ShiftPlanStaff,
+      b: ShiftPlanStaff,
+      preferClock: number | null
+    ) => {
+      const fair = rankFair(a, b);
+      const sa = score(a);
+      const sb = score(b);
+      const utilClose = Math.abs(sa.util - sb.util) < 0.2 && sa.assigned === sb.assigned;
+      if (preferClock != null && utilClose) {
+        const aOk = coversClock(a, preferClock) ? 0 : 1;
+        const bOk = coversClock(b, preferClock) ? 0 : 1;
+        if (aOk !== bOk) return aOk - bOk;
+      }
+      return fair;
+    };
+
+    // 1) Always one open SL — fair among SLs (not the same person every day)
     const openSl =
-      [...slPool]
-        .sort((a, b) => {
-          const aEarly = earliest != null && coversMapHour(a, dayOfWeek, earliest) ? 0 : 1;
-          const bEarly = earliest != null && coversMapHour(b, dayOfWeek, earliest) ? 0 : 1;
-          if (aEarly !== bEarly) return aEarly - bEarly;
-          return rankFair(a, b);
-        })[0] ?? null;
+      [...slPool].sort((a, b) => rankForBand(a, b, earliest))[0] ?? null;
 
     if (openSl) {
       picked.push(openSl);
@@ -185,15 +211,22 @@ export function autoPlanAvailability(input: {
       );
     }
 
-    // 2) Fill most remaining seats with supervisors (fair util) — not more SLs
-    //    Leave at most one seat for a close SL when target >= 3
+    // 2) Fill remaining seats with supervisors by fairness (zeros first)
     const wantCloseSl = staffing.target >= 3 && slPool.some((s) => s.userId !== openSl?.userId);
     const seatsForSupervisors = Math.max(
       0,
       staffing.target - picked.length - (wantCloseSl ? 1 : 0)
     );
 
-    const sortedSups = [...supPool].filter((s) => !pickedIds.has(s.userId)).sort(rankFair);
+    const sortedSups = [...supPool]
+      .filter((s) => !pickedIds.has(s.userId))
+      .sort((a, b) => {
+        if (hasNightMaps) {
+          const nightClock = Math.min(...nightClocks);
+          return rankForBand(a, b, nightClock);
+        }
+        return rankFair(a, b);
+      });
     for (const person of sortedSups) {
       if (picked.filter((p) => !p.isShiftLeader).length >= seatsForSupervisors) break;
       if (picked.length >= staffing.target - (wantCloseSl ? 1 : 0)) break;
@@ -206,18 +239,36 @@ export function autoPlanAvailability(input: {
       const closeSl =
         [...slPool]
           .filter((s) => !pickedIds.has(s.userId))
-          .sort((a, b) => {
-            const aLate = latest != null && coversMapHour(a, dayOfWeek, latest) ? 0 : 1;
-            const bLate = latest != null && coversMapHour(b, dayOfWeek, latest) ? 0 : 1;
-            if (aLate !== bLate) return aLate - bLate;
-            return rankFair(a, b);
-          })[0] ?? null;
+          .sort((a, b) => rankForBand(a, b, latest))[0] ?? null;
       if (closeSl) {
         picked.push(closeSl);
         pickedIds.add(closeSl.userId);
         logicNotes.push(
           `Close SL: ${closeSl.name} (${score(closeSl).assigned}/${score(closeSl).offered})`
         );
+      }
+    }
+
+    // 3b) Night maps: add night cover only if roster still can't cover 22:00+
+    if (hasNightMaps) {
+      const nightClock = Math.min(...nightClocks);
+      const rosterCoversNight = picked.some((p) => coversClock(p, nightClock));
+      if (!rosterCoversNight) {
+        const nightPerson =
+          eligible
+            .filter((s) => !pickedIds.has(s.userId) && coversClock(s, nightClock))
+            .sort(rankFair)[0] ?? null;
+        if (nightPerson) {
+          picked.push(nightPerson);
+          pickedIds.add(nightPerson.userId);
+          logicNotes.push(
+            `Night cover: ${nightPerson.name} (maps from ${Math.floor(nightClock / 60)}:00)`
+          );
+        } else {
+          warnings.push(
+            `${dayLabel(dayOfWeek)}: night map(s) at ${Math.floor(nightClock / 60)}:00 — nobody offered that hour.`
+          );
+        }
       }
     }
 
@@ -234,7 +285,37 @@ export function autoPlanAvailability(input: {
       pickedIds.add(person.userId);
     }
 
-    // 5) If we somehow have no supervisor seats filled and target > 1, steal from overload
+    // 5) Fairness rescue: swap high-util roster people for anyone still at 0 this week
+    const stillZero = eligible
+      .filter((s) => !pickedIds.has(s.userId) && (assignedCount.get(s.userId) ?? 0) === 0)
+      .sort(rankFair);
+    for (const needy of stillZero) {
+      const slCountNow = picked.filter((p) => p.isShiftLeader).length;
+      const victims = [...picked]
+        .filter((p) => {
+          if ((assignedCount.get(p.userId) ?? 0) === 0) return false;
+          // Keep at least one SL on the day
+          if (p.isShiftLeader && slCountNow <= 1) return false;
+          return true;
+        })
+        .sort(
+          (a, b) =>
+            (assignedCount.get(b.userId) ?? 0) - (assignedCount.get(a.userId) ?? 0) ||
+            rankFair(b, a)
+        );
+      const victim = victims[0];
+      if (!victim) break;
+      const idx = picked.findIndex((p) => p.userId === victim.userId);
+      if (idx < 0) break;
+      picked[idx] = needy;
+      pickedIds.delete(victim.userId);
+      pickedIds.add(needy.userId);
+      logicNotes.push(
+        `Fairness: ${needy.name} (0/${score(needy).offered}) in, ${victim.name} out`
+      );
+    }
+
+    // 6) If still under min headcount, pull anyone left
     if (picked.length < staffing.min) {
       for (const person of leftovers) {
         if (picked.length >= staffing.min) break;

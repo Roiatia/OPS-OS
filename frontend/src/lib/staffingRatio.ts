@@ -6,6 +6,8 @@
  * - 8 maps → target 4, max 5
  * Meetings / happy hour do not count toward headcount.
  */
+import { NIGHT_START_MINUTES, minutesToTime } from "./availabilityRules";
+
 export const MAPS_PER_PERSON = 2;
 
 export type StaffingTarget = {
@@ -20,6 +22,59 @@ export function isRequiredMapTask(taskKind?: string | null): boolean {
   // Meetings may stay empty; real maps (and mapping refresh) need ≥1 supervisor
   if (taskKind === "HAPPY_HOUR" || taskKind === "COMPANY_MEETING") return false;
   return true;
+}
+
+export function isNightMapStart(startMinutes: number | null | undefined): boolean {
+  return startMinutes != null && startMinutes >= NIGHT_START_MINUTES;
+}
+
+/** Day vs night required-map split (meetings/happy hour excluded). */
+export function countDayNightMaps(
+  maps: { taskKind?: string | null; startMinutes?: number | null }[]
+): { dayMaps: number; nightMaps: number; required: number } {
+  let dayMaps = 0;
+  let nightMaps = 0;
+  for (const m of maps) {
+    if (!isRequiredMapTask(m.taskKind)) continue;
+    if (isNightMapStart(m.startMinutes)) nightMaps += 1;
+    else dayMaps += 1;
+  }
+  return { dayMaps, nightMaps, required: dayMaps + nightMaps };
+}
+
+/**
+ * Short continuity hint for OPS under the day name.
+ * Shifts must overlap: day→night at 22:00, night→morning into the next day.
+ */
+export function shiftContinuityHint(
+  maps: { taskKind?: string | null; startMinutes?: number | null }[],
+  nextMorningMaps = 0
+): string | null {
+  const { dayMaps, nightMaps } = countDayNightMaps(maps);
+  if (dayMaps === 0 && nightMaps === 0) return null;
+
+  const parts: string[] = [];
+  if (dayMaps > 0 && nightMaps > 0) {
+    parts.push(
+      `${dayMaps} day + ${nightMaps} night · overlap at ${minutesToTime(NIGHT_START_MINUTES)} (stay late / come early)`
+    );
+  } else if (nightMaps > 0) {
+    parts.push(
+      `${nightMaps} night map${nightMaps === 1 ? "" : "s"} from ${minutesToTime(NIGHT_START_MINUTES)}`
+    );
+  } else {
+    parts.push(`${dayMaps} day map${dayMaps === 1 ? "" : "s"}`);
+  }
+
+  if (nightMaps > 0 && nextMorningMaps > 0) {
+    parts.push(
+      `→ next morning has ${nextMorningMaps} map${nextMorningMaps === 1 ? "" : "s"} (need early relief or night stays long)`
+    );
+  } else if (nightMaps > 0) {
+    parts.push("→ plan morning relief so night maps are not left alone");
+  }
+
+  return parts.join(" · ");
 }
 
 export function countRequiredMaps(

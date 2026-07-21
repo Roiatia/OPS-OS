@@ -34,7 +34,7 @@ import {
   parseTimeToMinutes,
   type LocalPlannerMap,
 } from "../../lib/fakeLocalMap";
-import { isRequiredMapTask } from "../../lib/staffingRatio";
+import { isRequiredMapTask, shiftContinuityHint } from "../../lib/staffingRatio";
 import { formatMapTime } from "../../lib/hubDisplay";
 import { Modal } from "../common/Modal";
 
@@ -58,10 +58,12 @@ function taskKindLabel(kind?: ScheduleTaskKind): string {
 }
 
 type TaskSortBy = "type" | "client" | "start" | "mapper" | "supervisor";
+type TaskSortDir = "asc" | "desc";
+type DayTaskSort = { by: TaskSortBy; dir: TaskSortDir };
 
 function sortMapsForDay(
   maps: ShiftPlanMap[],
-  sortBy: TaskSortBy,
+  sort: DayTaskSort,
   mapAssignees: Record<string, MapSupervisorSlot[]>,
   staff: ShiftPlanStaff[]
 ): ShiftPlanMap[] {
@@ -78,9 +80,11 @@ function sortMapsForDay(
       .join(", ");
   };
 
+  const dirMul = sort.dir === "desc" ? -1 : 1;
+
   return maps.slice().sort((a, b) => {
     let cmp = 0;
-    switch (sortBy) {
+    switch (sort.by) {
       case "type":
         cmp = taskKindLabel(a.taskKind).localeCompare(taskKindLabel(b.taskKind));
         break;
@@ -97,7 +101,7 @@ function sortMapsForDay(
         cmp = supervisorKey(a).localeCompare(supervisorKey(b));
         break;
     }
-    if (cmp !== 0) return cmp;
+    if (cmp !== 0) return cmp * dirMul;
     // Stable secondary: start time, then type
     const sa = (a.startMinutes ?? 99999) - (b.startMinutes ?? 99999);
     if (sa !== 0) return sa;
@@ -134,24 +138,37 @@ export function OpsShiftPlanner() {
   const [fakeMapHint, setFakeMapHint] = useState(
     "Demo week loaded (local only) — maps, meetings & mapping refresh. Not saved to DB."
   );
-  /** Per-day sort (default: start time) */
-  const [daySortBy, setDaySortBy] = useState<Partial<Record<number, TaskSortBy>>>({});
+  /** Per-day column sort (default: start ascending). Tap header to sort; tap again to flip. */
+  const [daySortBy, setDaySortBy] = useState<Partial<Record<number, DayTaskSort>>>({});
 
   const applyPlan = useCallback(
     (
       plan: ShiftPlanView,
       nextAssignments: ShiftPlanAssignment[],
       _warnings?: string[],
-      opts?: { fromAutoPlan?: boolean; plannedDays?: number[] }
+      opts?: {
+        fromAutoPlan?: boolean;
+        plannedDays?: number[];
+        /** Maps to seed (server + local). Never write local maps into plan.mapsPerDay. */
+        seedMapsPerDay?: ShiftPlanView["mapsPerDay"];
+      }
     ) => {
-      setData(plan);
-      const seeded = seedMapAssignees(plan.mapsPerDay, nextAssignments, plan.staff);
+      // Keep CRM/server maps only in state — local fakes live in `localMaps`
+      const serverMapsPerDay = (plan.mapsPerDay ?? []).map((d) => ({
+        ...d,
+        maps: d.maps.filter((m) => !m.id.startsWith("local-")),
+        count: d.maps.filter((m) => !m.id.startsWith("local-")).length,
+      }));
+      setData({ ...plan, mapsPerDay: serverMapsPerDay });
+
+      const mapsForSeed = opts?.seedMapsPerDay ?? serverMapsPerDay;
+      const seeded = seedMapAssignees(mapsForSeed, nextAssignments, plan.staff);
       const planned = opts?.plannedDays?.length ? new Set(opts.plannedDays) : null;
 
       // Keep planned roster, plus anyone who had to cover a map outside it
       const mergedAssignments = [...nextAssignments];
       const staffById = new Map(plan.staff.map((s) => [s.userId, s]));
-      for (const dayEntry of plan.mapsPerDay) {
+      for (const dayEntry of mapsForSeed) {
         if (planned && !planned.has(dayEntry.dayOfWeek)) continue;
         const have = new Set(
           mergedAssignments
@@ -181,7 +198,7 @@ export function OpsShiftPlanner() {
       } else {
         setMapAssignees((prev) => {
           const next = { ...prev };
-          for (const dayEntry of plan.mapsPerDay) {
+          for (const dayEntry of mapsForSeed) {
             if (!planned.has(dayEntry.dayOfWeek)) continue;
             for (const m of dayEntry.maps) {
               delete next[m.id];
@@ -233,13 +250,20 @@ export function OpsShiftPlanner() {
     setFakeMapHint("");
   }
 
-  /** Server maps + frontend-only fake maps for testing */
+  /** Server maps + frontend-only fake maps for testing (deduped by id). */
   const effectiveMapsPerDay = useMemo(() => {
     const base = data?.mapsPerDay ?? [];
     return AVAILABILITY_DAYS.map((dayOfWeek) => {
       const fromServer = base.find((d) => d.dayOfWeek === dayOfWeek);
-      const extras = localMaps.filter((m) => m.dayOfWeek === dayOfWeek);
-      const maps = [...(fromServer?.maps ?? []), ...extras];
+      const serverMaps = (fromServer?.maps ?? []).filter((m) => !m.id.startsWith("local-"));
+      const seen = new Set(serverMaps.map((m) => m.id));
+      const extras = localMaps.filter((m) => {
+        if (m.dayOfWeek !== dayOfWeek) return false;
+        if (seen.has(m.id)) return false;
+        seen.add(m.id);
+        return true;
+      });
+      const maps = [...serverMaps, ...extras];
       return { dayOfWeek, count: maps.length, maps };
     });
   }, [data?.mapsPerDay, localMaps]);
@@ -441,17 +465,8 @@ export function OpsShiftPlanner() {
     if (current.some((s) => s.userId === userId)) return;
     const person = data?.staff.find((s) => s.userId === userId);
     if (!person) return;
-    const lastEnd = current.length
-      ? Math.max(...current.map((s) => s.endMinutes))
-      : map.startMinutes ?? null;
-    const entrance =
-      current.length > 0
-        ? lastEnd != null && lastEnd < 24 * 60
-          ? lastEnd
-          : null
-        : (map.startMinutes ?? null);
-    if (current.length > 0 && entrance == null) return;
-    // Primary assignee must cover map start (not arrive later)
+    // First seat must cover map start; extra seats may overlap or start later
+    const entrance = map.startMinutes ?? null;
     if (
       current.length === 0 &&
       map.startMinutes != null &&
@@ -464,6 +479,10 @@ export function OpsShiftPlanner() {
       return;
     }
     let win = proposeWorkWindow(person, dayOfWeek, entrance);
+    if (!win && current.length > 0) {
+      // Extra supervisor: try their own earliest start that day
+      win = proposeWorkWindow(person, dayOfWeek, null, { allowShort: true });
+    }
     if (!win && opts?.askOverride) {
       win = proposeWorkWindow(person, dayOfWeek, entrance, { allowShort: true });
     }
@@ -492,7 +511,6 @@ export function OpsShiftPlanner() {
         userId,
         startMinutes: win.startMinutes,
         endMinutes: win.endMinutes,
-        handoff: current.length > 0,
       },
     ]);
   }
@@ -694,7 +712,6 @@ export function OpsShiftPlanner() {
       applyPlan(
         {
           ...data,
-          mapsPerDay: effectiveMapsPerDay,
           dayPlans: result.dayPlans,
           warnings: result.warnings,
         },
@@ -703,6 +720,7 @@ export function OpsShiftPlanner() {
         {
           fromAutoPlan: true,
           plannedDays: dayOfWeek != null ? [dayOfWeek] : undefined,
+          seedMapsPerDay: effectiveMapsPerDay,
         }
       );
 
@@ -942,9 +960,8 @@ export function OpsShiftPlanner() {
             {unfilledMaps.length} coverage gap{unfilledMaps.length === 1 ? "" : "s"}
           </p>
           <p className="text-xs text-amber-950/90">
-            Every map needs a supervisor the whole time. Yellow rows are empty; other gaps may need
-            a relief supervisor after the first person’s ~12h window. Use “add supervisor” /
-            “ask for help”, then re-run Auto-plan if needed.
+            Every map needs at least one supervisor. Yellow rows have none assigned. Use “add
+            supervisor” / “ask for help”, or re-run Auto-plan.
           </p>
           <ul className="text-[11px] text-amber-950/90 max-h-28 overflow-y-auto space-y-0.5">
             {unfilledMaps.slice(0, 12).map((u) => (
@@ -1096,35 +1113,48 @@ export function OpsShiftPlanner() {
               const mapsCount = mapsByDay.get(day) ?? 0;
               const mapsList =
                 effectiveMapsPerDay.find((m) => m.dayOfWeek === day)?.maps ?? [];
+              const dayRoster = assignments.filter((a) => a.dayOfWeek === day);
+              const slOnShift = dayRoster.filter((a) => a.isShiftLeader).length;
+              const supOnShift = dayRoster.filter((a) => !a.isShiftLeader).length;
+              const nextDayMaps =
+                effectiveMapsPerDay.find((m) => m.dayOfWeek === day + 1)?.maps ?? [];
+              const nextMorningCount = nextDayMaps.filter(
+                (m) =>
+                  isRequiredMapTask(m.taskKind) &&
+                  m.startMinutes != null &&
+                  m.startMinutes < 12 * 60
+              ).length;
+              const continuity = shiftContinuityHint(mapsList, nextMorningCount);
 
               return (
                 <div key={day} className="rounded-xl border border-border bg-white p-4">
                   <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
                     <div>
                       <p className="font-semibold text-slate-900">{label}</p>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        {mapsCount === 0
+                          ? "No tasks"
+                          : `${mapsCount} task${mapsCount === 1 ? "" : "s"}`}
+                        {dayRoster.length > 0 && (
+                          <>
+                            {" · "}
+                            {slOnShift} SL
+                            {" · "}
+                            {supOnShift} Sup
+                          </>
+                        )}
+                        {mapsCount > 0 && dayRoster.length === 0 && (
+                          <> · not planned yet</>
+                        )}
+                      </p>
+                      {continuity && (
+                        <p className="text-[11px] text-amber-800/90 mt-0.5 max-w-xl">
+                          {continuity}
+                        </p>
+                      )}
                     </div>
                     {mapsCount > 0 && (
                       <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-                        <label className="flex items-center gap-1 text-[11px] text-slate-600">
-                          <span className="sr-only">Sort</span>
-                          <select
-                            className="text-xs border border-border rounded-lg px-2 py-1.5 bg-white"
-                            value={daySortBy[day] ?? "start"}
-                            onChange={(e) =>
-                              setDaySortBy((prev) => ({
-                                ...prev,
-                                [day]: e.target.value as TaskSortBy,
-                              }))
-                            }
-                            title="Sort tasks in this day"
-                          >
-                            <option value="start">Sort: Start</option>
-                            <option value="type">Sort: Type</option>
-                            <option value="client">Sort: Client</option>
-                            <option value="mapper">Sort: Mapper</option>
-                            <option value="supervisor">Sort: Supervisor</option>
-                          </select>
-                        </label>
                         <button
                           type="button"
                           onClick={() => void handleAuto(day, false)}
@@ -1167,19 +1197,94 @@ export function OpsShiftPlanner() {
                       <table className="w-full text-[11px]">
                         <thead className="sticky top-0 bg-slate-100 text-slate-600 z-10">
                           <tr>
-                            <th className="text-left font-semibold px-2 py-1.5">Type</th>
-                            <th className="text-left font-semibold px-2 py-1.5">Client</th>
-                            <th className="text-left font-semibold px-2 py-1.5">Start</th>
-                            <th className="text-left font-semibold px-2 py-1.5">Mapper</th>
-                            <th className="text-left font-semibold px-2 py-1.5 min-w-[200px]">
-                              Supervisors
-                            </th>
+                            {(
+                              [
+                                { key: "type" as const, label: "Type" },
+                                { key: "client" as const, label: "Client" },
+                                { key: "start" as const, label: "Start" },
+                                { key: "mapper" as const, label: "Mapper" },
+                                {
+                                  key: "supervisor" as const,
+                                  label: "Supervisors",
+                                  className: "min-w-[200px]",
+                                },
+                              ]
+                            ).map((col) => {
+                              const active = daySortBy[day] ?? {
+                                by: "start" as TaskSortBy,
+                                dir: "asc" as TaskSortDir,
+                              };
+                              const isActive = active.by === col.key;
+                              return (
+                                <th
+                                  key={col.key}
+                                  className={`text-left font-semibold px-2 py-1.5 ${col.className ?? ""}`}
+                                >
+                                  <button
+                                    type="button"
+                                    className={`inline-flex items-center gap-1 select-none hover:text-slate-900 ${
+                                      isActive ? "text-slate-900" : "text-slate-600"
+                                    }`}
+                                    aria-label={`Sort by ${col.label}`}
+                                    title={`Sort by ${col.label}`}
+                                    onClick={() =>
+                                      setDaySortBy((prev) => {
+                                        const cur = prev[day] ?? {
+                                          by: "start" as TaskSortBy,
+                                          dir: "asc" as TaskSortDir,
+                                        };
+                                        if (cur.by === col.key) {
+                                          return {
+                                            ...prev,
+                                            [day]: {
+                                              by: col.key,
+                                              dir: cur.dir === "asc" ? "desc" : "asc",
+                                            },
+                                          };
+                                        }
+                                        return {
+                                          ...prev,
+                                          [day]: { by: col.key, dir: "asc" },
+                                        };
+                                      })
+                                    }
+                                  >
+                                    <span>{col.label}</span>
+                                    <span
+                                      className={`inline-flex flex-col leading-[0.65] text-[8px] ${
+                                        isActive ? "text-brand-600" : "text-slate-400"
+                                      }`}
+                                      aria-hidden
+                                    >
+                                      <span
+                                        className={
+                                          isActive && active.dir === "asc"
+                                            ? "opacity-100"
+                                            : "opacity-40"
+                                        }
+                                      >
+                                        ▲
+                                      </span>
+                                      <span
+                                        className={
+                                          isActive && active.dir === "desc"
+                                            ? "opacity-100"
+                                            : "opacity-40"
+                                        }
+                                      >
+                                        ▼
+                                      </span>
+                                    </span>
+                                  </button>
+                                </th>
+                              );
+                            })}
                           </tr>
                         </thead>
                         <tbody>
                           {sortMapsForDay(
                             mapsList,
-                            daySortBy[day] ?? "start",
+                            daySortBy[day] ?? { by: "start", dir: "asc" },
                             mapAssignees,
                             data?.staff ?? []
                           ).map((m) => {
@@ -1245,14 +1350,20 @@ export function OpsShiftPlanner() {
                                 </td>
                                 <td className="px-2 py-1.5 align-top">
                                   <div className="space-y-1.5">
-                                    {selectedSlots.map((slot) => {
+                                    {selectedSlots.map((slot, slotIdx) => {
                                       const s = data?.staff.find((x) => x.userId === slot.userId);
                                       if (!s) return null;
+                                      // First seat: at/before map start; extra seats may come later
                                       const startOpts = allowedStartOptions(
                                         s,
                                         day,
-                                        slot.handoff ? slot.startMinutes : clock
-                                      ).filter((t) => clock == null || t <= clock || slot.handoff);
+                                        slotIdx === 0 ? clock : null
+                                      ).filter(
+                                        (t) =>
+                                          clock == null ||
+                                          slotIdx > 0 ||
+                                          t <= clock
+                                      );
                                       const untilH = formatSlotEnd(slot.endMinutes);
                                       return (
                                         <div
@@ -1261,7 +1372,6 @@ export function OpsShiftPlanner() {
                                         >
                                           <div className="flex items-center justify-between gap-1">
                                             <span className="text-[10px] font-medium truncate">
-                                              {slot.handoff ? "Handoff · " : ""}
                                               {s.isShiftLeader ? "SL" : "Sup"} · {s.name}
                                             </span>
                                             <button
@@ -1320,16 +1430,16 @@ export function OpsShiftPlanner() {
                                       <option value="">
                                         {selectedSlots.length === 0
                                           ? "— add supervisor —"
-                                          : "+ handoff / another —"}
+                                          : "+ another supervisor —"}
                                       </option>
                                       {options.map((s) => {
-                                        const entrance =
-                                          selectedSlots.length > 0
-                                            ? Math.max(
-                                                ...selectedSlots.map((x) => x.endMinutes)
-                                              )
-                                            : clock;
-                                        const win = proposeWorkWindow(s, day, entrance);
+                                        const win =
+                                          proposeWorkWindow(s, day, clock) ??
+                                          (selectedSlots.length > 0
+                                            ? proposeWorkWindow(s, day, null, {
+                                                allowShort: true,
+                                              })
+                                            : null);
                                         const role = s.isShiftLeader ? "SL" : "Sup";
                                         const rating =
                                           s.supervisorRating != null
