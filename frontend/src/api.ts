@@ -308,12 +308,21 @@ export const api = {
       totalRows: number;
       cancelledRows: number;
       activeRows: number;
+      withMappingDate: number;
+      scheduleOnlyNoMapping: number;
+      hubEligible: number;
       samples: {
         mapNumber: string | null;
         building: string | null;
         batch: string | null;
         address: string | null;
+        schedule: string | null;
+        mapping: string | null;
+        activation: string | null;
         polishAssignee: string | null;
+        qaAssignee: string | null;
+        mappingAt: string | null;
+        hubEligible: boolean;
       }[];
     }>("/maps/import-csv/preview", {
       method: "POST",
@@ -326,11 +335,17 @@ export const api = {
       updated: number;
       skipped: number;
       cleared: number;
+      hubReady: number;
       errors: { row: number; message: string }[];
       sampleMapNumbers: string[];
     }>("/maps/import-csv", {
       method: "POST",
       body: JSON.stringify({ csv, ...opts }),
+    }),
+
+  deleteAllMaps: () =>
+    request<{ deleted: number }>("/maps/all", {
+      method: "DELETE",
     }),
 
   assignInspector: (
@@ -404,6 +419,12 @@ export const api = {
     request<import("./types").MapRecord>(`/maps/${mapId}/task-station`, {
       method: "PATCH",
       body: JSON.stringify(patch),
+    }),
+
+  setMapPipeline: (mapId: string, stage: "UPLOAD" | "MAPPING" | "POLISH" | "ACTIVATION") =>
+    request<import("./types").MapRecord>(`/maps/${mapId}/pipeline`, {
+      method: "PATCH",
+      body: JSON.stringify({ stage }),
     }),
 
   /** Bulk set board Task and/or Station. */

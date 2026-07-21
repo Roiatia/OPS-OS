@@ -123,6 +123,7 @@ export function getOpsGraphicsWorkLine(map: MapRecord): string | null {
 }
 
 export function getOpsStatusLabel(map: MapRecord): string {
+  if (map.phase === "CANCELLED") return "Cancelled";
   if (map.phase === "INTAKE") {
     return map.releasedToGraphics ? "Awaiting graphics" : "New";
   }
@@ -142,6 +143,7 @@ export function getOpsStatusLabel(map: MapRecord): string {
 }
 
 export function opsPipelineTone(map: MapRecord): string {
+  if (map.phase === "CANCELLED") return "CANCELLED";
   if (map.phase === "INTAKE" && !map.releasedToGraphics) return "PROCESSING";
   if (isReadyToRelease(map)) return "DONE";
   if (map.phase === "FIELD") {

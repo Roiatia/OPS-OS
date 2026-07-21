@@ -15,6 +15,7 @@ enum RoleName {
   SUPERVISOR
   SUPERVISOR_SHIFT_LEADER
   OPS_ADMIN
+  OPS_MANAGER
   OPS_MANAGER_2
 }
 
@@ -220,24 +221,42 @@ model Map {
   helpAskAt        DateTime?
   helpAskById      String?
   helpAskBy        User?   @relation("HelpAskBy", fields: [helpAskById], references: [id], onDelete: SetNull)
-  /** Spreadsheet import fields (Sam's Club / field ops CSV) — stored, not required in UI tables */
+  /** Spreadsheet import fields (Sam's Club / field ops CSV) — raw strings + typed dates */
   batch                   String?
   building                String?
   address                 String?
   mapReceived             String?
   setupStage              String?
   mapperSource            String?
+  /** Raw Schedule cell; prefer scheduleAt for logic */
   scheduleDate            String?
+  /** Predicted mapping date (parsed from Schedule) */
+  scheduleAt              DateTime?
+  /** Raw Mapping cell; prefer mappingAt / fieldDate for Hub */
   mappingDate             String?
+  /** Actual mapping date — drives Hub load day via fieldDate */
+  mappingAt               DateTime?
   postMappingDate         String?
+  /** Raw Sent to studio cell (may be "done") */
   sentToStudio            String?
+  sentToStudioAt          DateTime?
+  /** Raw Received from studio cell (may be "done") */
   receivedFromStudio      String?
+  receivedFromStudioAt    DateTime?
   graphicsPolishAssignee  String?
   graphicsPolishStatus    String?
   polishQaAssignee        String?
+  /** CSV Graphics upload assignee (upload-stage inspector name) */
+  graphicsUploadAssignee  String?
+  /** CSV Upload QA Assignee (upload-stage QA name) */
+  uploadQaAssignee        String?
+  /** Both upload + polish assignee sides filled — UI shows Please assign */
+  assigneeConflict        Boolean          @default(false)
   conversion              String?
   polishStage             String?
+  /** Raw Activation cell; prefer activationAt / dueDate */
   activation              String?
+  activationAt            DateTime?
   remappingDate           String?
   dashboardDate           String?
   maintDate               String?
@@ -260,6 +279,8 @@ model Map {
   @@index([phase, updatedAt])
   @@index([swapBatchId])
   @@index([helpAskBatchId])
+  @@index([fieldDate])
+  @@index([mappingAt])
 }
 
 /** Teammate declined (hid) a swap batch — offer stays open for others. */

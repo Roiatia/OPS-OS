@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api";
 import type { MapRecord, TeamMember } from "../../types";
@@ -6,7 +6,6 @@ import { ROLE_LABELS } from "../../types";
 import { Badge } from "@/components/common/Badge";
 import { Modal } from "@/components/common/Modal";
 import { AssignSupervisorModal } from "./AssignSupervisorModal";
-import { OpsActionLightLoadNote } from "./OpsActionLightLoadNote";
 import { AssignMapModal } from "../leader/AssignMapModal";
 import { AssignQaModal } from "../leader/AssignQaModal";
 import {
@@ -24,13 +23,15 @@ import {
 import { memberIsSupervisor } from "../../lib/roles";
 import {
   canAssignInspector,
-  canAssignQa,
   EMPTY_COLUMN_FILTERS,
+  formatCsvDateCell,
   getInspectorLabel,
   getMapDisplayState,
   getMapStation,
   getQaLabel,
   getTaskType,
+  MAP_STATION_OPTIONS,
+  MAP_TASK_OPTIONS,
   matchesColumnFilters,
   needsInspectorAssignment,
   WORKFLOW_STATES,
@@ -44,11 +45,13 @@ import {
   toDateInputValue,
 } from "../../lib/dates";
 import {
+  getPipelineStage,
+  PIPELINE_STAGE_LABELS,
+  type PipelineStage,
+} from "../../lib/pipeline";
+import {
   canAssignSupervisor,
-  canReleaseToPolish,
-  canSendToGraphics,
   canShuffleSupervisor,
-  formatFieldDateTime,
   getOpsPipelineLabel,
   getOpsStatusLabel,
   getReadyToAcceptMaps,
@@ -56,13 +59,17 @@ import {
   matchesOpsQueue,
   needsSupervisorAssignment,
   OPS_QUEUE_TABS,
-  opsPipelineTone,
   opsStatusTone,
   sortOpsMaps,
   type OpsMapQueue,
 } from "../../lib/opsDisplay";
 import { ReadyToAcceptModal } from "./ReadyToAcceptModal";
 import type { OpsWorkloadAlert } from "../../lib/opsWorkload";
+import type { MapStation, MapTask } from "../../types";
+
+const PIPELINE_OPTIONS: PipelineStage[] = ["UPLOAD", "MAPPING", "POLISH", "ACTIVATION"];
+const selectClass =
+  "w-full text-xs font-medium rounded-md border border-border bg-white px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:opacity-50";
 
 interface Props {
   maps: MapRecord[];
@@ -82,12 +89,13 @@ const filterInputClass =
 export function OpsMapsBoard({
   maps,
   team,
-  workloadAlerts,
+  workloadAlerts: _workloadAlerts,
   onRefresh,
   onPatch,
   readyPanelOpen,
   onReadyPanelOpenChange,
 }: Props) {
+  void _workloadAlerts;
   const patch = (map: MapRecord) => (onPatch ? onPatch(map) : onRefresh());
 
   const [queue, setQueue] = useState<OpsMapQueue>("all");
@@ -108,9 +116,38 @@ export function OpsMapsBoard({
   const [shufflingCount, setShufflingCount] = useState(0);
   const [unassigningCount, setUnassigningCount] = useState(0);
   const [internalReadyPanelOpen, setInternalReadyPanelOpen] = useState(false);
+  const [deletingAll, setDeletingAll] = useState(false);
+  const [metaSaving, setMetaSaving] = useState<string | null>(null);
+  const tableScrollRef = useRef<HTMLDivElement>(null);
 
   const readyMaps = useMemo(() => getReadyToAcceptMaps(maps), [maps]);
   const readyPanelIsOpen = readyPanelOpen ?? internalReadyPanelOpen;
+
+  function scrollTable(dx: number, dy: number) {
+    const el = tableScrollRef.current;
+    if (!el) return;
+    el.scrollBy({ left: dx, top: dy, behavior: "smooth" });
+  }
+
+  async function handleDeleteAllMaps() {
+    const ok = window.confirm(
+      `Delete ALL ${maps.length} map${maps.length === 1 ? "" : "s"} from the database? This cannot be undone.`
+    );
+    if (!ok) return;
+    const typed = window.prompt('Type DELETE to confirm wiping every map:');
+    if (typed !== "DELETE") return;
+
+    setDeletingAll(true);
+    setError("");
+    try {
+      await api.deleteAllMaps();
+      await onRefresh();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setDeletingAll(false);
+    }
+  }
 
   function setReadyPanelOpen(open: boolean) {
     onReadyPanelOpenChange?.(open);
@@ -132,6 +169,7 @@ export function OpsMapsBoard({
   );
 
   const filterOptions = useMemo(() => {
+    const batches = new Set<string>();
     const tasks = new Set<string>();
     const stations = new Set<string>();
     const states = new Set<string>();
@@ -139,6 +177,7 @@ export function OpsMapsBoard({
     const qaNames = new Set<string>();
 
     for (const map of maps) {
+      batches.add(map.batch?.trim() || "—");
       tasks.add(getTaskType(map) ?? "—");
       stations.add(getMapStation(map));
       states.add(getMapDisplayState(map));
@@ -147,6 +186,7 @@ export function OpsMapsBoard({
     }
 
     return {
+      batches: [...batches].sort(),
       tasks: [...tasks].sort(),
       stations: [...stations].sort(),
       states: [...states].sort(),
@@ -189,6 +229,35 @@ export function OpsMapsBoard({
       setError((err as Error).message);
     } finally {
       setDueDateSaving(null);
+    }
+  }
+
+  async function handleTaskStationChange(
+    map: MapRecord,
+    patchFields: { task?: MapTask; station?: MapStation }
+  ) {
+    setMetaSaving(map.id);
+    setError("");
+    try {
+      const updated = await api.setMapTaskStation(map.id, patchFields);
+      patch(updated);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setMetaSaving(null);
+    }
+  }
+
+  async function handlePipelineChange(map: MapRecord, stage: PipelineStage) {
+    setMetaSaving(map.id);
+    setError("");
+    try {
+      const updated = await api.setMapPipeline(map.id, stage);
+      patch(updated);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setMetaSaving(null);
     }
   }
 
@@ -375,33 +444,6 @@ export function OpsMapsBoard({
     try {
       const updated = await api.assignSupervisor(assignMap.id, supervisorId);
       setAssignMap(null);
-      patch(updated);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleRelease(map: MapRecord) {
-    if (!canReleaseToPolish(map)) return;
-    setLoading(true);
-    setError("");
-    try {
-      const updated = await api.fieldComplete(map.id);
-      patch(updated);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleSendToGraphics(map: MapRecord) {
-    setLoading(true);
-    setError("");
-    try {
-      const updated = await api.releaseToGraphics(map.id);
       patch(updated);
     } catch (err) {
       setError((err as Error).message);
@@ -613,13 +655,93 @@ export function OpsMapsBoard({
             Clear filters
           </button>
         )}
+        <button
+          type="button"
+          disabled={loading || deletingAll || maps.length === 0}
+          onClick={handleDeleteAllMaps}
+          className="px-3 py-1.5 text-sm font-medium rounded-lg border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 disabled:opacity-50"
+          title="Delete every map in the database"
+        >
+          {deletingAll ? "Deleting…" : "Delete all maps"}
+        </button>
       </div>
 
-      <div className="overflow-x-auto rounded-xl border border-border bg-white shadow-sm">
-        <table className="w-full text-sm min-w-[1400px]">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs text-muted">
+          Scroll inside the table · use arrows or trackpad · header stays pinned
+        </p>
+        <div className="flex items-center gap-1" role="group" aria-label="Scroll maps table">
+          <button
+            type="button"
+            onClick={() => scrollTable(0, -180)}
+            className="h-8 w-8 rounded-lg border border-border bg-white text-slate-600 hover:bg-slate-50 text-sm"
+            title="Scroll up"
+            aria-label="Scroll up"
+          >
+            ↑
+          </button>
+          <button
+            type="button"
+            onClick={() => scrollTable(0, 180)}
+            className="h-8 w-8 rounded-lg border border-border bg-white text-slate-600 hover:bg-slate-50 text-sm"
+            title="Scroll down"
+            aria-label="Scroll down"
+          >
+            ↓
+          </button>
+          <button
+            type="button"
+            onClick={() => scrollTable(-220, 0)}
+            className="h-8 w-8 rounded-lg border border-border bg-white text-slate-600 hover:bg-slate-50 text-sm"
+            title="Scroll left"
+            aria-label="Scroll left"
+          >
+            ←
+          </button>
+          <button
+            type="button"
+            onClick={() => scrollTable(220, 0)}
+            className="h-8 w-8 rounded-lg border border-border bg-white text-slate-600 hover:bg-slate-50 text-sm"
+            title="Scroll right"
+            aria-label="Scroll right"
+          >
+            →
+          </button>
+        </div>
+      </div>
+
+      <div
+        ref={tableScrollRef}
+        tabIndex={0}
+        onKeyDown={(e) => {
+          const step = e.shiftKey ? 320 : 160;
+          if (e.key === "ArrowRight") {
+            e.preventDefault();
+            scrollTable(step, 0);
+          } else if (e.key === "ArrowLeft") {
+            e.preventDefault();
+            scrollTable(-step, 0);
+          } else if (e.key === "ArrowDown") {
+            e.preventDefault();
+            scrollTable(0, step);
+          } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            scrollTable(0, -step);
+          } else if (e.key === "Home") {
+            e.preventDefault();
+            tableScrollRef.current?.scrollTo({ left: 0, behavior: "smooth" });
+          } else if (e.key === "End") {
+            e.preventDefault();
+            const el = tableScrollRef.current;
+            if (el) el.scrollTo({ left: el.scrollWidth, behavior: "smooth" });
+          }
+        }}
+        className="overflow-auto max-h-[min(70vh,720px)] rounded-xl border border-border bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-brand-500/30"
+      >
+        <table className="w-full text-sm min-w-[1400px] border-separate border-spacing-0">
           <thead>
-            <tr className="border-b border-border bg-slate-50/80 text-left text-xs uppercase tracking-wide text-muted">
-              <th className="px-3 py-3 w-10">
+            <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted">
+              <th className="sticky top-0 z-20 bg-slate-50 px-3 py-3 w-10 shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
                 <input
                   type="checkbox"
                   checked={filteredMaps.length > 0 && selected.size === filteredMaps.length}
@@ -627,26 +749,73 @@ export function OpsMapsBoard({
                   aria-label="Select all"
                 />
               </th>
-              <th className="px-3 py-3 font-semibold min-w-[110px]">Map</th>
-              <th className="px-3 py-3 font-semibold min-w-[90px]">Client</th>
-              <th className="px-3 py-3 font-semibold min-w-[100px]">Pipeline</th>
-              <th className="px-3 py-3 font-semibold min-w-[80px]">Task</th>
-              <th className="px-3 py-3 font-semibold min-w-[80px]">Station</th>
-              <th className="px-3 py-3 font-semibold min-w-[100px]">Graphics</th>
-              <th className="px-3 py-3 font-semibold min-w-[100px]">Inspector</th>
-              <th className="px-3 py-3 font-semibold min-w-[90px]">QA</th>
-              <th className="px-3 py-3 font-semibold min-w-[100px]">Address</th>
-              <th className="px-3 py-3 font-semibold min-w-[100px]">Supervisor</th>
-              <th className="px-3 py-3 font-semibold min-w-[90px]">Mapper</th>
-              <th className="px-3 py-3 font-semibold min-w-[90px]">Date</th>
-              <th className="px-3 py-3 font-semibold min-w-[90px]">Status</th>
-              <th className="px-3 py-3 font-semibold min-w-[110px]">Supervisor note</th>
-              <th className="px-3 py-3 font-semibold min-w-[100px]">Deadline</th>
-              <th className="px-3 py-3 font-semibold min-w-[120px]">Action</th>
+              <th className="sticky top-0 z-20 bg-slate-50 px-3 py-3 font-semibold min-w-[110px] shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
+                Map
+              </th>
+              <th className="sticky top-0 z-20 bg-slate-50 px-3 py-3 font-semibold min-w-[90px] shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
+                Client
+              </th>
+              <th className="sticky top-0 z-20 bg-slate-50 px-3 py-3 font-semibold min-w-[90px] shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
+                Batch
+              </th>
+              <th className="sticky top-0 z-20 bg-slate-50 px-3 py-3 font-semibold min-w-[120px] shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
+                Pipeline
+              </th>
+              <th className="sticky top-0 z-20 bg-slate-50 px-3 py-3 font-semibold min-w-[100px] shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
+                Task
+              </th>
+              <th className="sticky top-0 z-20 bg-slate-50 px-3 py-3 font-semibold min-w-[90px] shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
+                Station
+              </th>
+              <th className="sticky top-0 z-20 bg-slate-50 px-3 py-3 font-semibold min-w-[100px] shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
+                Graphics
+              </th>
+              <th className="sticky top-0 z-20 bg-slate-50 px-3 py-3 font-semibold min-w-[120px] shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
+                Inspector
+              </th>
+              <th className="sticky top-0 z-20 bg-slate-50 px-3 py-3 font-semibold min-w-[110px] shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
+                QA
+              </th>
+              <th className="sticky top-0 z-20 bg-slate-50 px-3 py-3 font-semibold min-w-[100px] shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
+                Address
+              </th>
+              <th className="sticky top-0 z-20 bg-slate-50 px-3 py-3 font-semibold min-w-[100px] shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
+                Supervisor
+              </th>
+              <th className="sticky top-0 z-20 bg-slate-50 px-3 py-3 font-semibold min-w-[90px] shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
+                Mapper
+              </th>
+              <th className="sticky top-0 z-20 bg-slate-50 px-3 py-3 font-semibold min-w-[90px] shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
+                Schedule
+              </th>
+              <th className="sticky top-0 z-20 bg-slate-50 px-3 py-3 font-semibold min-w-[90px] shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
+                Mapping
+              </th>
+              <th className="sticky top-0 z-20 bg-slate-50 px-3 py-3 font-semibold min-w-[90px] shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
+                Sent to studio
+              </th>
+              <th className="sticky top-0 z-20 bg-slate-50 px-3 py-3 font-semibold min-w-[90px] shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
+                Received from studio
+              </th>
+              <th className="sticky top-0 z-20 bg-slate-50 px-3 py-3 font-semibold min-w-[80px] shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
+                Polish
+              </th>
+              <th className="sticky top-0 z-20 bg-slate-50 px-3 py-3 font-semibold min-w-[90px] shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
+                Activation
+              </th>
+              <th className="sticky top-0 z-20 bg-slate-50 px-3 py-3 font-semibold min-w-[90px] shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
+                Status
+              </th>
+              <th className="sticky top-0 z-20 bg-slate-50 px-3 py-3 font-semibold min-w-[110px] shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
+                Supervisor note
+              </th>
+              <th className="sticky top-0 z-20 bg-slate-50 px-3 py-3 font-semibold min-w-[100px] shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
+                Deadline
+              </th>
             </tr>
-            <tr className="border-b border-border bg-white text-left text-xs normal-case">
-              <th className="px-3 py-2" />
-              <th className="px-3 py-2">
+            <tr className="border-b border-border text-left text-xs normal-case">
+              <th className="sticky top-[42px] z-20 bg-white px-3 py-2 shadow-[0_1px_0_0_rgba(0,0,0,0.06)]" />
+              <th className="sticky top-[42px] z-20 bg-white px-3 py-2 shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
                 <input
                   type="text"
                   placeholder="Filter…"
@@ -655,7 +824,7 @@ export function OpsMapsBoard({
                   className={filterInputClass}
                 />
               </th>
-              <th className="px-3 py-2">
+              <th className="sticky top-[42px] z-20 bg-white px-3 py-2 shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
                 <select
                   value={columnFilters.client}
                   onChange={(e) => updateFilter("client", e.target.value)}
@@ -669,7 +838,21 @@ export function OpsMapsBoard({
                   ))}
                 </select>
               </th>
-              <th className="px-3 py-2">
+              <th className="sticky top-[42px] z-20 bg-white px-3 py-2 shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
+                <select
+                  value={columnFilters.batch}
+                  onChange={(e) => updateFilter("batch", e.target.value)}
+                  className={filterInputClass}
+                >
+                  <option value="">All</option>
+                  {filterOptions.batches.map((b) => (
+                    <option key={b} value={b}>
+                      {b}
+                    </option>
+                  ))}
+                </select>
+              </th>
+              <th className="sticky top-[42px] z-20 bg-white px-3 py-2 shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
                 <select
                   value={phaseFilter}
                   onChange={(e) => setPhaseFilter(e.target.value)}
@@ -683,7 +866,7 @@ export function OpsMapsBoard({
                   ))}
                 </select>
               </th>
-              <th className="px-3 py-2">
+              <th className="sticky top-[42px] z-20 bg-white px-3 py-2 shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
                 <select
                   value={columnFilters.task}
                   onChange={(e) => updateFilter("task", e.target.value)}
@@ -697,7 +880,7 @@ export function OpsMapsBoard({
                   ))}
                 </select>
               </th>
-              <th className="px-3 py-2">
+              <th className="sticky top-[42px] z-20 bg-white px-3 py-2 shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
                 <select
                   value={columnFilters.station}
                   onChange={(e) => updateFilter("station", e.target.value)}
@@ -711,7 +894,7 @@ export function OpsMapsBoard({
                   ))}
                 </select>
               </th>
-              <th className="px-3 py-2">
+              <th className="sticky top-[42px] z-20 bg-white px-3 py-2 shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
                 <select
                   value={columnFilters.state}
                   onChange={(e) => updateFilter("state", e.target.value)}
@@ -726,7 +909,7 @@ export function OpsMapsBoard({
                   ))}
                 </select>
               </th>
-              <th className="px-3 py-2">
+              <th className="sticky top-[42px] z-20 bg-white px-3 py-2 shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
                 <select
                   value={columnFilters.inspector}
                   onChange={(e) => updateFilter("inspector", e.target.value)}
@@ -740,7 +923,7 @@ export function OpsMapsBoard({
                   ))}
                 </select>
               </th>
-              <th className="px-3 py-2">
+              <th className="sticky top-[42px] z-20 bg-white px-3 py-2 shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
                 <select
                   value={columnFilters.qa}
                   onChange={(e) => updateFilter("qa", e.target.value)}
@@ -754,30 +937,32 @@ export function OpsMapsBoard({
                   ))}
                 </select>
               </th>
-              <th className="px-3 py-2" colSpan={6} />
+              <th className="sticky top-[42px] z-20 bg-white px-3 py-2 shadow-[0_1px_0_0_rgba(0,0,0,0.06)]" colSpan={13} />
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
             {filteredMaps.length === 0 ? (
               <tr>
-                <td colSpan={17} className="px-4 py-10 text-center text-muted">
+                <td colSpan={22} className="px-4 py-10 text-center text-muted">
                   No maps in this queue.
                 </td>
               </tr>
             ) : (
               filteredMaps.map((map) => {
-                const taskType = getTaskType(map);
                 const graphicsState = getMapDisplayState(map);
                 const ready = isReadyToRelease(map);
+                const cancelled = map.phase === "CANCELLED";
                 return (
                   <tr
                     key={map.id}
                     className={`align-top ${
-                      map.fieldWorkStatus === "COMPLETED" && map.shiftLeaderApproved === false
-                        ? "bg-rose-50/90 hover:bg-rose-50 ring-1 ring-inset ring-rose-300/70"
-                        : ready
-                          ? "bg-emerald-50/70 hover:bg-emerald-50 ring-1 ring-inset ring-emerald-200/60"
-                          : "hover:bg-slate-50/50"
+                      cancelled
+                        ? "bg-slate-50/80 text-slate-500 hover:bg-slate-100/80"
+                        : map.fieldWorkStatus === "COMPLETED" && map.shiftLeaderApproved === false
+                          ? "bg-rose-50/90 hover:bg-rose-50 ring-1 ring-inset ring-rose-300/70"
+                          : ready
+                            ? "bg-emerald-50/70 hover:bg-emerald-50 ring-1 ring-inset ring-emerald-200/60"
+                            : "hover:bg-slate-50/50"
                     }`}
                   >
                     <td className="px-3 py-3">
@@ -786,12 +971,18 @@ export function OpsMapsBoard({
                         checked={selected.has(map.id)}
                         onChange={() => toggleSelect(map.id)}
                         aria-label={`Select ${map.mapNumber}`}
+                        disabled={cancelled}
                       />
                     </td>
                     <td className="px-3 py-3 font-medium whitespace-nowrap">
                       <Link to={`/app/maps/${map.id}`} className="text-brand-600 hover:underline">
                         {map.mapNumber}
                       </Link>
+                      {cancelled && (
+                        <span className="ml-2 inline-block text-[10px] font-semibold text-red-800 bg-red-100 rounded px-1.5 py-0.5">
+                          Cancelled
+                        </span>
+                      )}
                       {map.fieldWorkStatus === "COMPLETED" && map.shiftLeaderApproved === false && (
                         <span className="ml-2 inline-block text-[10px] font-semibold text-rose-800 bg-rose-100 rounded px-1.5 py-0.5">
                           No SL approval
@@ -799,30 +990,71 @@ export function OpsMapsBoard({
                       )}
                     </td>
                     <td className="px-3 py-3">{map.client}</td>
+                    <td className="px-3 py-3 text-muted text-xs">{map.batch?.trim() || "—"}</td>
                     <td className="px-3 py-3">
-                      <Badge label={getOpsPipelineLabel(map)} tone={opsPipelineTone(map)} />
-                    </td>
-                    <td className="px-3 py-3">
-                      {taskType ? (
-                        <Badge
-                          label={taskType}
-                          tone={
-                            taskType === "Upload"
-                              ? "PREP"
-                              : taskType === "Uploaded"
-                                ? "UPLOAD_REVIEW"
-                                : "POLISH"
-                          }
-                        />
+                      {cancelled ? (
+                        <Badge label="Cancelled" tone="CANCELLED" />
                       ) : (
-                        "—"
+                        <>
+                          <select
+                            value={getPipelineStage(map.phase)}
+                            disabled={metaSaving === map.id}
+                            onChange={(e) =>
+                              handlePipelineChange(map, e.target.value as PipelineStage)
+                            }
+                            title="Change pipeline"
+                            className={selectClass}
+                          >
+                            {PIPELINE_OPTIONS.map((s) => (
+                              <option key={s} value={s}>
+                                {PIPELINE_STAGE_LABELS[s]}
+                              </option>
+                            ))}
+                          </select>
+                          <div
+                            className="mt-0.5 text-[10px] text-muted truncate"
+                            title={getOpsPipelineLabel(map)}
+                          >
+                            {getOpsPipelineLabel(map)}
+                          </div>
+                        </>
                       )}
                     </td>
                     <td className="px-3 py-3">
-                      <Badge
-                        label={getMapStation(map)}
-                        tone={map.station === "OPS" ? "FIELD" : "PREP"}
-                      />
+                      <select
+                        value={map.task ?? "UPLOAD"}
+                        disabled={metaSaving === map.id || cancelled}
+                        onChange={(e) =>
+                          handleTaskStationChange(map, { task: e.target.value as MapTask })
+                        }
+                        title="Change task"
+                        className={selectClass}
+                      >
+                        {MAP_TASK_OPTIONS.map((o) => (
+                          <option key={o.value} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="px-3 py-3">
+                      <select
+                        value={map.station ?? "GRAPHICS"}
+                        disabled={metaSaving === map.id || cancelled}
+                        onChange={(e) =>
+                          handleTaskStationChange(map, {
+                            station: e.target.value as MapStation,
+                          })
+                        }
+                        title="Change station"
+                        className={selectClass}
+                      >
+                        {MAP_STATION_OPTIONS.map((o) => (
+                          <option key={o.value} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
                     </td>
                     <td className="px-3 py-3">
                       {graphicsState === "—" ? (
@@ -832,36 +1064,95 @@ export function OpsMapsBoard({
                       )}
                     </td>
                     <td className="px-3 py-3">
-                      {map.assignedInspector?.name ?? (
-                        needsInspectorAssignment(map) ? (
-                          <span className="text-amber-600 text-xs font-medium">Unassigned</span>
-                        ) : (
-                          "—"
-                        )
-                      )}
+                      <div className="flex flex-col gap-1 min-w-[100px]">
+                        <span
+                          className={
+                            getInspectorLabel(map) === "Please assign"
+                              ? "text-amber-700 text-xs font-medium"
+                              : undefined
+                          }
+                        >
+                          {getInspectorLabel(map) === "Unassigned" && needsInspectorAssignment(map) ? (
+                            <span className="text-amber-600 text-xs font-medium">Unassigned</span>
+                          ) : (
+                            getInspectorLabel(map)
+                          )}
+                        </span>
+                        {canAssignInspector(map) && (
+                          <button
+                            type="button"
+                            disabled={loading}
+                            onClick={() => setAssignInspectorMap(map)}
+                            className="px-2 py-0.5 text-[10px] font-medium rounded bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50 w-fit"
+                          >
+                            {map.assignedInspector ? "Reassign" : "Assign"}
+                          </button>
+                        )}
+                      </div>
                     </td>
                     <td className="px-3 py-3">
-                      {canAssignQa(map) ? (
-                        map.assignedQa?.name ?? (
-                          <span className="text-violet-700 text-xs font-medium">Needs QA</span>
-                        )
-                      ) : (
-                        map.assignedQa?.name ?? "—"
-                      )}
+                      <div className="flex flex-col gap-1 min-w-[100px]">
+                        <span
+                          className={
+                            getQaLabel(map) === "Please assign"
+                              ? "text-amber-700 text-xs font-medium"
+                              : undefined
+                          }
+                        >
+                          {getQaLabel(map)}
+                        </span>
+                        {map.phase !== "CANCELLED" && map.phase !== "APPROVED" && (
+                          <button
+                            type="button"
+                            disabled={loading}
+                            onClick={() => setAssignQaMap(map)}
+                            className="px-2 py-0.5 text-[10px] font-medium rounded bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 w-fit"
+                          >
+                            {map.assignedQa ? "Reassign" : "Assign"}
+                          </button>
+                        )}
+                      </div>
                     </td>
                     <td className="px-3 py-3 text-muted text-xs max-w-[120px]">{map.area ?? "—"}</td>
                     <td className="px-3 py-3">
-                      {map.assignedSupervisor?.name ?? (
-                        needsSupervisorAssignment(map) ? (
-                          <span className="text-amber-600 text-xs font-medium">Unassigned</span>
-                        ) : (
-                          "—"
-                        )
-                      )}
+                      <div className="flex flex-col gap-1">
+                        {map.assignedSupervisor?.name ?? (
+                          needsSupervisorAssignment(map) ? (
+                            <span className="text-amber-600 text-xs font-medium">Unassigned</span>
+                          ) : (
+                            "—"
+                          )
+                        )}
+                        {canAssignSupervisor(map) && (
+                          <button
+                            type="button"
+                            disabled={loading}
+                            onClick={() => setAssignMap(map)}
+                            className="px-2 py-0.5 text-[10px] font-medium rounded bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50 w-fit"
+                          >
+                            Assign
+                          </button>
+                        )}
+                      </div>
                     </td>
                     <td className="px-3 py-3">{map.mapperName ?? "—"}</td>
-                    <td className="px-3 py-3 text-muted text-xs whitespace-nowrap">
-                      {map.phase === "FIELD" ? formatFieldDateTime(map.fieldDate) : "—"}
+                    <td className="px-3 py-3 text-xs text-muted whitespace-nowrap">
+                      {formatCsvDateCell(map.scheduleAt, map.scheduleDate)}
+                    </td>
+                    <td className="px-3 py-3 text-xs text-muted whitespace-nowrap">
+                      {formatCsvDateCell(map.mappingAt, map.mappingDate)}
+                    </td>
+                    <td className="px-3 py-3 text-xs text-muted whitespace-nowrap">
+                      {formatCsvDateCell(map.sentToStudioAt, map.sentToStudio)}
+                    </td>
+                    <td className="px-3 py-3 text-xs text-muted whitespace-nowrap">
+                      {formatCsvDateCell(map.receivedFromStudioAt, map.receivedFromStudio)}
+                    </td>
+                    <td className="px-3 py-3 text-xs text-muted whitespace-nowrap">
+                      {map.polishStage?.trim() || "—"}
+                    </td>
+                    <td className="px-3 py-3 text-xs text-muted whitespace-nowrap">
+                      {formatCsvDateCell(map.activationAt, map.activation)}
                     </td>
                     <td className="px-3 py-3">
                       <Badge label={getOpsStatusLabel(map)} tone={opsStatusTone(map)} />
@@ -877,7 +1168,7 @@ export function OpsMapsBoard({
                         <input
                           type="date"
                           value={toDateInputValue(map.dueDate)}
-                          disabled={dueDateSaving === map.id}
+                          disabled={dueDateSaving === map.id || cancelled}
                           onChange={(e) => handleDueDateChange(map.id, e.target.value)}
                           className="w-full border border-border rounded px-1.5 py-1 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:opacity-50"
                           title="Set map deadline"
@@ -889,68 +1180,6 @@ export function OpsMapsBoard({
                             {formatDueDate(map.dueDate)}
                           </span>
                         )}
-                      </div>
-                    </td>
-                    <td className="px-3 py-3">
-                      <div className="flex flex-col gap-1 min-w-[120px]">
-                        {canSendToGraphics(map) && (
-                          <button
-                            type="button"
-                            disabled={loading}
-                            onClick={() => handleSendToGraphics(map)}
-                            className="px-2.5 py-1 text-xs font-medium rounded-lg bg-brand-600 text-white hover:bg-brand-700"
-                          >
-                            Send to graphics
-                          </button>
-                        )}
-                        {canAssignInspector(map) && (
-                          <button
-                            type="button"
-                            disabled={loading}
-                            onClick={() => setAssignInspectorMap(map)}
-                            className="px-2.5 py-1 text-xs font-medium rounded-lg bg-brand-600 text-white hover:bg-brand-700"
-                          >
-                            Assign
-                          </button>
-                        )}
-                        {canAssignQa(map) && (
-                          <button
-                            type="button"
-                            disabled={loading}
-                            onClick={() => setAssignQaMap(map)}
-                            className="px-2.5 py-1 text-xs font-medium rounded-lg bg-brand-600 text-white hover:bg-brand-700"
-                          >
-                            Assign
-                          </button>
-                        )}
-                        {canAssignSupervisor(map) && (
-                          <button
-                            type="button"
-                            disabled={loading}
-                            onClick={() => setAssignMap(map)}
-                            className="px-2.5 py-1 text-xs font-medium rounded-lg bg-brand-600 text-white hover:bg-brand-700"
-                          >
-                            Assign
-                          </button>
-                        )}
-                        {canReleaseToPolish(map) && (
-                          <button
-                            type="button"
-                            disabled={loading}
-                            onClick={() => handleRelease(map)}
-                            className="px-2.5 py-1 text-xs font-medium rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"
-                          >
-                            Accept &amp; send to polish
-                          </button>
-                        )}
-                        {!canSendToGraphics(map) &&
-                          !canAssignInspector(map) &&
-                          !canAssignQa(map) &&
-                          !canAssignSupervisor(map) &&
-                          !canReleaseToPolish(map) && (
-                            <span className="text-xs text-slate-300">—</span>
-                          )}
-                        <OpsActionLightLoadNote map={map} alerts={workloadAlerts} />
                       </div>
                     </td>
                   </tr>

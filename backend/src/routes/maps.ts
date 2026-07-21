@@ -4,7 +4,7 @@ import { authMiddleware, requireRoles, type AuthedRequest } from "../middleware/
 import { userHasOpsManagerRole } from "../domain/roles.js";
 import * as workflow from "../services/workflow.js";
 import { syncMapsFromSpreadsheet } from "../services/spreadsheetSync.js";
-import { importSamsClubCsv, previewSamsClubCsv } from "../services/csvImport.js";
+import { importSamsClubCsv, previewSamsClubCsv, clearAllMaps } from "../services/csvImport.js";
 
 const router = Router();
 router.use(authMiddleware);
@@ -505,7 +505,7 @@ router.post(
 
 router.post(
   "/import-csv/preview",
-  requireRoles(RoleName.OPS_ADMIN, RoleName.GRAPHIC_TEAM_LEADER),
+  requireRoles(RoleName.OPS_ADMIN, RoleName.OPS_MANAGER_2, RoleName.GRAPHIC_TEAM_LEADER),
   async (req, res) => {
     try {
       const { csv } = req.body as { csv?: string };
@@ -523,7 +523,7 @@ router.post(
 
 router.post(
   "/import-csv",
-  requireRoles(RoleName.OPS_ADMIN, RoleName.GRAPHIC_TEAM_LEADER),
+  requireRoles(RoleName.OPS_ADMIN, RoleName.OPS_MANAGER_2, RoleName.GRAPHIC_TEAM_LEADER),
   async (req, res) => {
     try {
       const { csv, clearExisting, defaultClient } = req.body as {
@@ -542,6 +542,19 @@ router.post(
       res.json(result);
     } catch (e) {
       res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+router.delete(
+  "/all",
+  requireRoles(RoleName.OPS_ADMIN, RoleName.OPS_MANAGER_2, RoleName.GRAPHIC_TEAM_LEADER),
+  async (_req, res) => {
+    try {
+      const deleted = await clearAllMaps();
+      res.json({ deleted });
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
     }
   }
 );
@@ -705,6 +718,28 @@ router.patch(
             ? { station: station as import("@prisma/client").MapStation }
             : {}),
         },
+        (req as AuthedRequest).user
+      );
+      res.json(map);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+router.patch(
+  "/:id/pipeline",
+  requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN),
+  async (req, res) => {
+    try {
+      const { stage } = req.body as { stage?: string };
+      if (!stage || !["UPLOAD", "MAPPING", "POLISH", "ACTIVATION"].includes(stage)) {
+        res.status(400).json({ error: "stage required: UPLOAD, MAPPING, POLISH, ACTIVATION" });
+        return;
+      }
+      const map = await workflow.setMapPipeline(
+        req.params.id,
+        stage as "UPLOAD" | "MAPPING" | "POLISH" | "ACTIVATION",
         (req as AuthedRequest).user
       );
       res.json(map);

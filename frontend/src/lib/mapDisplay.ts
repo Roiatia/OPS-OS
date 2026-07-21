@@ -196,12 +196,44 @@ export function matchesQueue(map: MapRecord, queue: AssignmentQueue): boolean {
 }
 
 export function getInspectorLabel(map: MapRecord): string {
-  return map.assignedInspector?.name ?? "Unassigned";
+  if (map.assignedInspector?.name) return map.assignedInspector.name;
+  if (map.assigneeConflict) return "Please assign";
+  if (map.task === "POLISH") {
+    return map.graphicsPolishAssignee ?? "Unassigned";
+  }
+  return map.graphicsUploadAssignee ?? map.graphicsPolishAssignee ?? "Unassigned";
 }
 
 export function getQaLabel(map: MapRecord): string {
-  if (!canAssignQa(map) && !map.assignedQa) return "—";
-  return map.assignedQa?.name ?? "Needs QA";
+  if (map.assignedQa?.name) return map.assignedQa.name;
+  if (map.assigneeConflict) return "Please assign";
+  if (map.task === "POLISH") {
+    return map.polishQaAssignee ?? (canAssignQa(map) ? "Needs QA" : "—");
+  }
+  const csv = map.uploadQaAssignee ?? map.polishQaAssignee;
+  if (csv) return csv;
+  if (!canAssignQa(map)) return "—";
+  return "Needs QA";
+}
+
+/** Prefer typed date, else raw spreadsheet string. */
+export function formatCsvDateCell(
+  at: string | null | undefined,
+  raw: string | null | undefined
+): string {
+  if (at) {
+    try {
+      return new Date(at).toLocaleDateString(undefined, {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+      });
+    } catch {
+      /* fall through */
+    }
+  }
+  const s = raw?.trim();
+  return s || "—";
 }
 
 /** Active maps a team member is working on (inspector or QA), excluding approved. */

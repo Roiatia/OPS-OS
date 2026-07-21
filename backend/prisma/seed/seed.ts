@@ -74,6 +74,11 @@ const DEMO_USERS = [
     name: "Miriam Levy",
     roles: [RoleName.OPS_MANAGER_2] as RoleName[],
   },
+  {
+    email: "opsmanager@ops-demo.local",
+    name: "Noa Ops Manager",
+    roles: [RoleName.OPS_MANAGER] as RoleName[],
+  },
 ];
 
 async function seedUsers() {

@@ -2,6 +2,7 @@ import { Suspense, lazy, useCallback, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { SettingsPanel } from "../components/leader/SettingsPanel";
+import { CsvImportPanel } from "../components/leader/CsvImportPanel";
 import { MapHubBoard } from "../components/hub/MapHubBoard";
 import { SpreadsheetSyncPanel } from "../components/ops/SpreadsheetSyncPanel";
 import { OpsManagerSidebar, type OpsSection } from "../components/ops/OpsManagerSidebar";
@@ -264,6 +265,7 @@ export function OpsManagerDashboardPage() {
                     ))}
                   </div>
 
+                  <CsvImportPanel onImported={load} />
                   <SpreadsheetSyncPanel onSynced={load} />
 
                   {showAddMap && (

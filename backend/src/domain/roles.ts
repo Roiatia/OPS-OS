@@ -9,6 +9,7 @@ export const SUPERVISOR_ROLE_NAMES = [
 /** OPS manager roles — primary + secondary managers share the same access */
 export const OPS_MANAGER_ROLE_NAMES = [
   RoleName.OPS_ADMIN,
+  "OPS_MANAGER",
   "OPS_MANAGER_2",
 ].filter((role): role is RoleName => role != null && role !== undefined);
 

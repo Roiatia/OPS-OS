@@ -1,7 +1,7 @@
 import type { RoleName, TeamMember, User } from "../types";
 
 export const SUPERVISOR_ROLES: RoleName[] = ["SUPERVISOR", "SUPERVISOR_SHIFT_LEADER"];
-export const OPS_MANAGER_ROLES: RoleName[] = ["OPS_ADMIN", "OPS_MANAGER_2"];
+export const OPS_MANAGER_ROLES: RoleName[] = ["OPS_ADMIN", "OPS_MANAGER", "OPS_MANAGER_2"];
 
 export function isSupervisorRole(role: RoleName): boolean {
   return SUPERVISOR_ROLES.includes(role);

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef } from "react";
 import type { MapPhase, MapRecord } from "../types";
 
-/** Phases that leave the active board and belong in History. */
-export const ARCHIVED_MAP_PHASES: MapPhase[] = ["APPROVED", "CANCELLED"];
+/** Phases that leave the active board and belong in History. Cancelled stays on the board. */
+export const ARCHIVED_MAP_PHASES: MapPhase[] = ["APPROVED"];
 
 export function isArchivedPhase(phase: MapPhase): boolean {
   return ARCHIVED_MAP_PHASES.includes(phase);

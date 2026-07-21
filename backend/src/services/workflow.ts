@@ -27,6 +27,8 @@ export interface AttachmentInput {
 }
 
 const ARCHIVED_PHASES: MapPhase[] = [MapPhase.APPROVED, MapPhase.CANCELLED];
+/** Approved maps leave the main board; cancelled stay visible (marked cancelled). */
+const HIDDEN_FROM_ACTIVE_BOARD: MapPhase[] = [MapPhase.APPROVED];
 
 /**
  * After a bulk mutation, re-read the affected maps in list shape and push them
@@ -64,14 +66,35 @@ function endOfToday(): Date {
   return d;
 }
 
+/**
+ * Hub intake for a calendar day: maps whose actual mapping date (fieldDate)
+ * is today. In-progress / status-board maps stay visible even if the date
+ * drifts. Schedule-only maps never qualify (fieldDate is only set from Mapping).
+ */
 function hubMapsWhereClause() {
+  const start = startOfToday();
+  const end = endOfToday();
   return {
     phase: MapPhase.FIELD,
     uploadApproved: true,
     uploadCompletedAt: { not: null },
-    OR: [
-      { fieldWorkStatus: { not: FieldWorkStatus.CANCELLED } },
-      { fieldWorkStatus: FieldWorkStatus.CANCELLED, onHubStatusBoard: true },
+    AND: [
+      {
+        OR: [
+          { fieldWorkStatus: { not: FieldWorkStatus.CANCELLED } },
+          { fieldWorkStatus: FieldWorkStatus.CANCELLED, onHubStatusBoard: true },
+        ],
+      },
+      {
+        OR: [
+          { fieldDate: { gte: start, lte: end } },
+          { onHubStatusBoard: true },
+          {
+            assignedSupervisorId: { not: null },
+            fieldWorkStatus: FieldWorkStatus.UNCOMPLETED,
+          },
+        ],
+      },
     ],
   };
 }
@@ -171,7 +194,7 @@ const hubMapIncludes = {
 export async function listMapsForUser(user: AuthUser) {
   if (isLeaderOrAdmin(user)) {
     return prisma.map.findMany({
-      where: { phase: { notIn: ARCHIVED_PHASES } },
+      where: { phase: { notIn: HIDDEN_FROM_ACTIVE_BOARD } },
       include: mapListIncludes,
       orderBy: { updatedAt: "desc" },
     });
@@ -1975,6 +1998,87 @@ export async function setMapTaskStation(
   }
   if (parts.length) {
     await logEvent(mapId, user.id, "task_station_updated", parts.join(", "));
+  }
+  return map;
+}
+
+const PIPELINE_STAGES = new Set(["UPLOAD", "MAPPING", "POLISH", "ACTIVATION"]);
+
+/**
+ * Set business pipeline stage (Upload / Mapping / Polish / Activation) by updating phase.
+ * Mapping → FIELD only enables Hub gates when a mapping/field date already exists.
+ */
+export async function setMapPipeline(
+  mapId: string,
+  stage: "UPLOAD" | "MAPPING" | "POLISH" | "ACTIVATION",
+  user: AuthUser
+) {
+  if (!isLeaderOrAdmin(user)) {
+    throw new Error("Only graphics team leader or OPS managers can change pipeline");
+  }
+  if (!PIPELINE_STAGES.has(stage)) {
+    throw new Error("Invalid pipeline stage");
+  }
+
+  const existing = await prisma.map.findUnique({ where: { id: mapId } });
+  if (!existing) throw new Error("Map not found");
+  if (existing.phase === MapPhase.CANCELLED) {
+    throw new Error("Cannot change pipeline on a cancelled map");
+  }
+
+  let phase: MapPhase;
+  const data: Prisma.MapUpdateInput = {};
+
+  switch (stage) {
+    case "UPLOAD":
+      phase =
+        existing.phase === MapPhase.UPLOAD_REVIEW ? MapPhase.UPLOAD_REVIEW : MapPhase.PREP;
+      data.phase = phase;
+      data.releasedToGraphics = true;
+      break;
+    case "MAPPING": {
+      phase = MapPhase.FIELD;
+      data.phase = phase;
+      data.releasedToGraphics = true;
+      const hasMappingDate = Boolean(existing.mappingAt || existing.fieldDate);
+      if (hasMappingDate) {
+        data.uploadApproved = true;
+        data.uploadCompletedAt = existing.uploadCompletedAt ?? new Date();
+        if (!existing.fieldDate && existing.mappingAt) {
+          data.fieldDate = existing.mappingAt;
+        }
+      } else {
+        // Enter FIELD without Hub eligibility until a mapping date exists.
+        data.uploadApproved = false;
+        data.uploadCompletedAt = null;
+      }
+      data.fieldWorkStatus = FieldWorkStatus.UNCOMPLETED;
+      break;
+    }
+    case "POLISH":
+      phase = MapPhase.POLISH;
+      data.phase = phase;
+      data.releasedToGraphics = true;
+      data.task = MapTask.POLISH;
+      break;
+    case "ACTIVATION":
+      phase = MapPhase.APPROVED;
+      data.phase = phase;
+      data.uploadApproved = true;
+      data.uploadCompletedAt = existing.uploadCompletedAt ?? new Date();
+      data.fieldWorkStatus = FieldWorkStatus.COMPLETED;
+      break;
+  }
+
+  const map = await prisma.map.update({
+    where: { id: mapId },
+    data,
+    include: mapDetailIncludes,
+  });
+
+  if (phase !== existing.phase) {
+    await logPhaseEntry(mapId, phase, user.id, `Pipeline → ${stage}`);
+    await logEvent(mapId, user.id, "pipeline_updated", `Pipeline → ${stage}`);
   }
   return map;
 }

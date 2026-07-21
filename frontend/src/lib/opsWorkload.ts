@@ -57,6 +57,7 @@ function primaryRole(member: TeamMember): RoleName {
     "GRAPHIC_QA",
     "GRAPHIC_TEAM_LEADER",
     "OPS_ADMIN",
+    "OPS_MANAGER",
     "OPS_MANAGER_2",
   ];
   for (const role of order) {

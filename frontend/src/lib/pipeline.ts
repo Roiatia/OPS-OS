@@ -32,6 +32,7 @@ export function isUploadStageComplete(map: MapRecord): boolean {
 }
 
 export function getPipelineStageLabel(map: MapRecord): string {
+  if (map.phase === "CANCELLED") return "Cancelled";
   const stage = getPipelineStage(map.phase);
   if (stage === "UPLOAD" && map.phase === "INTAKE") {
     return map.releasedToGraphics ? "Upload · with graphics" : "Upload · awaiting graphics";

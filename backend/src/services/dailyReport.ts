@@ -333,6 +333,7 @@ export async function buildDailyReportPayload(reportDate: Date): Promise<OpsDail
     MAPPING_INSPECTOR: "Mapping inspector",
     GRAPHIC_QA: "Graphic QA",
     OPS_ADMIN: "OPS Manager",
+    OPS_MANAGER: "OPS Manager",
     OPS_MANAGER_2: "OPS Manager 2",
   };
 
@@ -340,6 +341,7 @@ export async function buildDailyReportPayload(reportDate: Date): Promise<OpsDail
     const names = roles.map((r) => r.role);
     const preferred = [
       RoleName.OPS_ADMIN,
+      RoleName.OPS_MANAGER,
       RoleName.OPS_MANAGER_2,
       RoleName.GRAPHIC_TEAM_LEADER,
       RoleName.SUPERVISOR_SHIFT_LEADER,
@@ -367,7 +369,12 @@ export async function buildDailyReportPayload(reportDate: Date): Promise<OpsDail
         r === RoleName.MAPPING_INSPECTOR ||
         r === RoleName.GRAPHIC_QA
     );
-    const isOps = roles.some((r) => r === RoleName.OPS_ADMIN || r === RoleName.OPS_MANAGER_2);
+    const isOps = roles.some(
+      (r) =>
+        r === RoleName.OPS_ADMIN ||
+        r === RoleName.OPS_MANAGER ||
+        r === RoleName.OPS_MANAGER_2
+    );
     if (isGraphics) {
       graphicsTeam.push({ id: u.id, name: u.name, role: primaryRoleLabel(u.roles) });
     }
