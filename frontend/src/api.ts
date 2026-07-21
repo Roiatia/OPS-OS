@@ -329,6 +329,23 @@ export const api = {
       body: JSON.stringify({ csv }),
     }),
 
+  /** Check which building / map numbers are missing from the database. */
+  checkMissingMaps: (numbers: Array<string | number>) =>
+    request<{
+      checked: string[];
+      found: Array<{
+        mapNumber: string;
+        building: string | null;
+        phase: string;
+        batch: string | null;
+      }>;
+      missing: string[];
+      invalidInputs: string[];
+    }>("/maps/check-missing", {
+      method: "POST",
+      body: JSON.stringify({ numbers }),
+    }),
+
   importCsv: (csv: string, opts?: { clearExisting?: boolean; defaultClient?: string }) =>
     request<{
       created: number;
@@ -419,6 +436,13 @@ export const api = {
     request<import("./types").MapRecord>(`/maps/${mapId}/task-station`, {
       method: "PATCH",
       body: JSON.stringify(patch),
+    }),
+
+  /** Set CSV Map received flag (true → "v", false → empty / not received yet). */
+  setMapReceived: (mapId: string, received: boolean) =>
+    request<import("./types").MapRecord>(`/maps/${mapId}/map-received`, {
+      method: "PATCH",
+      body: JSON.stringify({ received }),
     }),
 
   setMapPipeline: (mapId: string, stage: "UPLOAD" | "MAPPING" | "POLISH" | "ACTIVATION") =>

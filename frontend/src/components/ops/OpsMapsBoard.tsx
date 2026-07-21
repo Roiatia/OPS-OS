@@ -27,9 +27,11 @@ import {
   formatCsvDateCell,
   getInspectorLabel,
   getMapDisplayState,
+  getMapReceivedStatus,
   getMapStation,
   getQaLabel,
   getTaskType,
+  mapReceivedSelectClass,
   MAP_STATION_OPTIONS,
   MAP_TASK_OPTIONS,
   matchesColumnFilters,
@@ -240,6 +242,19 @@ export function OpsMapsBoard({
     setError("");
     try {
       const updated = await api.setMapTaskStation(map.id, patchFields);
+      patch(updated);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setMetaSaving(null);
+    }
+  }
+
+  async function handleMapReceivedChange(map: MapRecord, received: boolean) {
+    setMetaSaving(map.id);
+    setError("");
+    try {
+      const updated = await api.setMapReceived(map.id, received);
       patch(updated);
     } catch (err) {
       setError((err as Error).message);
@@ -758,6 +773,9 @@ export function OpsMapsBoard({
               <th className="sticky top-0 z-20 bg-slate-50 px-3 py-3 font-semibold min-w-[90px] shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
                 Batch
               </th>
+              <th className="sticky top-0 z-20 bg-slate-50 px-3 py-3 font-semibold min-w-[130px] shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
+                Map received
+              </th>
               <th className="sticky top-0 z-20 bg-slate-50 px-3 py-3 font-semibold min-w-[120px] shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
                 Pipeline
               </th>
@@ -854,6 +872,17 @@ export function OpsMapsBoard({
               </th>
               <th className="sticky top-[42px] z-20 bg-white px-3 py-2 shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
                 <select
+                  value={columnFilters.mapReceived}
+                  onChange={(e) => updateFilter("mapReceived", e.target.value)}
+                  className={filterInputClass}
+                >
+                  <option value="">All</option>
+                  <option value="not_received">Not received yet</option>
+                  <option value="received">Map received</option>
+                </select>
+              </th>
+              <th className="sticky top-[42px] z-20 bg-white px-3 py-2 shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
+                <select
                   value={phaseFilter}
                   onChange={(e) => setPhaseFilter(e.target.value)}
                   className={filterInputClass}
@@ -937,13 +966,13 @@ export function OpsMapsBoard({
                   ))}
                 </select>
               </th>
-              <th className="sticky top-[42px] z-20 bg-white px-3 py-2 shadow-[0_1px_0_0_rgba(0,0,0,0.06)]" colSpan={13} />
+              <th className="sticky top-[42px] z-20 bg-white px-3 py-2 shadow-[0_1px_0_0_rgba(0,0,0,0.06)]" colSpan={12} />
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
             {filteredMaps.length === 0 ? (
               <tr>
-                <td colSpan={22} className="px-4 py-10 text-center text-muted">
+                <td colSpan={23} className="px-4 py-10 text-center text-muted">
                   No maps in this queue.
                 </td>
               </tr>
@@ -991,6 +1020,20 @@ export function OpsMapsBoard({
                     </td>
                     <td className="px-3 py-3">{map.client}</td>
                     <td className="px-3 py-3 text-muted text-xs">{map.batch?.trim() || "—"}</td>
+                    <td className="px-3 py-3">
+                      <select
+                        value={getMapReceivedStatus(map.mapReceived)}
+                        disabled={metaSaving === map.id || cancelled}
+                        onChange={(e) =>
+                          handleMapReceivedChange(map, e.target.value === "received")
+                        }
+                        title="Map received (from CSV)"
+                        className={`w-full text-xs font-semibold rounded-md border px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:opacity-50 ${mapReceivedSelectClass(map.mapReceived)}`}
+                      >
+                        <option value="not_received">Not received yet</option>
+                        <option value="received">Map received</option>
+                      </select>
+                    </td>
                     <td className="px-3 py-3">
                       {cancelled ? (
                         <Badge label="Cancelled" tone="CANCELLED" />

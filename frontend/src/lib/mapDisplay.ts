@@ -26,6 +26,32 @@ export const MAP_STATION_OPTIONS: { value: MapStation; label: string }[] = [
   { value: "GRAPHICS", label: "GRAPHICS" },
 ];
 
+/** CSV "Map received" — cell is "v" (or similar) when received, empty otherwise. */
+export const MAP_RECEIVED_VALUE = "v";
+
+export type MapReceivedStatus = "received" | "not_received";
+
+export function isMapReceived(raw: string | null | undefined): boolean {
+  const v = raw?.trim().toLowerCase();
+  if (!v) return false;
+  return v === "v" || v === "✓" || v === "yes" || v === "true" || v === "received";
+}
+
+export function getMapReceivedStatus(raw: string | null | undefined): MapReceivedStatus {
+  return isMapReceived(raw) ? "received" : "not_received";
+}
+
+export function getMapReceivedLabel(raw: string | null | undefined): string {
+  return isMapReceived(raw) ? "Map received" : "Not received yet";
+}
+
+/** Select / cell chrome for Map received column */
+export function mapReceivedSelectClass(raw: string | null | undefined): string {
+  return isMapReceived(raw)
+    ? "bg-emerald-50 text-emerald-900 border-emerald-300"
+    : "bg-amber-50 text-amber-950 border-amber-300";
+}
+
 export const MAP_TASK_LABELS: Record<MapTask, string> = {
   UPLOAD: "Upload",
   UPLOADED: "Uploaded",
@@ -250,6 +276,7 @@ export type MapColumnFilters = {
   map: string;
   client: string;
   batch: string;
+  mapReceived: string;
   task: string;
   station: string;
   state: string;
@@ -261,6 +288,7 @@ export const EMPTY_COLUMN_FILTERS: MapColumnFilters = {
   map: "",
   client: "",
   batch: "",
+  mapReceived: "",
   task: "",
   station: "",
   state: "",
@@ -282,6 +310,9 @@ export function matchesColumnFilters(map: MapRecord, filters: MapColumnFilters):
   if (filters.batch) {
     const mapBatch = map.batch?.trim() || "—";
     if (mapBatch !== filters.batch) return false;
+  }
+  if (filters.mapReceived) {
+    if (getMapReceivedStatus(map.mapReceived) !== filters.mapReceived) return false;
   }
   if (filters.task && task !== filters.task) return false;
   if (filters.station && station !== filters.station) return false;

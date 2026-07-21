@@ -9,6 +9,9 @@ import {
   workflowStateTone,
   matchesColumnFilters,
   EMPTY_COLUMN_FILTERS,
+  isMapReceived,
+  getMapReceivedLabel,
+  getMapReceivedStatus,
 } from "../mapDisplay";
 import { makeMap, makePerson } from "./fixtures";
 
@@ -134,6 +137,39 @@ describe("workflowStateTone", () => {
     expect(workflowStateTone("Approved")).toBe("APPROVED");
     expect(workflowStateTone("Cancelled")).toBe("CANCELLED");
     expect(workflowStateTone("—")).toBe("PENDING");
+  });
+});
+
+describe("map received", () => {
+  it("treats empty as not received yet", () => {
+    expect(isMapReceived(null)).toBe(false);
+    expect(isMapReceived("")).toBe(false);
+    expect(isMapReceived("  ")).toBe(false);
+    expect(getMapReceivedLabel(null)).toBe("Not received yet");
+    expect(getMapReceivedStatus(null)).toBe("not_received");
+  });
+
+  it("treats v / check / yes as received", () => {
+    expect(isMapReceived("v")).toBe(true);
+    expect(isMapReceived("V")).toBe(true);
+    expect(isMapReceived("✓")).toBe(true);
+    expect(isMapReceived("yes")).toBe(true);
+    expect(getMapReceivedLabel("v")).toBe("Map received");
+    expect(getMapReceivedStatus("v")).toBe("received");
+  });
+
+  it("filters by mapReceived status", () => {
+    const received = makeMap({ mapReceived: "v" });
+    const pending = makeMap({ mapReceived: null });
+    expect(
+      matchesColumnFilters(received, { ...EMPTY_COLUMN_FILTERS, mapReceived: "received" })
+    ).toBe(true);
+    expect(
+      matchesColumnFilters(pending, { ...EMPTY_COLUMN_FILTERS, mapReceived: "received" })
+    ).toBe(false);
+    expect(
+      matchesColumnFilters(pending, { ...EMPTY_COLUMN_FILTERS, mapReceived: "not_received" })
+    ).toBe(true);
   });
 });
 

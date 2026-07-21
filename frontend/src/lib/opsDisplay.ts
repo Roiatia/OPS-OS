@@ -45,9 +45,12 @@ export function isReadyToRelease(map: MapRecord): boolean {
   return map.phase === "FIELD" && getSupervisorFieldStatus(map) === "COMPLETED";
 }
 
-/** Ready-to-accept maps first, then most recently updated */
+/** Ready-to-accept maps first, cancelled last, then most recently updated */
 export function sortOpsMaps(maps: MapRecord[]): MapRecord[] {
   return [...maps].sort((a, b) => {
+    const aCancelled = a.phase === "CANCELLED" ? 1 : 0;
+    const bCancelled = b.phase === "CANCELLED" ? 1 : 0;
+    if (aCancelled !== bCancelled) return aCancelled - bCancelled;
     const aReady = isReadyToRelease(a) ? 1 : 0;
     const bReady = isReadyToRelease(b) ? 1 : 0;
     if (aReady !== bReady) return bReady - aReady;

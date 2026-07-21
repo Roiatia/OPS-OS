@@ -27,11 +27,13 @@ import {
   formatCsvDateCell,
   getInspectorLabel,
   getMapDisplayState,
+  getMapReceivedStatus,
   getMapStation,
   getQaLabel,
   getTaskType,
   MAP_STATION_OPTIONS,
   MAP_TASK_OPTIONS,
+  mapReceivedSelectClass,
   matchesColumnFilters,
   matchesQueue,
   needsInspectorAssignment,
@@ -133,9 +135,16 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
 
   const filteredMaps = useMemo(
     () =>
-      maps.filter(
-        (map) => matchesQueue(map, queue) && matchesColumnFilters(map, columnFilters)
-      ),
+      maps
+        .filter(
+          (map) => matchesQueue(map, queue) && matchesColumnFilters(map, columnFilters)
+        )
+        .sort((a, b) => {
+          const aCancelled = a.phase === "CANCELLED" ? 1 : 0;
+          const bCancelled = b.phase === "CANCELLED" ? 1 : 0;
+          if (aCancelled !== bCancelled) return aCancelled - bCancelled;
+          return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+        }),
     [maps, queue, columnFilters]
   );
 
@@ -463,6 +472,19 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
     }
   }
 
+  async function handleMapReceivedChange(map: MapRecord, received: boolean) {
+    setError("");
+    setTaskStationSaving(map.id);
+    try {
+      const updated = await api.setMapReceived(map.id, received);
+      patch(updated);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setTaskStationSaving(null);
+    }
+  }
+
   async function handlePipelineChange(map: MapRecord, stage: PipelineStage) {
     setError("");
     setTaskStationSaving(map.id);
@@ -778,6 +800,7 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
                 <th className="sticky top-0 z-20 bg-slate-50 px-3 py-2 font-medium min-w-[120px]">Map</th>
                 <th className="sticky top-0 z-20 bg-slate-50 px-3 py-2 font-medium min-w-[100px]">Client</th>
                 <th className="sticky top-0 z-20 bg-slate-50 px-3 py-2 font-medium min-w-[90px]">Batch</th>
+                <th className="sticky top-0 z-20 bg-slate-50 px-3 py-2 font-medium min-w-[130px]">Map received</th>
                 <th className="sticky top-0 z-20 bg-slate-50 px-3 py-2 font-medium min-w-[120px]">Pipeline</th>
                 <th className="sticky top-0 z-20 bg-slate-50 px-3 py-2 font-medium min-w-[110px]">Task</th>
                 <th className="sticky top-0 z-20 bg-slate-50 px-3 py-2 font-medium min-w-[110px]">Station</th>
@@ -829,6 +852,17 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
                         {b}
                       </option>
                     ))}
+                  </select>
+                </th>
+                <th className="px-3 py-2">
+                  <select
+                    value={columnFilters.mapReceived}
+                    onChange={(e) => updateFilter("mapReceived", e.target.value)}
+                    className={filterInputClass}
+                  >
+                    <option value="">All</option>
+                    <option value="not_received">Not received yet</option>
+                    <option value="received">Map received</option>
                   </select>
                 </th>
                 <th className="px-3 py-2" />
@@ -957,6 +991,20 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
                     </td>
                     <td className="px-3 py-3 text-muted">{map.client}</td>
                     <td className="px-3 py-3 text-muted text-xs">{map.batch?.trim() || "—"}</td>
+                    <td className="px-3 py-3">
+                      <select
+                        value={getMapReceivedStatus(map.mapReceived)}
+                        disabled={savingMeta || cancelled}
+                        onChange={(e) =>
+                          handleMapReceivedChange(map, e.target.value === "received")
+                        }
+                        title="Map received (from CSV)"
+                        className={`w-full text-xs font-semibold rounded-md border px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:opacity-50 ${mapReceivedSelectClass(map.mapReceived)}`}
+                      >
+                        <option value="not_received">Not received yet</option>
+                        <option value="received">Map received</option>
+                      </select>
+                    </td>
                     <td className="px-3 py-3">
                       {cancelled ? (
                         <Badge label="Cancelled" tone="CANCELLED" />

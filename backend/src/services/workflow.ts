@@ -2002,6 +2002,37 @@ export async function setMapTaskStation(
   return map;
 }
 
+/**
+ * Set CSV "Map received" flag. Stores "v" when received, null when not.
+ * Does not change phase — leaders/OPS update pipeline separately.
+ */
+export async function setMapReceived(mapId: string, received: boolean, user: AuthUser) {
+  if (!isLeaderOrAdmin(user)) {
+    throw new Error("Only leaders or OPS managers can change map received");
+  }
+
+  const existing = await prisma.map.findUnique({ where: { id: mapId } });
+  if (!existing) throw new Error("Map not found");
+  if (existing.phase === MapPhase.CANCELLED) {
+    throw new Error("Cannot change map received on a cancelled map");
+  }
+
+  const nextValue = received ? "v" : null;
+  const map = await prisma.map.update({
+    where: { id: mapId },
+    data: { mapReceived: nextValue },
+    include: mapDetailIncludes,
+  });
+
+  await logEvent(
+    mapId,
+    user.id,
+    "map_received_updated",
+    received ? "Map received" : "Not received yet"
+  );
+  return map;
+}
+
 const PIPELINE_STAGES = new Set(["UPLOAD", "MAPPING", "POLISH", "ACTIVATION"]);
 
 /**

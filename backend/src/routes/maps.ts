@@ -5,6 +5,7 @@ import { userHasOpsManagerRole } from "../domain/roles.js";
 import * as workflow from "../services/workflow.js";
 import { syncMapsFromSpreadsheet } from "../services/spreadsheetSync.js";
 import { importSamsClubCsv, previewSamsClubCsv, clearAllMaps } from "../services/csvImport.js";
+import { checkMapsInDatabase } from "../services/mapPresence.js";
 
 const router = Router();
 router.use(authMiddleware);
@@ -521,6 +522,29 @@ router.post(
   }
 );
 
+/** Check which building / map numbers from a list are missing in the DB. */
+router.post(
+  "/check-missing",
+  requireRoles(RoleName.OPS_ADMIN, RoleName.OPS_MANAGER_2, RoleName.GRAPHIC_TEAM_LEADER),
+  async (req, res) => {
+    try {
+      const { numbers } = req.body as { numbers?: Array<string | number> };
+      if (!Array.isArray(numbers) || numbers.length === 0) {
+        res.status(400).json({ error: "numbers (non-empty array) required" });
+        return;
+      }
+      if (numbers.length > 5000) {
+        res.status(400).json({ error: "Too many numbers (max 5000)" });
+        return;
+      }
+      const result = await checkMapsInDatabase(numbers);
+      res.json(result);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
 router.post(
   "/import-csv",
   requireRoles(RoleName.OPS_ADMIN, RoleName.OPS_MANAGER_2, RoleName.GRAPHIC_TEAM_LEADER),
@@ -718,6 +742,29 @@ router.patch(
             ? { station: station as import("@prisma/client").MapStation }
             : {}),
         },
+        (req as AuthedRequest).user
+      );
+      res.json(map);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+// CSV "Map received" — "v" / empty; editable from the maps board.
+router.patch(
+  "/:id/map-received",
+  requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN),
+  async (req, res) => {
+    try {
+      const { received } = req.body as { received?: boolean };
+      if (typeof received !== "boolean") {
+        res.status(400).json({ error: "received (boolean) required" });
+        return;
+      }
+      const map = await workflow.setMapReceived(
+        req.params.id,
+        received,
         (req as AuthedRequest).user
       );
       res.json(map);
