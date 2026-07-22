@@ -1,3 +1,4 @@
+
 const API = "/api";
 
 function getToken() {
@@ -615,6 +616,76 @@ export const api = {
       `/availability/shift-changes/${id}/ops-reject`,
       { method: "POST" }
     ),
+
+  // ---- Admin: user management ----
+  listUsers: () => request<import("./types/admin").AdminUser[]>("/users"),
+
+  getAssignableRoles: () =>
+    request<import("./types/admin").AssignableRole[]>("/users/roles"),
+
+  createUser: (data: { email: string; name: string; roles: import("./types").RoleName[] }) =>
+    request<import("./types/admin").AdminUser>("/users", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  setUserRoles: (userId: string, roles: import("./types").RoleName[]) =>
+    request<import("./types/admin").AdminUser>(`/users/${userId}/roles`, {
+      method: "PATCH",
+      body: JSON.stringify({ roles }),
+    }),
+
+  setUserActive: (userId: string, active: boolean) =>
+    request<import("./types/admin").AdminUser>(`/users/${userId}/active`, {
+      method: "PATCH",
+      body: JSON.stringify({ active }),
+    }),
+
+  // ---- Admin: feature flags ----
+  listFeatureFlags: () => request<import("./types/admin").FeatureFlag[]>("/features"),
+
+  getMyFeatures: () => request<import("./types/admin").ResolvedFeature[]>("/features/mine"),
+
+  updateFeatureFlag: (
+    key: string,
+    data: {
+      enabled?: boolean;
+      isExperimental?: boolean;
+      rolloutRoles?: import("./types").RoleName[];
+      label?: string;
+      description?: string | null;
+    }
+  ) =>
+    request<import("./types/admin").FeatureFlag>(`/features/${key}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  setFeatureOverride: (key: string, userId: string, enabled: boolean | null) =>
+    request<import("./types/admin").FeatureFlag>(`/features/${key}/override`, {
+      method: "POST",
+      body: JSON.stringify({ userId, enabled }),
+    }),
+
+  /** Opt the current user in/out of an experimental feature. null clears it. */
+  setMyFeatureOverride: (key: string, enabled: boolean | null) =>
+    request<import("./types/admin").ResolvedFeature>(`/features/${key}/mine`, {
+      method: "POST",
+      body: JSON.stringify({ enabled }),
+    }),
+
+  // ---- Usage + metrics ----
+  trackUsage: (events: { event: string; section?: string; metadata?: Record<string, unknown> }[]) =>
+    request<{ recorded: number }>("/usage", {
+      method: "POST",
+      body: JSON.stringify({ events }),
+    }),
+
+  getMetrics: (days?: number) =>
+    request<import("./types/admin").UsageMetrics>(`/metrics${buildQuery({ days: days ? String(days) : undefined })}`),
+
+  getAuditLog: (q?: string) =>
+    request<import("./types/admin").AuditLogEntry[]>(`/metrics/audit${buildQuery({ q })}`),
 };
 
 export function setAuthToken(token: string | null) {

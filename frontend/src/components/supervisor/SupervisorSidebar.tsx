@@ -1,3 +1,5 @@
+import { useFeatures } from "@/hooks/useFeatures";
+import { filterVisibleSections } from "@/lib/features";
 
 export type SupervisorSection =
   | "hub"
@@ -37,6 +39,8 @@ export function SupervisorSidebar({
   activeMapCount = 0,
   teamCount = 0,
 }: Props) {
+  const { map: featureMap } = useFeatures();
+  const visibleItems = filterVisibleSections(NAV_ITEMS, featureMap);
   return (
     <aside className="w-60 shrink-0 border-r border-border bg-white flex flex-col h-[calc(100vh-4rem)] sticky top-16 shadow-sm">
       <div className="px-4 py-4 border-b border-border">
@@ -46,7 +50,7 @@ export function SupervisorSidebar({
       </div>
 
       <nav className="flex-1 p-3 space-y-1">
-        {NAV_ITEMS.map((item) => {
+        {visibleItems.map((item) => {
           const active = activeSection === item.id;
           return (
             <button

@@ -41,25 +41,33 @@ router.post("/google", async (req, res) => {
       return;
     }
 
+    // Normalize casing so it matches admin-provisioned (lowercased) emails.
+    const email = payload.email.toLowerCase();
+
     let user = await prisma.user.findUnique({
-      where: { email: payload.email },
+      where: { email },
       include: { roles: true },
     });
 
     // Optional allow-list: when configured, only permit sign-in for emails whose
     // domain is explicitly allowed. Enforced before auto-creating a new user.
     if (!user && env.allowedEmailDomains.length > 0) {
-      const domain = payload.email.split("@")[1]?.toLowerCase() ?? "";
+      const domain = email.split("@")[1]?.toLowerCase() ?? "";
       if (!env.allowedEmailDomains.includes(domain)) {
         res.status(401).json({ error: "Email domain not allowed" });
         return;
       }
     }
 
+    if (user && user.active === false) {
+      res.status(403).json({ error: "Account disabled — contact your administrator" });
+      return;
+    }
+
     if (!user) {
       user = await prisma.user.create({
         data: {
-          email: payload.email,
+          email,
           name: payload.name ?? payload.email,
           avatarUrl: payload.picture,
           googleId: payload.sub,
@@ -68,6 +76,8 @@ router.post("/google", async (req, res) => {
         include: { roles: true },
       });
     } else if (!user.googleId) {
+      // Existing account (possibly pre-provisioned in the admin dashboard):
+      // link the Google identity but keep the roles assigned by the admin.
       user = await prisma.user.update({
         where: { id: user.id },
         data: { googleId: payload.sub, avatarUrl: payload.picture ?? user.avatarUrl },
@@ -108,6 +118,11 @@ router.post("/demo", async (req, res) => {
 
   if (!user) {
     res.status(404).json({ error: "Demo user not found. Run db:seed first." });
+    return;
+  }
+
+  if (user.active === false) {
+    res.status(403).json({ error: "Account disabled" });
     return;
   }
 

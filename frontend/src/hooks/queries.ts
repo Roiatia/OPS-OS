@@ -126,3 +126,13 @@ export function useReportDetailQuery(id: string | null) {
     enabled: Boolean(id),
   });
 }
+
+/** Resolved feature flags for the current user (drives UI gating). */
+export function useMyFeaturesQuery(enabled = true) {
+  return useQuery({
+    queryKey: ["features", "mine"],
+    queryFn: api.getMyFeatures,
+    staleTime: 60_000,
+    enabled,
+  });
+}

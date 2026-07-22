@@ -42,7 +42,7 @@ async function loadPlannerContext(weekStart: Date) {
   weekEnd.setDate(weekEnd.getDate() + 7);
 
   const supervisors = await prisma.user.findMany({
-    where: supervisorRolesWhere(),
+    where: { active: true, ...supervisorRolesWhere() },
     include: { roles: true, supervisorClients: true },
     orderBy: { name: "asc" },
   });

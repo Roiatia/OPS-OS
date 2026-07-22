@@ -22,6 +22,9 @@ const TeamPanel = lazy(() =>
 import { getIdleInspectors } from "../lib/assignment";
 import { needsQaAssignment } from "../lib/mapDisplay";
 import { useSectionRoute } from "@/hooks/useSectionRoute";
+import { useTrackSection } from "@/hooks/useUsageTracker";
+import { useFeatures } from "@/hooks/useFeatures";
+import { isSectionVisible } from "@/lib/features";
 import { useDashboardQuery, useHistoryQuery } from "@/hooks/queries";
 import { patchDashboardMaps, queryKeys } from "../lib/mapsCache";
 import { applyMapUpsert } from "../lib/mapsLive";
@@ -63,11 +66,17 @@ export function LeaderDashboardPage() {
   const [showAddMap, setShowAddMap] = useState(false);
   const [showCsvImport, setShowCsvImport] = useState(false);
   const [error, setError] = useState("");
+  const { map: featureMap } = useFeatures();
+  const visibleSections = useMemo(
+    () => LEADER_SECTIONS.filter((s) => isSectionVisible(featureMap, s)),
+    [featureMap]
+  );
   const [activeSection, setActiveSection] = useSectionRoute(
     "/app/leader",
-    LEADER_SECTIONS,
+    visibleSections.length ? visibleSections : LEADER_SECTIONS,
     "maps"
   );
+  useTrackSection(activeSection);
   const [form, setForm] = useState({
     mapNumber: "",
     jiraTicketId: "",
