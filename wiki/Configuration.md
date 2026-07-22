@@ -54,20 +54,22 @@ Used by OPS managers to import maps from Google Sheets or CSV upload in the UI.
 
 New Google users are assigned **Mapping Inspector** by default until SSO group mapping is implemented.
 
-## Local vs Supabase database
+## Local vs Cloud SQL database
 
 Switch without editing URLs manually:
 
 ```bash
 cd backend
+npm run db:use-cloudsql   # Auth Proxy on 127.0.0.1:5433 (default)
 npm run db:use-local      # Docker Postgres on localhost:5432
-npm run db:use-supabase   # Restore Supabase URLs from backup
 ```
+
+See [docs/cloud-sql-access.md](../docs/cloud-sql-access.md) for GCP setup.
 
 ## Production checklist
 
 - [ ] Strong `JWT_SECRET`
 - [ ] `DEMO_MODE=false` (or remove demo login in production build)
-- [ ] Supabase network restrictions configured
+- [ ] Cloud SQL access via Auth Proxy / IAM (no open public IP allowlist)
 - [ ] Google OAuth origins updated for production domain
 - [ ] `VITE_API_URL` points to production API

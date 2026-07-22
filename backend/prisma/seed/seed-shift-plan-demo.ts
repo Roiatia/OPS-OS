@@ -136,11 +136,28 @@ async function upsertStaff(params: {
 }
 
 /**
- * All demo staff offer every Sun–Fri day (6 days).
+ * Demo staff offer a mix of days (not everyone 6/6) so auto-plan fairness is testable.
  * Hours still vary (morning / afternoon) so day↔night handoffs stay testable.
  */
 function buildDayAvailability(_kind: "sup" | "sl", index: number, fridayContract: boolean) {
+  // 1-based index from seed loops
+  const offerByIndex: Record<number, number[]> = {
+    1: [0, 1, 2, 3, 4, 5], // 6
+    2: [0, 1, 2, 3, 4], // 5 — no Fri
+    3: [0, 2, 4], // 3 — Sun / Wed / Fri
+  };
+  const offered = new Set(offerByIndex[index] ?? [0, 1, 2, 3]);
+
   return [0, 1, 2, 3, 4, 5].map((dayOfWeek) => {
+    if (!offered.has(dayOfWeek)) {
+      return {
+        dayOfWeek,
+        canWork: false,
+        allDay: false,
+        startMinutes: null as number | null,
+        endMinutes: null as number | null,
+      };
+    }
     // Afternoon / evening band (good for handoffs after day shift)
     if (index === 2) {
       return {
@@ -267,7 +284,8 @@ async function main() {
     });
     keepIds.push(user.id);
     await seedAvailability(user.id, weekStart, fridayContract, "sup", i);
-    console.log(`  ✓ ${SUP_NAMES[i - 1]} · rating ${i}`);
+    const offeredSup = buildDayAvailability("sup", i, fridayContract).filter((d) => d.canWork).length;
+    console.log(`  ✓ ${SUP_NAMES[i - 1]} · rating ${i} · ${offeredSup}/6 days`);
   }
 
   console.log("Seeding 3 shift leaders…");
@@ -283,7 +301,8 @@ async function main() {
     });
     keepIds.push(user.id);
     await seedAvailability(user.id, weekStart, fridayContract, "sl", i);
-    console.log(`  ✓ ${SL_NAMES[i - 1]} · rating 5`);
+    const offeredSl = buildDayAvailability("sl", i, fridayContract).filter((d) => d.canWork).length;
+    console.log(`  ✓ ${SL_NAMES[i - 1]} · rating 5 · ${offeredSl}/6 days`);
   }
 
   await clearOtherAvailabilityForWeek(weekStart, keepIds);
@@ -402,12 +421,12 @@ async function main() {
   console.log("");
   console.log("Done. Scenario:");
   console.log("  • All supervisors/SLs keep availability (run db:fill-availability for full roster)");
-  console.log("  • Demo 6 each offer all 6 days (hours still vary for handoffs)");
+  console.log("  • Demo staff offer mixed days (3–6), not everyone full week");
   console.log("  • Sun: company meeting 13–15 (6h stay rule)");
   console.log("  • Mon: mapping refresh 13–19");
   console.log("  1. npm run db:fill-availability");
   console.log("  2. Login ops@ops-demo.local → Availability → Shift plan → Auto-plan");
-  console.log("  3. Expect full roster + 1 SL/day + supervisors filling seats");
+  console.log("  3. Expect varied offer counts + fair assigned/offered ratios");
 }
 
 main()

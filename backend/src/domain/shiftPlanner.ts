@@ -67,10 +67,10 @@ export type DayPlan = {
   logicNotes?: string[];
 };
 
-/** Shift leaders are senior supervisors — always treated as rating 5 for capacity. */
+/** Shift leaders are senior supervisors — always treated as rating 9 for capacity. */
 export function effectiveRating(staff: PlannerStaff): number {
-  if (staff.isShiftLeader) return 5;
-  return staff.supervisorRating ?? 3;
+  if (staff.isShiftLeader) return 9;
+  return staff.supervisorRating ?? 5;
 }
 
 /**
