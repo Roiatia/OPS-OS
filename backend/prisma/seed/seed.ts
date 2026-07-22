@@ -74,6 +74,12 @@ const DEMO_USERS = [
     name: "Miriam Levy",
     roles: [RoleName.OPS_MANAGER_2] as RoleName[],
   },
+  {
+    email: "admin@ops-demo.local",
+    name: "System Administrator",
+    // Literal cast keeps the seed working even before the client is regenerated.
+    roles: ["SUPER_ADMIN" as RoleName] as RoleName[],
+  },
 ];
 
 async function seedUsers() {

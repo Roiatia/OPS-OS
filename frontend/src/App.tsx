@@ -3,7 +3,7 @@ import { GoogleOAuthProvider } from "@react-oauth/google";
 import { lazy, Suspense } from "react";
 import { AuthProvider, useAuth, hasRole } from "./context/AuthContext";
 import { useConfigQuery } from "./hooks/queries";
-import { hasOpsManagerRole, hasSupervisorRole } from "./lib/roles";
+import { hasOpsManagerRole, hasSupervisorRole, hasSuperAdminRole } from "./lib/roles";
 import type { User } from "./types";
 import { LandingPage } from "./pages/LandingPage";
 import { LoginPage } from "./pages/LoginPage";
@@ -30,6 +30,9 @@ const QaDashboardPage = lazy(() =>
 const MapDetailPage = lazy(() =>
   import("./pages/MapDetailPage").then((m) => ({ default: m.MapDetailPage }))
 );
+const AdminDashboardPage = lazy(() =>
+  import("./pages/AdminDashboardPage").then((m) => ({ default: m.AdminDashboardPage }))
+);
 
 function RouteFallback() {
   return (
@@ -54,6 +57,8 @@ function RoleRoute({
 }) {
   const { user } = useAuth();
   if (!user) return null;
+  // Super admin has all-access and bypasses every per-role route guard.
+  if (hasSuperAdminRole(user)) return <>{children}</>;
   if (!allow(user)) return <Navigate to="/app" replace />;
   return <>{children}</>;
 }
@@ -80,6 +85,16 @@ function AppRoutes() {
           element={
             <RoleRoute allow={(u) => hasRole(u, "GRAPHIC_TEAM_LEADER")}>
               <LeaderDashboardPage />
+            </RoleRoute>
+          }
+        />
+
+        <Route path="admin" element={<Navigate to="/app/admin/overview" replace />} />
+        <Route
+          path="admin/:section"
+          element={
+            <RoleRoute allow={hasSuperAdminRole}>
+              <AdminDashboardPage />
             </RoleRoute>
           }
         />
