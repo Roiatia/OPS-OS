@@ -67,13 +67,11 @@ function endOfToday(): Date {
 }
 
 /**
- * Hub intake for a calendar day: maps whose actual mapping date (fieldDate)
- * is today. In-progress / status-board maps stay visible even if the date
- * drifts. Schedule-only maps never qualify (fieldDate is only set from Mapping).
+ * Hub maps: only those already on the status board, or assigned and still in
+ * progress. Mapping/fieldDate alone must NOT auto-load maps into the Hub —
+ * intake will use a separate technique later.
  */
 function hubMapsWhereClause() {
-  const start = startOfToday();
-  const end = endOfToday();
   return {
     phase: MapPhase.FIELD,
     uploadApproved: true,
@@ -87,7 +85,6 @@ function hubMapsWhereClause() {
       },
       {
         OR: [
-          { fieldDate: { gte: start, lte: end } },
           { onHubStatusBoard: true },
           {
             assignedSupervisorId: { not: null },
