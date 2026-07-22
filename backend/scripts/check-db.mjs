@@ -33,14 +33,22 @@ try {
       "SSL certificate issue — append to DATABASE_URL and DIRECT_URL in .env:\n" +
         "  ?uselibpqcompat=true&sslmode=require"
     );
-  } else if (code === "ENOTFOUND" || /P1001|Can't reach/i.test(message)) {
+  } else if (
+    code === "ECONNREFUSED" ||
+    code === "ENOTFOUND" ||
+    code === "ETIMEDOUT" ||
+    /P1001|Can't reach|timeout|ECONNRESET/i.test(message)
+  ) {
     console.error(
-      "Cannot reach host — check Supabase project is not paused, or run:\n" +
-        "  npm run db:find-pooler\n" +
-        "  npm run db:local:setup   (Docker Postgres fallback)"
+      "Cannot reach database — for Cloud SQL start the Auth Proxy, then retry:\n" +
+        "  cloud-sql-proxy --gcloud-auth --port 5433 ops-tools-503212:europe-west3:ops-os-db\n" +
+        "  npm run db:use-cloudsql\n" +
+        "Or use local Docker: npm run db:local:setup"
     );
   } else if (code === "28P01" || /password authentication failed/i.test(message)) {
-    console.error("Wrong database password — update backend/.env from Supabase dashboard.");
+    console.error(
+      "Wrong database password — update ops_dev password in backend/.env (ask Eyal F.)."
+    );
   } else {
     console.error(message);
   }

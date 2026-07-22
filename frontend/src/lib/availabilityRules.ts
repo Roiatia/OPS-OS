@@ -30,6 +30,8 @@ export const MIN_REST_GAP_MINUTES = 8 * 60;
 export const IDEAL_REST_GAP_MINUTES = 10 * 60;
 /** Hard cap — nobody should take more maps than this in one day. */
 export const MAX_MAPS_PER_SUPERVISOR = 9;
+/** Soft floor — even the weakest supervisor can handle this many maps. */
+export const MIN_MAPS_BY_RATING = 5;
 /** Soft target — schedule enough people so loads stay around this (fairness over cost). */
 export const PREFERRED_MAPS_PER_SUPERVISOR = 5;
 
@@ -37,11 +39,28 @@ export const FRIDAY = 5;
 export const SATURDAY = 6;
 export const SUNDAY = 0;
 
-/** Preferred day load by rating (experience). Never above MAX; used as soft capacity only. */
+/**
+ * Soft max maps/day from rating (1–9 scale).
+ * Rating ≈ preferred map load; floor 5 (even rating 1–4 → 5); hard max 9.
+ * Soft only — if someone is alone on a day with 9 maps, they still take them.
+ * SLs should be treated as 9 by callers.
+ */
 export function maxMapsForRating(rating: number | null | undefined): number {
-  const r = rating == null ? 3 : Math.min(5, Math.max(1, Math.round(rating)));
-  const table: Record<number, number> = { 1: 3, 2: 4, 3: 5, 4: 6, 5: 7 };
-  return Math.min(MAX_MAPS_PER_SUPERVISOR, table[r] ?? PREFERRED_MAPS_PER_SUPERVISOR);
+  if (rating == null || !Number.isFinite(rating)) {
+    return MIN_MAPS_BY_RATING;
+  }
+  const r = Math.min(9, Math.max(1, Math.round(rating)));
+  return Math.min(MAX_MAPS_PER_SUPERVISOR, Math.max(MIN_MAPS_BY_RATING, r));
+}
+
+/** Display / effective rating: SLs are always 9. */
+export function effectiveSupervisorRating(
+  rating: number | null | undefined,
+  isShiftLeader?: boolean
+): number {
+  if (isShiftLeader) return 9;
+  if (rating == null || !Number.isFinite(rating)) return MIN_MAPS_BY_RATING;
+  return Math.min(9, Math.max(1, Math.round(rating)));
 }
 
 export type AvailabilityDayInput = {

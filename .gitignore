@@ -10,6 +10,10 @@ build/
 .env.*
 !.env.example
 
+# Local secrets (never commit)
+backend/Cloud SQL Auth.txt
+**/Cloud SQL Auth.txt
+
 # Logs
 *.log
 npm-debug.log*
