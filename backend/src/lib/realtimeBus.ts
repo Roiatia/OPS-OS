@@ -36,6 +36,11 @@ export function broadcast(msg: RealtimeMessage) {
   }
 }
 
+/** True while a bulk writer is inside {@link withSuppressedBroadcasts}. */
+export function areBroadcastsSuppressed(): boolean {
+  return suppressDepth > 0;
+}
+
 /**
  * Run `fn` with the automatic per-statement Map broadcasts suppressed, then let
  * queued fire-and-forget emit microtasks flush (and be dropped) before lifting

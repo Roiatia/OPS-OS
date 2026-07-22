@@ -5,6 +5,7 @@ export type RoleName =
   | "SUPERVISOR"
   | "SUPERVISOR_SHIFT_LEADER"
   | "OPS_ADMIN"
+  | "OPS_MANAGER"
   | "OPS_MANAGER_2";
 
 export type MapPhase =
@@ -119,6 +120,31 @@ export interface MapRecord {
   station: MapStation;
   /** CSV Batch column */
   batch?: string | null;
+  mapReceived?: string | null;
+  /** Raw / typed schedule (predicted mapping) */
+  scheduleDate?: string | null;
+  scheduleAt?: string | null;
+  /** Raw / typed actual mapping date (drives Hub via fieldDate) */
+  mappingDate?: string | null;
+  mappingAt?: string | null;
+  sentToStudio?: string | null;
+  sentToStudioAt?: string | null;
+  receivedFromStudio?: string | null;
+  receivedFromStudioAt?: string | null;
+  /** Spreadsheet graphics assignee name (may not match a User) */
+  graphicsPolishAssignee?: string | null;
+  /** Spreadsheet QA assignee name (may not match a User) */
+  polishQaAssignee?: string | null;
+  /** CSV upload-stage inspector name */
+  graphicsUploadAssignee?: string | null;
+  /** CSV upload-stage QA name */
+  uploadQaAssignee?: string | null;
+  /** Both upload + polish CSV assignee sides filled */
+  assigneeConflict?: boolean;
+  polishStage?: string | null;
+  setupStage?: string | null;
+  activation?: string | null;
+  activationAt?: string | null;
   inspectorStatus: InspectorStatus | null;
   supervisorStatus: SupervisorStatus | null;
   qaStatus: QaStatus | null;
@@ -160,6 +186,7 @@ export const ROLE_LABELS: Record<RoleName, string> = {
   SUPERVISOR: "Supervisor",
   SUPERVISOR_SHIFT_LEADER: "Supervisor Shift Leader",
   OPS_ADMIN: "OPS Manager",
+  OPS_MANAGER: "OPS Manager",
   OPS_MANAGER_2: "OPS Manager 2",
 };
 

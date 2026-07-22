@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api";
 import type { MapRecord, TeamMember } from "../../types";
 import { Badge } from "@/components/common/Badge";
+import { SpreadsheetDateInput } from "@/components/common/SpreadsheetDateInput";
+import { BoardTextInput } from "@/components/common/BoardTextInput";
 import { AssignMapModal } from "./AssignMapModal";
 import { AssignQaModal } from "./AssignQaModal";
 import { Modal } from "@/components/common/Modal";
@@ -26,11 +28,13 @@ import {
   EMPTY_COLUMN_FILTERS,
   getInspectorLabel,
   getMapDisplayState,
+  getMapReceivedStatus,
   getMapStation,
   getQaLabel,
   getTaskType,
   MAP_STATION_OPTIONS,
   MAP_TASK_OPTIONS,
+  mapReceivedSelectClass,
   matchesColumnFilters,
   matchesQueue,
   needsInspectorAssignment,
@@ -42,7 +46,17 @@ import {
 } from "../../lib/mapDisplay";
 import { getLeaderStatusOptions, type StatusOption } from "../../lib/activeMapsWorkflow";
 import { SHIFTS, getShiftInspectors, type ShiftId } from "../../lib/shifts";
+import {
+  getMappingCompletionLabel,
+  getPipelineStage,
+  PIPELINE_STAGE_LABELS,
+  type PipelineStage,
+} from "../../lib/pipeline";
 import { ROLE_LABELS, type MapStation, type MapTask } from "../../types";
+
+const PIPELINE_OPTIONS: PipelineStage[] = ["UPLOAD", "MAPPING", "POLISH", "ACTIVATION"];
+const selectClass =
+  "w-full text-xs font-medium rounded-md border border-border bg-white px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:opacity-50";
 
 interface Props {
   maps: MapRecord[];
@@ -79,6 +93,7 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
   const [assignQaMap, setAssignQaMap] = useState<MapRecord | null>(null);
   const [bulkQaId, setBulkQaId] = useState("");
   const [dueDateSaving, setDueDateSaving] = useState<string | null>(null);
+  const tableScrollRef = useRef<HTMLDivElement>(null);
   const [statusSaving, setStatusSaving] = useState<string | null>(null);
   const [taskStationSaving, setTaskStationSaving] = useState<string | null>(null);
   const [shuffleOpen, setShuffleOpen] = useState(false);
@@ -122,9 +137,16 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
 
   const filteredMaps = useMemo(
     () =>
-      maps.filter(
-        (map) => matchesQueue(map, queue) && matchesColumnFilters(map, columnFilters)
-      ),
+      maps
+        .filter(
+          (map) => matchesQueue(map, queue) && matchesColumnFilters(map, columnFilters)
+        )
+        .sort((a, b) => {
+          const aCancelled = a.phase === "CANCELLED" ? 1 : 0;
+          const bCancelled = b.phase === "CANCELLED" ? 1 : 0;
+          if (aCancelled !== bCancelled) return aCancelled - bCancelled;
+          return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+        }),
     [maps, queue, columnFilters]
   );
 
@@ -452,6 +474,49 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
     }
   }
 
+  async function handleMapReceivedChange(map: MapRecord, received: boolean) {
+    setError("");
+    setTaskStationSaving(map.id);
+    try {
+      const updated = await api.setMapReceived(map.id, received);
+      patch(updated);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setTaskStationSaving(null);
+    }
+  }
+
+
+  async function handleSpreadsheetDateChange(
+    map: MapRecord,
+    patchFields: Parameters<typeof api.updateMapSpreadsheetDates>[1]
+  ) {
+    setError("");
+    setTaskStationSaving(map.id);
+    try {
+      const updated = await api.updateMapSpreadsheetDates(map.id, patchFields);
+      patch(updated);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setTaskStationSaving(null);
+    }
+  }
+
+  async function handlePipelineChange(map: MapRecord, stage: PipelineStage) {
+    setError("");
+    setTaskStationSaving(map.id);
+    try {
+      const updated = await api.setMapPipeline(map.id, stage);
+      patch(updated);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setTaskStationSaving(null);
+    }
+  }
+
   async function handleBulkTaskStation() {
     if (selected.size === 0 || (!bulkTask && !bulkStation)) return;
     setError("");
@@ -717,11 +782,31 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
           No maps match the current filters.
         </p>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-border bg-card">
-          <table className="w-full text-sm">
+        <div
+          ref={tableScrollRef}
+          tabIndex={0}
+          onKeyDown={(e) => {
+            const step = e.shiftKey ? 320 : 160;
+            if (e.key === "ArrowRight") {
+              e.preventDefault();
+              tableScrollRef.current?.scrollBy({ left: step, behavior: "smooth" });
+            } else if (e.key === "ArrowLeft") {
+              e.preventDefault();
+              tableScrollRef.current?.scrollBy({ left: -step, behavior: "smooth" });
+            } else if (e.key === "ArrowDown") {
+              e.preventDefault();
+              tableScrollRef.current?.scrollBy({ top: step, behavior: "smooth" });
+            } else if (e.key === "ArrowUp") {
+              e.preventDefault();
+              tableScrollRef.current?.scrollBy({ top: -step, behavior: "smooth" });
+            }
+          }}
+          className="overflow-auto max-h-[min(70vh,720px)] rounded-xl border border-border bg-card focus:outline-none focus:ring-2 focus:ring-brand-500/30"
+        >
+          <table className="w-full text-sm min-w-[1100px]">
             <thead>
               <tr className="bg-slate-50 text-left text-muted border-b border-border">
-                <th className="px-3 py-2 w-10">
+                <th className="sticky top-0 z-20 bg-slate-50 px-3 py-2 w-10">
                   {assignableInView.length > 0 && (
                     <input
                       type="checkbox"
@@ -731,16 +816,23 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
                     />
                   )}
                 </th>
-                <th className="px-3 py-2 font-medium min-w-[120px]">Map</th>
-                <th className="px-3 py-2 font-medium min-w-[100px]">Client</th>
-                <th className="px-3 py-2 font-medium min-w-[90px]">Batch</th>
-                <th className="px-3 py-2 font-medium min-w-[110px]">Task</th>
-                <th className="px-3 py-2 font-medium min-w-[110px]">Station</th>
-                <th className="px-3 py-2 font-medium min-w-[120px]">State</th>
-                <th className="px-3 py-2 font-medium min-w-[110px]">Inspector</th>
-                <th className="px-3 py-2 font-medium min-w-[100px]">QA</th>
-                <th className="px-3 py-2 font-medium min-w-[110px]">Deadline</th>
-                <th className="px-3 py-2 font-medium w-[120px]">Actions</th>
+                <th className="sticky top-0 z-20 bg-slate-50 px-3 py-2 font-medium min-w-[120px]">Map</th>
+                <th className="sticky top-0 z-20 bg-slate-50 px-3 py-2 font-medium min-w-[100px]">Client</th>
+                <th className="sticky top-0 z-20 bg-slate-50 px-3 py-2 font-medium min-w-[90px]">Batch</th>
+                <th className="sticky top-0 z-20 bg-slate-50 px-3 py-2 font-medium min-w-[130px]">Map received</th>
+                <th className="sticky top-0 z-20 bg-slate-50 px-3 py-2 font-medium min-w-[120px]">Pipeline</th>
+                <th className="sticky top-0 z-20 bg-slate-50 px-3 py-2 font-medium min-w-[110px]">Task</th>
+                <th className="sticky top-0 z-20 bg-slate-50 px-3 py-2 font-medium min-w-[110px]">Station</th>
+                <th className="sticky top-0 z-20 bg-slate-50 px-3 py-2 font-medium min-w-[120px]">State</th>
+                <th className="sticky top-0 z-20 bg-slate-50 px-3 py-2 font-medium min-w-[120px]">Inspector</th>
+                <th className="sticky top-0 z-20 bg-slate-50 px-3 py-2 font-medium min-w-[110px]">QA</th>
+                <th className="sticky top-0 z-20 bg-slate-50 px-3 py-2 font-medium min-w-[90px]">Schedule</th>
+                <th className="sticky top-0 z-20 bg-slate-50 px-3 py-2 font-medium min-w-[90px]">Mapping</th>
+                <th className="sticky top-0 z-20 bg-slate-50 px-3 py-2 font-medium min-w-[90px]">Sent to studio</th>
+                <th className="sticky top-0 z-20 bg-slate-50 px-3 py-2 font-medium min-w-[90px]">Received from studio</th>
+                <th className="sticky top-0 z-20 bg-slate-50 px-3 py-2 font-medium min-w-[80px]">Polish</th>
+                <th className="sticky top-0 z-20 bg-slate-50 px-3 py-2 font-medium min-w-[90px]">Activation</th>
+                <th className="sticky top-0 z-20 bg-slate-50 px-3 py-2 font-medium min-w-[110px]">Deadline</th>
               </tr>
               <tr className="bg-white border-b border-border">
                 <th className="px-3 py-2" />
@@ -781,6 +873,18 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
                     ))}
                   </select>
                 </th>
+                <th className="px-3 py-2">
+                  <select
+                    value={columnFilters.mapReceived}
+                    onChange={(e) => updateFilter("mapReceived", e.target.value)}
+                    className={filterInputClass}
+                  >
+                    <option value="">All</option>
+                    <option value="not_received">Not received yet</option>
+                    <option value="received">Map received</option>
+                  </select>
+                </th>
+                <th className="px-3 py-2" />
                 <th className="px-3 py-2">
                   <select
                     value={columnFilters.task}
@@ -854,6 +958,11 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
                 </th>
                 <th className="px-3 py-2" />
                 <th className="px-3 py-2" />
+                <th className="px-3 py-2" />
+                <th className="px-3 py-2" />
+                <th className="px-3 py-2" />
+                <th className="px-3 py-2" />
+                <th className="px-3 py-2" />
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -862,15 +971,18 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
                 const taskValue = (map.task ?? "UPLOAD") as MapTask;
                 const selectable = canSelectMap(map);
                 const savingMeta = taskStationSaving === map.id;
+                const cancelled = map.phase === "CANCELLED";
                 return (
                   <tr
                     key={map.id}
                     className={`hover:bg-slate-50/60 ${
-                      needsInspectorAssignment(map)
-                        ? "bg-amber-50/40"
-                        : needsQaAssignment(map)
-                          ? "bg-violet-50/40"
-                          : ""
+                      cancelled
+                        ? "bg-slate-50/80 text-slate-500"
+                        : needsInspectorAssignment(map)
+                          ? "bg-amber-50/40"
+                          : needsQaAssignment(map)
+                            ? "bg-violet-50/40"
+                            : ""
                     }`}
                   >
                     <td className="px-3 py-3 w-10">
@@ -891,19 +1003,87 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
                         >
                           {map.mapNumber}
                         </Link>
+                        {map.phase === "CANCELLED" && (
+                          <Badge label="Cancelled" tone="CANCELLED" />
+                        )}
                       </div>
                     </td>
-                    <td className="px-3 py-3 text-muted">{map.client}</td>
-                    <td className="px-3 py-3 text-muted text-xs">{map.batch?.trim() || "—"}</td>
+                    <td className="px-3 py-3">
+                      <BoardTextInput
+                        value={map.client}
+                        disabled={savingMeta || cancelled}
+                        title="Client"
+                        onCommit={(v) =>
+                          handleSpreadsheetDateChange(map, { client: v ?? "" })
+                        }
+                      />
+                    </td>
+                    <td className="px-3 py-3">
+                      <BoardTextInput
+                        value={map.batch}
+                        disabled={savingMeta || cancelled}
+                        title="Batch"
+                        className="text-muted"
+                        onCommit={(v) => handleSpreadsheetDateChange(map, { batch: v })}
+                      />
+                    </td>
+                    <td className="px-3 py-3">
+                      <select
+                        value={getMapReceivedStatus(map.mapReceived)}
+                        disabled={savingMeta || cancelled}
+                        onChange={(e) =>
+                          handleMapReceivedChange(map, e.target.value === "received")
+                        }
+                        title="Map received (from CSV)"
+                        className={`w-full text-xs font-semibold rounded-md border px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:opacity-50 ${mapReceivedSelectClass(map.mapReceived)}`}
+                      >
+                        <option value="not_received">Not received yet</option>
+                        <option value="received">Map received</option>
+                      </select>
+                    </td>
+                    <td className="px-3 py-3">
+                      {cancelled ? (
+                        <Badge label="Cancelled" tone="CANCELLED" />
+                      ) : (
+                        (() => {
+                          const mappingStatus = getMappingCompletionLabel(map);
+                          return (
+                            <div className="flex items-center gap-1.5 min-w-[140px]">
+                              <select
+                                value={getPipelineStage(map)}
+                                disabled={savingMeta}
+                                onChange={(e) =>
+                                  handlePipelineChange(map, e.target.value as PipelineStage)
+                                }
+                                title="Change pipeline"
+                                className={`${selectClass} min-w-0 flex-1`}
+                              >
+                                {PIPELINE_OPTIONS.map((s) => (
+                                  <option key={s} value={s}>
+                                    {PIPELINE_STAGE_LABELS[s]}
+                                  </option>
+                                ))}
+                              </select>
+                              {mappingStatus && (
+                                <Badge
+                                  label={mappingStatus}
+                                  tone={mappingStatus === "Complete" ? "DONE" : "PROCESSING"}
+                                />
+                              )}
+                            </div>
+                          );
+                        })()
+                      )}
+                    </td>
                     <td className="px-3 py-3">
                       <select
                         value={taskValue}
-                        disabled={savingMeta}
+                        disabled={savingMeta || cancelled}
                         onChange={(e) =>
                           handleTaskStationChange(map, { task: e.target.value as MapTask })
                         }
                         title="Change task"
-                        className="w-full text-xs font-medium rounded-md border border-border bg-white px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:opacity-50"
+                        className={selectClass}
                       >
                         {MAP_TASK_OPTIONS.map((o) => (
                           <option key={o.value} value={o.value}>
@@ -915,14 +1095,14 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
                     <td className="px-3 py-3">
                       <select
                         value={station}
-                        disabled={savingMeta}
+                        disabled={savingMeta || cancelled}
                         onChange={(e) =>
                           handleTaskStationChange(map, {
                             station: e.target.value as MapStation,
                           })
                         }
                         title="Change station"
-                        className="w-full text-xs font-medium rounded-md border border-border bg-white px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:opacity-50"
+                        className={selectClass}
                       >
                         {MAP_STATION_OPTIONS.map((o) => (
                           <option key={o.value} value={o.value}>
@@ -976,18 +1156,112 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
                       })()}
                     </td>
                     <td className="px-3 py-3">
-                      {map.assignedInspector?.name ?? (
-                        <span className="text-amber-700 text-xs font-medium">Unassigned</span>
-                      )}
+                      <div className="flex flex-col gap-1 min-w-[100px]">
+                        <span
+                          className={
+                            getInspectorLabel(map) === "Please assign"
+                              ? "text-amber-700 text-xs font-medium"
+                              : undefined
+                          }
+                        >
+                          {getInspectorLabel(map)}
+                        </span>
+                        {canShowInspectorAssign(map) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setError("");
+                              setAssignMap(map);
+                            }}
+                            className="px-2 py-0.5 text-[10px] font-medium bg-brand-600 text-white rounded hover:bg-brand-700 w-fit"
+                          >
+                            {map.assignedInspector ? "Reassign" : "Assign"}
+                          </button>
+                        )}
+                      </div>
                     </td>
                     <td className="px-3 py-3">
-                      {canAssignQa(map) ? (
-                        map.assignedQa?.name ?? (
-                          <span className="text-violet-700 text-xs font-medium">Needs QA</span>
-                        )
-                      ) : (
-                        map.assignedQa?.name ?? "—"
-                      )}
+                      <div className="flex flex-col gap-1 min-w-[100px]">
+                        <span
+                          className={
+                            getQaLabel(map) === "Please assign"
+                              ? "text-amber-700 text-xs font-medium"
+                              : undefined
+                          }
+                        >
+                          {getQaLabel(map)}
+                        </span>
+                        {(canShowQaAssign(map) || map.phase === "PREP" || map.phase === "POLISH") &&
+                          map.phase !== "CANCELLED" &&
+                          map.phase !== "APPROVED" && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setError("");
+                              setAssignQaMap(map);
+                            }}
+                            className="px-2 py-0.5 text-[10px] font-medium bg-violet-600 text-white rounded hover:bg-violet-700 w-fit"
+                          >
+                            {map.assignedQa ? "Reassign" : "Assign"}
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-3 py-3">
+                      <SpreadsheetDateInput
+                        kind="schedule"
+                        value={map.scheduleAt}
+                        disabled={savingMeta || cancelled}
+                        title="Schedule (predicted mapping)"
+                        onChange={(v) => handleSpreadsheetDateChange(map, { scheduleAt: v })}
+                      />
+                    </td>
+                    <td className="px-3 py-3">
+                      <SpreadsheetDateInput
+                        kind="mapping"
+                        value={map.mappingAt}
+                        disabled={savingMeta || cancelled}
+                        title="Mapping (actual / Hub date)"
+                        onChange={(v) => handleSpreadsheetDateChange(map, { mappingAt: v })}
+                      />
+                    </td>
+                    <td className="px-3 py-3">
+                      <SpreadsheetDateInput
+                        kind="sentToStudio"
+                        value={map.sentToStudioAt}
+                        disabled={savingMeta || cancelled}
+                        title="Sent to studio"
+                        onChange={(v) => handleSpreadsheetDateChange(map, { sentToStudioAt: v })}
+                      />
+                    </td>
+                    <td className="px-3 py-3">
+                      <SpreadsheetDateInput
+                        kind="receivedFromStudio"
+                        value={map.receivedFromStudioAt}
+                        disabled={savingMeta || cancelled}
+                        title="Received from studio"
+                        onChange={(v) =>
+                          handleSpreadsheetDateChange(map, { receivedFromStudioAt: v })
+                        }
+                      />
+                    </td>
+                    <td className="px-3 py-3">
+                      <BoardTextInput
+                        value={map.polishStage}
+                        disabled={savingMeta || cancelled}
+                        title="Polish"
+                        className="whitespace-nowrap"
+                        onCommit={(v) => handleSpreadsheetDateChange(map, { polishStage: v })}
+                      />
+                    </td>
+                    <td className="px-3 py-3">
+                      <SpreadsheetDateInput
+                        kind="activation"
+                        value={map.activationAt}
+                        disabled={savingMeta || cancelled}
+                        title="Activation"
+                        onChange={(v) => handleSpreadsheetDateChange(map, { activationAt: v })}
+                      />
                     </td>
                     <td className="px-3 py-3">
                       <div className="flex flex-col gap-0.5 min-w-[100px]">
@@ -1007,37 +1281,6 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
                             {getDueDateStatus(map.dueDate) === "overdue" && " · Overdue"}
                             {getDueDateStatus(map.dueDate) === "soon" && " · Due soon"}
                           </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-3 py-3">
-                      <div className="flex flex-col gap-1">
-                        {canShowInspectorAssign(map) && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setError("");
-                              setAssignMap(map);
-                            }}
-                            className="px-2.5 py-1 text-xs font-medium bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors"
-                          >
-                            Inspector
-                          </button>
-                        )}
-                        {canShowQaAssign(map) && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setError("");
-                              setAssignQaMap(map);
-                            }}
-                            className="px-2.5 py-1 text-xs font-medium bg-violet-600 text-white rounded-lg hover:bg-violet-700 transition-colors"
-                          >
-                            QA
-                          </button>
-                        )}
-                        {!canShowInspectorAssign(map) && !canShowQaAssign(map) && (
-                          <span className="text-xs text-slate-300">—</span>
                         )}
                       </div>
                     </td>

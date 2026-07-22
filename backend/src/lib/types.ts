@@ -8,6 +8,7 @@ export const ROLE_LABELS: Record<string, string> = {
   SUPERVISOR: "Supervisor",
   SUPERVISOR_SHIFT_LEADER: "Supervisor Shift Leader",
   OPS_ADMIN: "OPS Manager",
+  OPS_MANAGER: "OPS Manager",
   OPS_MANAGER_2: "OPS Manager 2",
 };
 

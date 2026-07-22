@@ -89,7 +89,7 @@ export function LeaderDashboardPage() {
   const historyMaps = useMemo(() => historyData ?? [], [historyData]);
 
   const load = useCallback(
-    () => void qc.invalidateQueries({ queryKey: queryKeys.dashboard }),
+    () => qc.invalidateQueries({ queryKey: queryKeys.dashboard }),
     [qc]
   );
   const reload = load;

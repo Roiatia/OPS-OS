@@ -16,8 +16,9 @@ describe("role predicates", () => {
     expect(isSupervisorRole(RoleName.MAPPING_INSPECTOR)).toBe(false);
   });
 
-  it("isOpsManagerRole covers both OPS manager roles", () => {
+  it("isOpsManagerRole covers OPS manager roles", () => {
     expect(isOpsManagerRole(RoleName.OPS_ADMIN)).toBe(true);
+    expect(isOpsManagerRole(RoleName.OPS_MANAGER)).toBe(true);
     expect(isOpsManagerRole(RoleName.OPS_MANAGER_2)).toBe(true);
     expect(isOpsManagerRole(RoleName.GRAPHIC_TEAM_LEADER)).toBe(false);
   });
@@ -28,6 +29,7 @@ describe("role predicates", () => {
   });
 
   it("userHasOpsManagerRole checks a flat role list", () => {
+    expect(userHasOpsManagerRole({ roles: [RoleName.OPS_MANAGER] })).toBe(true);
     expect(userHasOpsManagerRole({ roles: [RoleName.OPS_MANAGER_2] })).toBe(true);
     expect(userHasOpsManagerRole({ roles: [RoleName.MAPPING_INSPECTOR] })).toBe(false);
   });

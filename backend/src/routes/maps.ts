@@ -4,7 +4,9 @@ import { authMiddleware, requireRoles, type AuthedRequest } from "../middleware/
 import { userHasOpsManagerRole } from "../domain/roles.js";
 import * as workflow from "../services/workflow.js";
 import { syncMapsFromSpreadsheet } from "../services/spreadsheetSync.js";
-import { importSamsClubCsv, previewSamsClubCsv } from "../services/csvImport.js";
+import { importSamsClubCsv, previewSamsClubCsv, clearAllMaps, resolveCsvImportConflicts } from "../services/csvImport.js";
+import type { CsvConflictResolution } from "../services/csvHybridMerge.js";
+import { checkMapsInDatabase } from "../services/mapPresence.js";
 
 const router = Router();
 router.use(authMiddleware);
@@ -505,7 +507,7 @@ router.post(
 
 router.post(
   "/import-csv/preview",
-  requireRoles(RoleName.OPS_ADMIN, RoleName.GRAPHIC_TEAM_LEADER),
+  requireRoles(RoleName.OPS_ADMIN, RoleName.OPS_MANAGER_2, RoleName.GRAPHIC_TEAM_LEADER),
   async (req, res) => {
     try {
       const { csv } = req.body as { csv?: string };
@@ -521,9 +523,32 @@ router.post(
   }
 );
 
+/** Check which building / map numbers from a list are missing in the DB. */
+router.post(
+  "/check-missing",
+  requireRoles(RoleName.OPS_ADMIN, RoleName.OPS_MANAGER_2, RoleName.GRAPHIC_TEAM_LEADER),
+  async (req, res) => {
+    try {
+      const { numbers } = req.body as { numbers?: Array<string | number> };
+      if (!Array.isArray(numbers) || numbers.length === 0) {
+        res.status(400).json({ error: "numbers (non-empty array) required" });
+        return;
+      }
+      if (numbers.length > 5000) {
+        res.status(400).json({ error: "Too many numbers (max 5000)" });
+        return;
+      }
+      const result = await checkMapsInDatabase(numbers);
+      res.json(result);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
 router.post(
   "/import-csv",
-  requireRoles(RoleName.OPS_ADMIN, RoleName.GRAPHIC_TEAM_LEADER),
+  requireRoles(RoleName.OPS_ADMIN, RoleName.OPS_MANAGER_2, RoleName.GRAPHIC_TEAM_LEADER),
   async (req, res) => {
     try {
       const { csv, clearExisting, defaultClient } = req.body as {
@@ -542,6 +567,40 @@ router.post(
       res.json(result);
     } catch (e) {
       res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+router.post(
+  "/import-csv/resolve-conflicts",
+  requireRoles(RoleName.OPS_ADMIN, RoleName.OPS_MANAGER_2, RoleName.GRAPHIC_TEAM_LEADER),
+  async (req, res) => {
+    try {
+      const { resolutions } = req.body as { resolutions?: CsvConflictResolution[] };
+      if (!Array.isArray(resolutions) || resolutions.length === 0) {
+        res.status(400).json({ error: "resolutions array required" });
+        return;
+      }
+      const result = await resolveCsvImportConflicts(
+        resolutions,
+        (req as AuthedRequest).user
+      );
+      res.json(result);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+router.delete(
+  "/all",
+  requireRoles(RoleName.OPS_ADMIN, RoleName.OPS_MANAGER_2, RoleName.GRAPHIC_TEAM_LEADER),
+  async (_req, res) => {
+    try {
+      const deleted = await clearAllMaps();
+      res.json({ deleted });
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
     }
   }
 );
@@ -629,6 +688,39 @@ router.patch(
   }
 );
 
+
+router.patch(
+  "/:id/spreadsheet-dates",
+  requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN),
+  async (req, res) => {
+    try {
+      const body = req.body as {
+        scheduleAt?: string | null;
+        mappingAt?: string | null;
+        sentToStudioAt?: string | null;
+        receivedFromStudioAt?: string | null;
+        activationAt?: string | null;
+        client?: string | null;
+        batch?: string | null;
+        area?: string | null;
+        address?: string | null;
+        mapperName?: string | null;
+        polishStage?: string | null;
+        opsManagerComment?: string | null;
+        fieldWorkStatus?: "UNCOMPLETED" | "COMPLETED" | "CANCELLED" | null;
+      };
+      const map = await workflow.updateMapSpreadsheetDates(
+        req.params.id,
+        body,
+        (req as AuthedRequest).user
+      );
+      res.json(map);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
 router.post(
   "/:id/cancel",
   requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN),
@@ -705,6 +797,51 @@ router.patch(
             ? { station: station as import("@prisma/client").MapStation }
             : {}),
         },
+        (req as AuthedRequest).user
+      );
+      res.json(map);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+// CSV "Map received" — "v" / empty; editable from the maps board.
+router.patch(
+  "/:id/map-received",
+  requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN),
+  async (req, res) => {
+    try {
+      const { received } = req.body as { received?: boolean };
+      if (typeof received !== "boolean") {
+        res.status(400).json({ error: "received (boolean) required" });
+        return;
+      }
+      const map = await workflow.setMapReceived(
+        req.params.id,
+        received,
+        (req as AuthedRequest).user
+      );
+      res.json(map);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+router.patch(
+  "/:id/pipeline",
+  requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN),
+  async (req, res) => {
+    try {
+      const { stage } = req.body as { stage?: string };
+      if (!stage || !["UPLOAD", "MAPPING", "POLISH", "ACTIVATION"].includes(stage)) {
+        res.status(400).json({ error: "stage required: UPLOAD, MAPPING, POLISH, ACTIVATION" });
+        return;
+      }
+      const map = await workflow.setMapPipeline(
+        req.params.id,
+        stage as "UPLOAD" | "MAPPING" | "POLISH" | "ACTIVATION",
         (req as AuthedRequest).user
       );
       res.json(map);

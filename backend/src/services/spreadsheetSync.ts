@@ -22,6 +22,8 @@ import {
 } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import type { AuthUser } from "../lib/types.js";
+import { isActivationDatePast, isPolishStageDone } from "../domain/pipeline.js";
+import { broadcastMapsInvalidate, withSuppressedBroadcasts } from "../lib/realtimeBus.js";
 
 export type SpreadsheetSyncResult = {
   imported: number;
@@ -35,12 +37,6 @@ export type SpreadsheetSyncResult = {
 type SheetRow = Record<string, string>;
 
 const DEFAULT_CLIENT = process.env.SPREADSHEET_DEFAULT_CLIENT ?? "Sam's Club";
-
-async function logSyncEvent(mapId: string, userId: string, note: string) {
-  await prisma.mapEvent.create({
-    data: { mapId, userId, action: "spreadsheet_sync", note },
-  });
-}
 
 function normalizeHeader(h: string): string {
   return String(h ?? "")
@@ -110,10 +106,22 @@ function mapNumberFor(building: string, client: string): string {
 function phaseForRow(row: SheetRow): MapPhase {
   if (cell(row, "batch").toLowerCase().includes("cancel")) return MapPhase.CANCELLED;
   if (isFinishedRow(row)) return MapPhase.APPROVED;
-  if (isScheduledToday(row)) return MapPhase.FIELD;
 
-  const polish = cell(row, "polish").toLowerCase();
-  if (polish === "wip" || polish === "done") return MapPhase.POLISH;
+  const activation = parseSheetDate(cell(row, "activation"));
+  const polishRaw = cell(row, "polish");
+
+  // Polish Done + no activation → Polish. Past activation + polish Done → Polish
+  // (board Pipeline shows Activation when activation date has passed).
+  if (isPolishStageDone(polishRaw) && !activation) return MapPhase.POLISH;
+  if (isPolishStageDone(polishRaw) && activation && isActivationDatePast(activation)) {
+    return MapPhase.POLISH;
+  }
+  if (isPolishStageDone(polishRaw) && activation && !isActivationDatePast(activation)) {
+    return MapPhase.POLISH;
+  }
+  if (polishRaw.toLowerCase() === "wip") return MapPhase.POLISH;
+
+  if (isScheduledToday(row)) return MapPhase.FIELD;
 
   if (parseSheetDate(cell(row, "mapping"))) return MapPhase.FIELD;
 
@@ -279,39 +287,62 @@ export async function syncMapsFromSpreadsheet(
     errors: [],
   };
 
-  for (const row of rows) {
-    try {
-      const parsed = rowToMapPayload(row);
-      if (!parsed) {
-        result.skipped++;
-        continue;
+  const eventRows: { mapId: string; userId: string; action: string; note: string }[] = [];
+
+  // Suppress per-row realtime reshape queries — they flood the DB pool on large
+  // sheets and leave the UI stuck on "Loading…" while maps are already saved.
+  await withSuppressedBroadcasts(async () => {
+    for (const row of rows) {
+      try {
+        const parsed = rowToMapPayload(row);
+        if (!parsed) {
+          result.skipped++;
+          continue;
+        }
+
+        const { mapNumber, data, scheduledToday } = parsed;
+        const phase = data.phase as MapPhase;
+
+        if (phase === MapPhase.APPROVED || phase === MapPhase.CANCELLED) result.history++;
+        if (scheduledToday && phase === MapPhase.FIELD) result.todayHub++;
+
+        const existing = await prisma.map.findUnique({ where: { mapNumber } });
+
+        if (existing) {
+          const { mapNumber: _mn, ...updateData } = data;
+          await prisma.map.update({
+            where: { id: existing.id },
+            data: updateData as Prisma.MapUpdateInput,
+          });
+          eventRows.push({
+            mapId: existing.id,
+            userId: user.id,
+            action: "spreadsheet_sync",
+            note: `Spreadsheet sync → ${phase}`,
+          });
+          result.updated++;
+        } else {
+          const created = await prisma.map.create({ data });
+          eventRows.push({
+            mapId: created.id,
+            userId: user.id,
+            action: "spreadsheet_sync",
+            note: `Spreadsheet import → ${phase}`,
+          });
+          result.imported++;
+        }
+      } catch (err) {
+        result.errors.push(`${cell(row, "building") || "?"}: ${(err as Error).message}`);
       }
-
-      const { mapNumber, data, scheduledToday } = parsed;
-      const phase = data.phase as MapPhase;
-
-      if (phase === MapPhase.APPROVED || phase === MapPhase.CANCELLED) result.history++;
-      if (scheduledToday && phase === MapPhase.FIELD) result.todayHub++;
-
-      const existing = await prisma.map.findUnique({ where: { mapNumber } });
-
-      if (existing) {
-        const { mapNumber: _mn, ...updateData } = data;
-        await prisma.map.update({
-          where: { id: existing.id },
-          data: updateData as Prisma.MapUpdateInput,
-        });
-        await logSyncEvent(existing.id, user.id, `Spreadsheet sync → ${phase}`);
-        result.updated++;
-      } else {
-        const created = await prisma.map.create({ data });
-        await logSyncEvent(created.id, user.id, `Spreadsheet import → ${phase}`);
-        result.imported++;
-      }
-    } catch (err) {
-      result.errors.push(`${cell(row, "building") || "?"}: ${(err as Error).message}`);
     }
-  }
 
+    // Batch audit events (skip per-row awaits that doubled sync time).
+    const EVENT_CHUNK = 200;
+    for (let i = 0; i < eventRows.length; i += EVENT_CHUNK) {
+      await prisma.mapEvent.createMany({ data: eventRows.slice(i, i + EVENT_CHUNK) });
+    }
+  });
+
+  broadcastMapsInvalidate();
   return result;
 }

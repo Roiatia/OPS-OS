@@ -2,8 +2,8 @@ import { Suspense, lazy, useCallback, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { SettingsPanel } from "../components/leader/SettingsPanel";
+import { CsvImportPanel } from "../components/leader/CsvImportPanel";
 import { MapHubBoard } from "../components/hub/MapHubBoard";
-import { SpreadsheetSyncPanel } from "../components/ops/SpreadsheetSyncPanel";
 import { OpsManagerSidebar, type OpsSection } from "../components/ops/OpsManagerSidebar";
 import { ConfluencePanel } from "../components/shared/ConfluencePanel";
 
@@ -77,6 +77,7 @@ export function OpsManagerDashboardPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
   const [showAddMap, setShowAddMap] = useState(false);
+  const [showCsvImport, setShowCsvImport] = useState(false);
   const [readyPanelOpen, setReadyPanelOpen] = useState(false);
   const [error, setError] = useState("");
   const [activeSection, setActiveSection] = useSectionRoute("/app/ops", OPS_SECTIONS, "hub");
@@ -102,7 +103,7 @@ export function OpsManagerDashboardPage() {
   const historyMaps = useMemo(() => historyData ?? [], [historyData]);
 
   const load = useCallback(
-    () => void qc.invalidateQueries({ queryKey: queryKeys.dashboard }),
+    () => qc.invalidateQueries({ queryKey: queryKeys.dashboard }),
     [qc]
   );
   const reloadMaps = load;
@@ -209,13 +210,22 @@ export function OpsManagerDashboardPage() {
               {subtitle ? <p className="text-muted mt-1">{subtitle}</p> : null}
             </div>
             {activeSection === "maps" && (
-              <button
-                type="button"
-                onClick={() => setShowAddMap(!showAddMap)}
-                className="px-4 py-2.5 bg-brand-600 text-white text-sm font-medium rounded-xl hover:bg-brand-700 shadow-sm shadow-brand-600/20 transition-colors"
-              >
-                + Add map from CS
-              </button>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowCsvImport((v) => !v)}
+                  className="px-4 py-2.5 border border-border text-sm font-medium rounded-xl hover:bg-slate-50 transition-colors"
+                >
+                  Import CSV
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowAddMap(!showAddMap)}
+                  className="px-4 py-2.5 bg-brand-600 text-white text-sm font-medium rounded-xl hover:bg-brand-700 shadow-sm shadow-brand-600/20 transition-colors"
+                >
+                  + Add map from CS
+                </button>
+              </div>
             )}
           </div>
 
@@ -264,7 +274,12 @@ export function OpsManagerDashboardPage() {
                     ))}
                   </div>
 
-                  <SpreadsheetSyncPanel onSynced={load} />
+                  {showCsvImport && (
+                    <CsvImportPanel
+                      onImported={load}
+                      onCancel={() => setShowCsvImport(false)}
+                    />
+                  )}
 
                   {showAddMap && (
                     <form

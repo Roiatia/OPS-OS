@@ -9,6 +9,10 @@ import {
   workflowStateTone,
   matchesColumnFilters,
   EMPTY_COLUMN_FILTERS,
+  isMapReceived,
+  getMapReceivedLabel,
+  getMapReceivedStatus,
+  formatCsvDateCell,
 } from "../mapDisplay";
 import { makeMap, makePerson } from "./fixtures";
 
@@ -103,10 +107,13 @@ describe("assignment predicates", () => {
     }
   });
 
-  it("canAssignQa only in the review phases", () => {
+  it("canAssignQa for active phases (not approved/cancelled)", () => {
     expect(canAssignQa(makeMap({ phase: "UPLOAD_REVIEW" }))).toBe(true);
     expect(canAssignQa(makeMap({ phase: "QA_REVIEW" }))).toBe(true);
-    expect(canAssignQa(makeMap({ phase: "PREP" }))).toBe(false);
+    expect(canAssignQa(makeMap({ phase: "PREP" }))).toBe(true);
+    expect(canAssignQa(makeMap({ phase: "POLISH" }))).toBe(true);
+    expect(canAssignQa(makeMap({ phase: "APPROVED" }))).toBe(false);
+    expect(canAssignQa(makeMap({ phase: "CANCELLED" }))).toBe(false);
   });
 
   it("needsInspectorAssignment is intake-only", () => {
@@ -114,12 +121,13 @@ describe("assignment predicates", () => {
     expect(needsInspectorAssignment(makeMap({ phase: "PREP" }))).toBe(false);
   });
 
-  it("needsQaAssignment when in review with no QA", () => {
+  it("needsQaAssignment when active and no QA", () => {
     expect(needsQaAssignment(makeMap({ phase: "QA_REVIEW", assignedQa: null }))).toBe(true);
     expect(
       needsQaAssignment(makeMap({ phase: "QA_REVIEW", assignedQa: makePerson("qa1") }))
     ).toBe(false);
-    expect(needsQaAssignment(makeMap({ phase: "PREP", assignedQa: null }))).toBe(false);
+    expect(needsQaAssignment(makeMap({ phase: "PREP", assignedQa: null }))).toBe(true);
+    expect(needsQaAssignment(makeMap({ phase: "POLISH", assignedQa: null }))).toBe(true);
   });
 });
 
@@ -134,6 +142,55 @@ describe("workflowStateTone", () => {
     expect(workflowStateTone("Approved")).toBe("APPROVED");
     expect(workflowStateTone("Cancelled")).toBe("CANCELLED");
     expect(workflowStateTone("—")).toBe("PENDING");
+  });
+});
+
+
+describe("formatCsvDateCell", () => {
+  it("never shows Done/done placeholders", () => {
+    expect(formatCsvDateCell(null, "done")).toBe("—");
+    expect(formatCsvDateCell(null, "Done")).toBe("—");
+    expect(formatCsvDateCell(null, "DONE")).toBe("—");
+    expect(formatCsvDateCell(null, "v")).toBe("—");
+  });
+
+  it("prefers typed ISO dates", () => {
+    const label = formatCsvDateCell("2026-06-15T00:00:00.000Z", "done");
+    expect(label).not.toBe("—");
+    expect(label.toLowerCase()).not.toContain("done");
+  });
+});
+
+describe("map received", () => {
+  it("treats empty as not received yet", () => {
+    expect(isMapReceived(null)).toBe(false);
+    expect(isMapReceived("")).toBe(false);
+    expect(isMapReceived("  ")).toBe(false);
+    expect(getMapReceivedLabel(null)).toBe("Not received yet");
+    expect(getMapReceivedStatus(null)).toBe("not_received");
+  });
+
+  it("treats v / check / yes as received", () => {
+    expect(isMapReceived("v")).toBe(true);
+    expect(isMapReceived("V")).toBe(true);
+    expect(isMapReceived("✓")).toBe(true);
+    expect(isMapReceived("yes")).toBe(true);
+    expect(getMapReceivedLabel("v")).toBe("Map received");
+    expect(getMapReceivedStatus("v")).toBe("received");
+  });
+
+  it("filters by mapReceived status", () => {
+    const received = makeMap({ mapReceived: "v" });
+    const pending = makeMap({ mapReceived: null });
+    expect(
+      matchesColumnFilters(received, { ...EMPTY_COLUMN_FILTERS, mapReceived: "received" })
+    ).toBe(true);
+    expect(
+      matchesColumnFilters(pending, { ...EMPTY_COLUMN_FILTERS, mapReceived: "received" })
+    ).toBe(false);
+    expect(
+      matchesColumnFilters(pending, { ...EMPTY_COLUMN_FILTERS, mapReceived: "not_received" })
+    ).toBe(true);
   });
 });
 
