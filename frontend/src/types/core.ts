@@ -5,8 +5,7 @@ export type RoleName =
   | "SUPERVISOR"
   | "SUPERVISOR_SHIFT_LEADER"
   | "OPS_ADMIN"
-  | "OPS_MANAGER_2"
-  | "SUPER_ADMIN";
+  | "OPS_MANAGER_2";
 
 export type MapPhase =
   | "INTAKE"
@@ -162,7 +161,6 @@ export const ROLE_LABELS: Record<RoleName, string> = {
   SUPERVISOR_SHIFT_LEADER: "Supervisor Shift Leader",
   OPS_ADMIN: "OPS Manager",
   OPS_MANAGER_2: "OPS Manager 2",
-  SUPER_ADMIN: "Administrator",
 };
 
 export const PHASE_LABELS: Record<MapPhase, string> = {

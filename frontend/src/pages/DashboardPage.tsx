@@ -1,6 +1,6 @@
 import { Navigate } from "react-router-dom";
 import { useAuth, hasRole } from "../context/AuthContext";
-import { hasOpsManagerRole, hasSupervisorRole, hasSuperAdminRole } from "../lib/roles";
+import { hasOpsManagerRole, hasSupervisorRole } from "../lib/roles";
 
 /** Redirects `/app` to the current user's default role-prefixed section. */
 export function DashboardPage() {
@@ -8,9 +8,6 @@ export function DashboardPage() {
 
   if (!user) return null;
 
-  if (hasSuperAdminRole(user)) {
-    return <Navigate to="/app/admin/overview" replace />;
-  }
   if (hasOpsManagerRole(user)) {
     return <Navigate to="/app/ops/hub" replace />;
   }

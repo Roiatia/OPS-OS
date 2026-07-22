@@ -7,9 +7,6 @@ import {
   userHasOpsManagerRole,
   userHasShiftLeaderRole,
   userIsShiftLeader,
-  isSuperAdminRole,
-  userHasSuperAdminRole,
-  SUPER_ADMIN_ROLE_NAME,
 } from "../roles.js";
 
 describe("role predicates", () => {
@@ -40,20 +37,5 @@ describe("role predicates", () => {
     expect(userHasShiftLeaderRole({ roles: [RoleName.SUPERVISOR] })).toBe(false);
     expect(userIsShiftLeader({ roles: [{ role: RoleName.SUPERVISOR_SHIFT_LEADER }] })).toBe(true);
     expect(userIsShiftLeader({ roles: [{ role: RoleName.SUPERVISOR }] })).toBe(false);
-  });
-
-  it("SUPER_ADMIN implicitly satisfies every capability check (all-access)", () => {
-    const admin = { roles: [SUPER_ADMIN_ROLE_NAME] };
-    expect(isSuperAdminRole(SUPER_ADMIN_ROLE_NAME)).toBe(true);
-    expect(userHasSuperAdminRole(admin)).toBe(true);
-    expect(userHasSupervisorRole(admin)).toBe(true);
-    expect(userHasOpsManagerRole(admin)).toBe(true);
-    expect(userHasShiftLeaderRole(admin)).toBe(true);
-    expect(userIsShiftLeader({ roles: [{ role: SUPER_ADMIN_ROLE_NAME }] })).toBe(true);
-  });
-
-  it("non-admins are unaffected by the super-admin bypass", () => {
-    expect(userHasSuperAdminRole({ roles: [RoleName.OPS_ADMIN] })).toBe(false);
-    expect(userHasOpsManagerRole({ roles: [RoleName.MAPPING_INSPECTOR] })).toBe(false);
   });
 });

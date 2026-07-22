@@ -2,7 +2,6 @@ import type { RoleName, TeamMember, User } from "../types";
 
 export const SUPERVISOR_ROLES: RoleName[] = ["SUPERVISOR", "SUPERVISOR_SHIFT_LEADER"];
 export const OPS_MANAGER_ROLES: RoleName[] = ["OPS_ADMIN", "OPS_MANAGER_2"];
-export const SUPER_ADMIN_ROLE: RoleName = "SUPER_ADMIN";
 
 export function isSupervisorRole(role: RoleName): boolean {
   return SUPERVISOR_ROLES.includes(role);
@@ -10,15 +9,6 @@ export function isSupervisorRole(role: RoleName): boolean {
 
 export function isOpsManagerRole(role: RoleName): boolean {
   return OPS_MANAGER_ROLES.includes(role);
-}
-
-export function isSuperAdminRole(role: RoleName): boolean {
-  return role === SUPER_ADMIN_ROLE;
-}
-
-/** True for the all-access administrator role. */
-export function hasSuperAdminRole(user: User | null | undefined): boolean {
-  return user?.roles.some(isSuperAdminRole) ?? false;
 }
 
 export function hasOpsManagerRole(user: User | null | undefined): boolean {

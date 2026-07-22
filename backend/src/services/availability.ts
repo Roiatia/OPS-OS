@@ -324,7 +324,7 @@ export async function getAvailabilityRoster(user: AuthUser, weekStartRaw?: strin
   weekEnd.setDate(weekEnd.getDate() + 7);
 
   const supervisors = await prisma.user.findMany({
-    where: { active: true, ...supervisorRolesWhere() },
+    where: supervisorRolesWhere(),
     include: { roles: true },
     orderBy: { name: "asc" },
   });

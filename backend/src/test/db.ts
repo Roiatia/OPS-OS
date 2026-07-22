@@ -16,9 +16,6 @@ export async function resetDb() {
   await prisma.mapNote.deleteMany();
   await prisma.task.deleteMany();
   await prisma.map.deleteMany();
-  // New user-linked tables must be cleared before users (FK constraints).
-  await prisma.usageEvent.deleteMany();
-  await prisma.featureFlagOverride.deleteMany();
   await prisma.user.deleteMany();
 }
 

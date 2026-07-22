@@ -2,23 +2,13 @@ import jwt from "jsonwebtoken";
 import type { Request, Response, NextFunction } from "express";
 import { RoleName } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
-import {
-  isOpsManagerRole,
-  OPS_MANAGER_ROLE_NAMES,
-  userHasSuperAdminRole,
-} from "../domain/roles.js";
+import { isOpsManagerRole, OPS_MANAGER_ROLE_NAMES } from "../domain/roles.js";
 import type { AuthUser } from "../lib/types.js";
 import { env } from "../lib/env.js";
 
 const JWT_SECRET = env.JWT_SECRET;
 
 export type AuthedRequest = Request & { user: AuthUser };
-
-/** Read the authenticated user off a request (set by `authMiddleware`).
- * Centralizes the cast so param-typed routes don't each trip a TS cast error. */
-export function getAuthUser(req: Request): AuthUser {
-  return (req as AuthedRequest).user;
-}
 
 /**
  * Short-lived in-memory cache of resolved users (id → user + roles). Every
@@ -85,12 +75,6 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
     return;
   }
 
-  if (dbUser.active === false) {
-    userCache.delete(payload.id);
-    res.status(403).json({ error: "Account disabled" });
-    return;
-  }
-
   const authUser: AuthUser = {
     id: dbUser.id,
     email: dbUser.email,
@@ -118,25 +102,10 @@ export function requireRoles(...roles: RoleName[]) {
   const allowed = expandAllowedRoles(roles);
   return (req: Request, res: Response, next: NextFunction) => {
     const user = (req as AuthedRequest).user;
-    // Super admin bypasses every role gate — all-access by design.
-    if (userHasSuperAdminRole(user)) {
-      next();
-      return;
-    }
     if (!allowed.some((r) => user.roles.includes(r))) {
       res.status(403).json({ error: "Forbidden" });
       return;
     }
     next();
   };
-}
-
-/** Guard for admin-only routes (user management, feature flags, metrics). */
-export function requireSuperAdmin(req: Request, res: Response, next: NextFunction) {
-  const user = (req as AuthedRequest).user;
-  if (!userHasSuperAdminRole(user)) {
-    res.status(403).json({ error: "Forbidden" });
-    return;
-  }
-  next();
 }

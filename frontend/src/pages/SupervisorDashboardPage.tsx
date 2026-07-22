@@ -26,9 +26,6 @@ const CompanyDashboardPanel = lazy(() =>
 );
 import { getSupervisorFieldStatus } from "../lib/supervisorDisplay";
 import { useSectionRoute } from "@/hooks/useSectionRoute";
-import { useTrackSection } from "@/hooks/useUsageTracker";
-import { useFeatures } from "@/hooks/useFeatures";
-import { isSectionVisible } from "@/lib/features";
 import { useDashboardQuery } from "@/hooks/queries";
 import { patchDashboardMaps, queryKeys } from "../lib/mapsCache";
 import { applyMapUpsert } from "../lib/mapsLive";
@@ -64,17 +61,11 @@ const SECTION_TITLES: Record<SupervisorSection, { title: string; subtitle: strin
 export function SupervisorDashboardPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
-  const { map: featureMap } = useFeatures();
-  const visibleSections = useMemo(
-    () => SUPERVISOR_SECTIONS.filter((s) => isSectionVisible(featureMap, s)),
-    [featureMap]
-  );
   const [activeSection, setActiveSection] = useSectionRoute(
     "/app/supervisor",
-    visibleSections.length ? visibleSections : SUPERVISOR_SECTIONS,
+    SUPERVISOR_SECTIONS,
     "hub"
   );
-  useTrackSection(activeSection);
   const availabilityReminder = useAvailabilityReminder(hasSupervisorRole(user));
 
   function openAvailability() {

@@ -2035,8 +2035,6 @@ export async function bulkSetMapTaskStation(
 export async function listTeamMembers() {
   return prisma.user.findMany({
     where: {
-      // Disabled accounts are hidden from team lists and assignment pickers.
-      active: true,
       roles: {
         some: {
           role: {

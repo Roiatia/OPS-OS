@@ -39,9 +39,6 @@ import {
 } from "../lib/opsDisplay";
 import { getOpsWorkloadAlerts } from "../lib/opsWorkload";
 import { useSectionRoute } from "@/hooks/useSectionRoute";
-import { useTrackSection } from "@/hooks/useUsageTracker";
-import { useFeatures } from "@/hooks/useFeatures";
-import { isSectionVisible } from "@/lib/features";
 import { useDashboardQuery, useHistoryQuery } from "@/hooks/queries";
 import { patchDashboardMaps, queryKeys } from "../lib/mapsCache";
 import { applyMapUpsert } from "../lib/mapsLive";
@@ -82,17 +79,7 @@ export function OpsManagerDashboardPage() {
   const [showAddMap, setShowAddMap] = useState(false);
   const [readyPanelOpen, setReadyPanelOpen] = useState(false);
   const [error, setError] = useState("");
-  const { map: featureMap } = useFeatures();
-  const visibleSections = useMemo(
-    () => OPS_SECTIONS.filter((s) => isSectionVisible(featureMap, s)),
-    [featureMap]
-  );
-  const [activeSection, setActiveSection] = useSectionRoute(
-    "/app/ops",
-    visibleSections.length ? visibleSections : OPS_SECTIONS,
-    "hub"
-  );
-  useTrackSection(activeSection);
+  const [activeSection, setActiveSection] = useSectionRoute("/app/ops", OPS_SECTIONS, "hub");
   const [form, setForm] = useState({
     mapNumber: "",
     jiraTicketId: "",

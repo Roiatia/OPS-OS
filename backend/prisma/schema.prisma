@@ -16,7 +16,6 @@ enum RoleName {
   SUPERVISOR_SHIFT_LEADER
   OPS_ADMIN
   OPS_MANAGER_2
-  SUPER_ADMIN
 }
 
 enum MapPhase {
@@ -104,8 +103,6 @@ model User {
   name      String
   avatarUrl String?
   googleId  String?    @unique
-  /** Soft-disable: inactive users cannot sign in and are hidden from pickers. */
-  active    Boolean    @default(true)
   shiftStartedAt DateTime?
   fridayContract   Boolean  @default(false)
   /** Can work Sunday — independent of Friday form (tap both for Friday+hagim+Sunday). */
@@ -138,62 +135,8 @@ model User {
   shiftChangesTo          ShiftChangeRequest[]  @relation("ShiftChangeTo")
   shiftChangesOps         ShiftChangeRequest[]  @relation("ShiftChangeOps")
   supervisorClients       SupervisorClientCapability[]
-  featureOverrides        FeatureFlagOverride[]
-  usageEvents             UsageEvent[]
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
-}
-
-/** Toggleable capability — experimental features + per-role feature hiding. */
-model FeatureFlag {
-  id             String                @id @default(cuid())
-  /** Stable programmatic identifier used by the frontend (e.g. "admin.metrics"). */
-  key            String                @unique
-  label          String
-  description    String?
-  /** Master switch. When false the feature is off for everyone (except overrides). */
-  enabled        Boolean               @default(false)
-  /** Marks the feature as experimental/may-not-work in the Settings UI. */
-  isExperimental Boolean               @default(false)
-  /** Roles the feature is visible to. Empty = all roles (subject to `enabled`). */
-  rolloutRoles   RoleName[]
-  overrides      FeatureFlagOverride[]
-  createdAt      DateTime              @default(now())
-  updatedAt      DateTime              @updatedAt
-}
-
-/** Per-user override of a feature flag (force-on or force-off for one user). */
-model FeatureFlagOverride {
-  id        String      @id @default(cuid())
-  flagId    String
-  flag      FeatureFlag @relation(fields: [flagId], references: [id], onDelete: Cascade)
-  userId    String
-  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  enabled   Boolean
-  createdAt DateTime    @default(now())
-
-  @@unique([flagId, userId])
-  @@index([userId])
-}
-
-/** Lightweight product-usage event for admin metrics (self-contained). */
-model UsageEvent {
-  id        String   @id @default(cuid())
-  userId    String?
-  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
-  /** Event name, e.g. "section_view", "login", "feature_use". */
-  event     String
-  /** Optional dashboard section / route context. */
-  section   String?
-  /** Snapshot of the actor's primary role at event time (denormalized). */
-  role      String?
-  metadata  Json?
-  createdAt DateTime @default(now())
-
-  @@index([createdAt])
-  @@index([event])
-  @@index([userId])
-  @@index([event, createdAt])
 }
 
 /** Which clients a supervisor is cleared to supervise. */
