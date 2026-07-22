@@ -1,60 +1,52 @@
 # Database Setup
 
-OPS-OS uses **PostgreSQL** via Prisma. Choose **Supabase** (hosted) or **local Docker** (offline dev).
+OPS-OS uses **PostgreSQL** via Prisma. Primary host is **Google Cloud SQL**;
+**local Docker** remains available for offline work.
 
-## Supabase (hosted)
+## Cloud SQL (default)
 
-### 1. Create a project
+Full access guide: [docs/cloud-sql-access.md](../docs/cloud-sql-access.md)
 
-1. Go to [supabase.com](https://supabase.com) and sign in
-2. **New project** → name (e.g. `ops-os`), set a database password, pick a region
-3. Wait until the project is ready
+### 1. GCP login + Auth Proxy (one-time)
+
+```bash
+brew install --cask google-cloud-sdk
+brew install cloud-sql-proxy
+gcloud auth login
+gcloud auth application-default login
+gcloud config set project ops-tools-503212
+```
+
+Ask Eyal F. for the `ops_dev` password and the Cloud SQL Client + Service Usage
+Consumer roles on project `ops-tools-503212`.
 
 ### 2. Connection strings
 
-In Supabase: **Project Settings → Database → Connection string**
-
-Copy the URI (port **5432**) into `backend/.env`:
+Copy `backend/.env.example` → `backend/.env` and set:
 
 ```env
-DATABASE_URL="postgresql://postgres:YOUR_PASSWORD@db.xxxxx.supabase.co:5432/postgres"
-DIRECT_URL="postgresql://postgres:YOUR_PASSWORD@db.xxxxx.supabase.co:5432/postgres"
+DATABASE_URL="postgresql://ops_dev:YOUR_PASSWORD@127.0.0.1:5433/postgres"
+DIRECT_URL="postgresql://ops_dev:YOUR_PASSWORD@127.0.0.1:5433/postgres"
 ```
 
-> Use the **same URL** in both fields for local dev. Prisma uses `DIRECT_URL` for migrations when a pooler is configured later.
+Or set `CLOUD_SQL_PASSWORD="..."` and run `npm run db:use-cloudsql`.
 
-**SSL issues?** Append to both URLs:
+### 3. Daily: start proxy, then app
 
+```bash
+cloud-sql-proxy --gcloud-auth --port 5433 ops-tools-503212:europe-west3:ops-os-db
 ```
-?uselibpqcompat=true&sslmode=require
-```
-
-**Pooler host?** Some regions use `aws-1-REGION.pooler.supabase.com` instead of `db.xxx.supabase.co`. Run `npm run db:find-pooler` from `backend/` to auto-detect.
-
-### 3. Initialize
 
 ```bash
 cd backend
 npm install
-npm run db:setup    # prisma migrate deploy + seed
-```
-
-### 4. Verify
-
-In Supabase **Table Editor**, you should see `User`, `UserRole`, `Map`, `Task`, `MapEvent`, etc.
-
-Or in **SQL Editor**:
-
-```sql
-SELECT u.name, u.email, ur.role
-FROM "User" u
-JOIN "UserRole" ur ON ur."userId" = u.id
-ORDER BY u.name;
+npm run db:check    # optional connectivity check
+npm run db:setup    # migrate + seed (only if schema/data not already present)
 ```
 
 ## Local Docker Postgres
 
-No Supabase account needed. Uses `docker-compose.yml` at the repo root.
+No GCP access needed. Uses `docker-compose.yml` at the repo root.
 
 ```bash
 cd backend
@@ -63,20 +55,20 @@ npm run db:local:setup
 
 This will:
 
-1. Start Postgres 16 on `localhost:5432` (user/password/db: `postgres`/`postgres`/`ops_os`)
+1. Start Postgres on `localhost:5432` (user/password/db: `postgres`/`postgres`/`ops_os`)
 2. Switch `backend/.env` to local URLs via `db:use-local`
 3. Run migrations and seed
 
-To switch back to Supabase later: `npm run db:use-supabase`
+To switch back to Cloud SQL: `npm run db:use-cloudsql`
 
 ## Troubleshooting
 
 | Problem | Fix |
 |---------|-----|
-| `Can't reach database server` (P1001) | Check SSL params, restore paused Supabase project, or use `db:local:setup` |
-| Migration fails with pooler | Use port **5432** (session pooler), not **6543** (transaction pooler) for `DIRECT_URL` |
+| `Can't reach database` / connection refused | Start the Auth Proxy on port **5433**, or use `db:local:setup` |
+| `403 serviceusage.services.use` | Ask for Service Usage Consumer on `ops-tools-503212` |
+| Wrong password | Update `ops_dev` password in `backend/.env` (ask Eyal F.) |
 | Re-seed safely | `npm run db:seed` — users are upserted by email |
-| Full reset (Supabase) | Project Settings → Reset database (destructive) |
 | Connection check | `npm run db:check` from `backend/` |
 
 ## Schema management

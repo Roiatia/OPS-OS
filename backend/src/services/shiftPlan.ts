@@ -134,8 +134,8 @@ async function loadPlannerContext(weekStart: Date) {
         submitted: Boolean(sub?.submittedAt),
         fridayContract: sub?.fridayContract ?? sup.fridayContract,
         hagimOk: sub?.hagimOk ?? sup.hagimOk,
-        // SLs are senior supervisors — always capacity as rating 5
-        supervisorRating: isShiftLeader ? 5 : sup.supervisorRating,
+        // SLs are senior supervisors — always capacity as rating 9
+        supervisorRating: isShiftLeader ? 9 : (sup.supervisorRating ?? 5),
         allowedClients: sup.supervisorClients.map((c) => c.client),
         days:
           sub?.days.map((d) => ({

@@ -19,7 +19,7 @@ import {
   type AvailabilityDayInput,
 } from "../../lib/availabilityRules";
 import { holidaysInAvailabilityWeek } from "../../lib/israelHolidays";
-import { DayHourDragBar } from "./DayHourDragBar";
+import { DayHourDragBar, type OvernightHighlight } from "./DayHourDragBar";
 
 type DayChoice = "unset" | "can" | "cant";
 
@@ -44,6 +44,64 @@ const DEFAULT_DAY: LocalDay = {
   endMinutes2: 20 * 60,
   note: "",
 };
+
+const DAY_MINUTES = 24 * 60;
+const NIGHT_START_MIN = 22 * 60;
+
+/** Ends at 00:00 and includes 22:00+ (first half of overnight). */
+function endsWithNightEvening(d: LocalDay): boolean {
+  if (d.choice !== "can" || d.allDay) return false;
+  const blocks = [
+    { s: d.startMinutes, e: d.endMinutes },
+    ...(d.hasSecond ? [{ s: d.startMinutes2, e: d.endMinutes2 }] : []),
+  ];
+  return blocks.some((b) => b.e >= DAY_MINUTES && b.s <= NIGHT_START_MIN);
+}
+
+/** Starts at 00:00 (second half of overnight). */
+function startsFromMidnight(d: LocalDay): boolean {
+  if (d.choice !== "can" || d.allDay) return false;
+  const blocks = [
+    { s: d.startMinutes, e: d.endMinutes },
+    ...(d.hasSecond ? [{ s: d.startMinutes2, e: d.endMinutes2 }] : []),
+  ];
+  return blocks.some((b) => b.s === 0 && b.e > 0);
+}
+
+function overnightHighlightFor(
+  days: LocalDay[],
+  idx: number,
+  block: "primary" | "second"
+): OvernightHighlight {
+  const d = days[idx]!;
+  const next = idx < days.length - 1 ? days[idx + 1]! : null;
+  const prev = idx > 0 ? days[idx - 1]! : null;
+
+  if (next && endsWithNightEvening(d) && startsFromMidnight(next)) {
+    if (
+      block === "primary" &&
+      d.endMinutes >= DAY_MINUTES &&
+      d.startMinutes <= NIGHT_START_MIN
+    ) {
+      return "evening";
+    }
+    if (
+      block === "second" &&
+      d.hasSecond &&
+      d.endMinutes2 >= DAY_MINUTES &&
+      d.startMinutes2 <= NIGHT_START_MIN
+    ) {
+      return "evening";
+    }
+  }
+
+  if (prev && endsWithNightEvening(prev) && startsFromMidnight(d)) {
+    if (block === "primary" && d.startMinutes === 0) return "morning";
+    if (block === "second" && d.hasSecond && d.startMinutes2 === 0) return "morning";
+  }
+
+  return "none";
+}
 
 function emptyWeek(): LocalDay[] {
   return AVAILABILITY_DAYS.map(() => ({ ...DEFAULT_DAY }));
@@ -292,7 +350,7 @@ export function SupervisorAvailabilityForm({ onSubmitted }: { onSubmitted?: () =
       <p className="text-xs text-muted">
         Drag hours from 00:00 → 00:00. Without the Friday form you may work Friday only until
         16:00 (Shabbat enter) — Thursday night into Friday morning is fine. Saturday is always
-        off. Night shifts (from 23:00, 6h+): max 7 per 2 weeks — prior week: {priorWeekNightShifts},
+        off. Night shifts (from 22:00, 6h+): max 7 per 2 weeks — prior week: {priorWeekNightShifts},
         this week: {countNightShiftsFromDays(payloadDays)}. Shift length 6–12 hours; at least
         8 hours rest between shifts.
       </p>
@@ -389,6 +447,7 @@ export function SupervisorAvailabilityForm({ onSubmitted }: { onSubmitted?: () =
                             : dayState.endMinutes
                         }
                         maxEndHour={fridayCap ? 16 : 24}
+                        overnightHighlight={overnightHighlightFor(days, idx, "primary")}
                         onChange={(startMinutes, endMinutes) =>
                           updateDay(idx, {
                             startMinutes,
@@ -421,6 +480,7 @@ export function SupervisorAvailabilityForm({ onSubmitted }: { onSubmitted?: () =
                                 : dayState.endMinutes2
                             }
                             maxEndHour={fridayCap ? 16 : 24}
+                            overnightHighlight={overnightHighlightFor(days, idx, "second")}
                             onChange={(startMinutes2, endMinutes2) =>
                               updateDay(idx, {
                                 startMinutes2,

@@ -2,6 +2,10 @@ import { useRef, useState, type PointerEvent } from "react";
 
 const HOURS = Array.from({ length: 25 }, (_, i) => i); // 0..24
 
+/** Night evening starts at 22:00; morning continuation is before 06:00. */
+const NIGHT_START_HOUR = 22;
+const NIGHT_END_HOUR = 6;
+
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
@@ -17,6 +21,8 @@ function minutesToLabel(m: number): string {
   return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
 }
 
+export type OvernightHighlight = "none" | "evening" | "morning";
+
 type Props = {
   startMinutes: number;
   endMinutes: number;
@@ -24,12 +30,18 @@ type Props = {
   disabled?: boolean;
   /** Cap selectable end hour (e.g. 16 for unsigned Friday / Shabbat enter). */
   maxEndHour?: number;
+  /**
+   * Yellow only for a real overnight chain:
+   * - evening: this day runs 22:00→00:00 and next morning continues
+   * - morning: previous night ended at 00:00 and this day continues from 00:00
+   * - none: all selected hours stay blue
+   */
+  overnightHighlight?: OvernightHighlight;
 };
 
 /**
  * Drag a block across a 00:00 → 00:00 (next) day bar.
- * endMinutes may be 1440 = midnight end of day.
- * Overnight work = select late hours on day A + early hours on day B.
+ * Yellow only when this day is part of an overnight night shift (22:00 → next morning).
  */
 export function DayHourDragBar({
   startMinutes,
@@ -37,6 +49,7 @@ export function DayHourDragBar({
   onChange,
   disabled,
   maxEndHour = 24,
+  overnightHighlight = "none",
 }: Props) {
   const trackRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -90,8 +103,29 @@ export function DayHourDragBar({
     dragOrigin.current = null;
   }
 
-  const leftPct = hasRange ? (startH / 24) * 100 : 0;
-  const widthPct = hasRange ? ((endH - startH) / 24) * 100 : 0;
+  function hourIsYellow(h: number): boolean {
+    if (overnightHighlight === "evening") return h >= NIGHT_START_HOUR;
+    if (overnightHighlight === "morning") return h < NIGHT_END_HOUR;
+    return false;
+  }
+
+  /** Selected segments: yellow only on overnight-linked night hours. */
+  const selectionSegments: { left: number; width: number; night: boolean }[] = [];
+  if (hasRange) {
+    for (let h = Math.floor(startH); h < Math.ceil(endH) && h < 24; h++) {
+      const segStart = Math.max(startH, h);
+      const segEnd = Math.min(endH, h + 1);
+      if (segEnd <= segStart) continue;
+      selectionSegments.push({
+        left: (segStart / 24) * 100,
+        width: ((segEnd - segStart) / 24) * 100,
+        night: hourIsYellow(h),
+      });
+    }
+  }
+
+  const showEveningBand = overnightHighlight === "evening";
+  const showMorningBand = overnightHighlight === "morning";
 
   return (
     <div className="space-y-1.5 select-none">
@@ -118,6 +152,23 @@ export function DayHourDragBar({
         aria-valuemax={24}
         aria-label="Shift hours"
       >
+        {showMorningBand && (
+          <div
+            className="absolute top-0 bottom-0 bg-amber-100/90 pointer-events-none"
+            style={{ left: "0%", width: `${(NIGHT_END_HOUR / 24) * 100}%` }}
+            title="Overnight night shift (continues from previous evening)"
+          />
+        )}
+        {showEveningBand && (
+          <div
+            className="absolute top-0 bottom-0 bg-amber-100/90 pointer-events-none"
+            style={{
+              left: `${(NIGHT_START_HOUR / 24) * 100}%`,
+              width: `${((24 - NIGHT_START_HOUR) / 24) * 100}%`,
+            }}
+            title="Overnight night shift (continues next morning)"
+          />
+        )}
         <div className="absolute inset-0 flex pointer-events-none">
           {HOURS.slice(0, 24).map((h) => (
             <div
@@ -126,15 +177,29 @@ export function DayHourDragBar({
             />
           ))}
         </div>
-        {hasRange && (
+        {selectionSegments.map((seg, i) => (
           <div
-            className="absolute top-1 bottom-1 rounded-md bg-brand-500/90 shadow-sm pointer-events-none"
-            style={{ left: `${leftPct}%`, width: `${Math.max(widthPct, 1)}%` }}
+            key={i}
+            className={`absolute top-1 bottom-1 pointer-events-none shadow-sm first:rounded-l-md last:rounded-r-md ${
+              seg.night ? "bg-amber-400/95" : "bg-brand-500/90"
+            }`}
+            style={{ left: `${seg.left}%`, width: `${Math.max(seg.width, 0.4)}%` }}
           />
-        )}
+        ))}
       </div>
       <p className="text-[10px] text-muted leading-snug">
-        Overnight? Drag evening → 00:00 here, then 00:00 → morning on the next day.
+        {overnightHighlight !== "none" ? (
+          <>
+            <span className="text-amber-700 font-medium">Yellow = overnight night shift</span>
+            {" "}
+            (22:00 → next morning).
+          </>
+        ) : (
+          <>
+            Drag hours. For a night shift: end at 00:00 here, then continue from 00:00 on the next
+            day — those hours turn yellow.
+          </>
+        )}
       </p>
     </div>
   );

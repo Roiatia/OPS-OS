@@ -24,6 +24,7 @@
     "db:setup": "prisma migrate deploy && tsx prisma/seed/seed.ts",
     "db:find-pooler": "node scripts/find-pooler.mjs",
     "db:check": "node scripts/check-db.mjs",
+    "db:use-cloudsql": "node scripts/switch-db.mjs cloudsql",
     "db:use-local": "node scripts/switch-db.mjs local",
     "db:use-supabase": "node scripts/switch-db.mjs supabase",
     "db:local:up": "docker compose -f ../docker-compose.yml up -d postgres",
