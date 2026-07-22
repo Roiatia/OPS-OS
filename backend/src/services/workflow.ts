@@ -2033,6 +2033,182 @@ export async function setMapReceived(mapId: string, received: boolean, user: Aut
   return map;
 }
 
+
+export type SpreadsheetDatePatch = {
+  scheduleAt?: string | null;
+  mappingAt?: string | null;
+  sentToStudioAt?: string | null;
+  receivedFromStudioAt?: string | null;
+  activationAt?: string | null;
+  client?: string | null;
+  batch?: string | null;
+  area?: string | null;
+  address?: string | null;
+  mapperName?: string | null;
+  polishStage?: string | null;
+  opsManagerComment?: string | null;
+  fieldWorkStatus?: "UNCOMPLETED" | "COMPLETED" | "CANCELLED" | null;
+};
+
+function parseOptionalIsoDate(value: string | null | undefined): Date | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || value === "") return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) throw new Error("Invalid date");
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function toSpreadsheetDateLabel(d: Date): string {
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+
+/**
+ * Edit spreadsheet / board fields from the maps table.
+ * Mapping date also drives Hub fieldDate.
+ */
+export async function updateMapSpreadsheetDates(
+  mapId: string,
+  patch: SpreadsheetDatePatch,
+  user: AuthUser
+) {
+  if (!isLeaderOrAdmin(user)) {
+    throw new Error("Only leaders or OPS managers can change spreadsheet dates");
+  }
+
+  const existing = await prisma.map.findUnique({ where: { id: mapId } });
+  if (!existing) throw new Error("Map not found");
+  if (existing.phase === MapPhase.CANCELLED) {
+    throw new Error("Cannot change dates on a cancelled map");
+  }
+
+  const scheduleAt = parseOptionalIsoDate(patch.scheduleAt);
+  const mappingAt = parseOptionalIsoDate(patch.mappingAt);
+  const sentToStudioAt = parseOptionalIsoDate(patch.sentToStudioAt);
+  const receivedFromStudioAt = parseOptionalIsoDate(patch.receivedFromStudioAt);
+  const activationAt = parseOptionalIsoDate(patch.activationAt);
+
+  const hasStringField =
+    patch.client !== undefined ||
+    patch.batch !== undefined ||
+    patch.area !== undefined ||
+    patch.address !== undefined ||
+    patch.mapperName !== undefined ||
+    patch.polishStage !== undefined ||
+    patch.opsManagerComment !== undefined ||
+    patch.fieldWorkStatus !== undefined;
+
+  if (
+    scheduleAt === undefined &&
+    mappingAt === undefined &&
+    sentToStudioAt === undefined &&
+    receivedFromStudioAt === undefined &&
+    activationAt === undefined &&
+    !hasStringField
+  ) {
+    throw new Error("At least one field is required");
+  }
+
+  const data: Prisma.MapUpdateInput = {};
+  const notes: string[] = [];
+
+  const trimOrNull = (v: string | null | undefined) => {
+    if (v === undefined) return undefined;
+    if (v === null) return null;
+    const t = v.trim();
+    return t ? t : null;
+  };
+
+  if (scheduleAt !== undefined) {
+    data.scheduleAt = scheduleAt;
+    data.scheduleDate = scheduleAt ? toSpreadsheetDateLabel(scheduleAt) : null;
+    notes.push(scheduleAt ? `schedule → ${toSpreadsheetDateLabel(scheduleAt)}` : "schedule cleared");
+  }
+  if (mappingAt !== undefined) {
+    data.mappingAt = mappingAt;
+    data.mappingDate = mappingAt ? toSpreadsheetDateLabel(mappingAt) : null;
+    // Hub uses fieldDate from the actual Mapping date
+    data.fieldDate = mappingAt;
+    notes.push(mappingAt ? `mapping → ${toSpreadsheetDateLabel(mappingAt)}` : "mapping cleared");
+  }
+  if (sentToStudioAt !== undefined) {
+    data.sentToStudioAt = sentToStudioAt;
+    data.sentToStudio = sentToStudioAt ? toSpreadsheetDateLabel(sentToStudioAt) : null;
+    notes.push(
+      sentToStudioAt
+        ? `sent to studio → ${toSpreadsheetDateLabel(sentToStudioAt)}`
+        : "sent to studio cleared"
+    );
+  }
+  if (receivedFromStudioAt !== undefined) {
+    data.receivedFromStudioAt = receivedFromStudioAt;
+    data.receivedFromStudio = receivedFromStudioAt
+      ? toSpreadsheetDateLabel(receivedFromStudioAt)
+      : null;
+    notes.push(
+      receivedFromStudioAt
+        ? `received from studio → ${toSpreadsheetDateLabel(receivedFromStudioAt)}`
+        : "received from studio cleared"
+    );
+  }
+  if (activationAt !== undefined) {
+    data.activationAt = activationAt;
+    data.activation = activationAt ? toSpreadsheetDateLabel(activationAt) : null;
+    data.dueDate = activationAt;
+    notes.push(
+      activationAt
+        ? `activation → ${toSpreadsheetDateLabel(activationAt)}`
+        : "activation cleared"
+    );
+  }
+  if (patch.client !== undefined) {
+    const client = trimOrNull(patch.client);
+    if (!client) throw new Error("Client cannot be empty");
+    data.client = client;
+    notes.push(`client → ${client}`);
+  }
+  if (patch.batch !== undefined) {
+    data.batch = trimOrNull(patch.batch);
+    notes.push(`batch → ${data.batch ?? "—"}`);
+  }
+  if (patch.area !== undefined) {
+    data.area = trimOrNull(patch.area);
+    notes.push(`address → ${data.area ?? "—"}`);
+  }
+  if (patch.address !== undefined) {
+    data.address = trimOrNull(patch.address);
+    if (patch.area === undefined) data.area = data.address;
+    notes.push(`address field → ${data.address ?? "—"}`);
+  }
+  if (patch.mapperName !== undefined) {
+    data.mapperName = trimOrNull(patch.mapperName);
+    notes.push(`mapper → ${data.mapperName ?? "—"}`);
+  }
+  if (patch.polishStage !== undefined) {
+    data.polishStage = trimOrNull(patch.polishStage);
+    notes.push(`polish → ${data.polishStage ?? "—"}`);
+  }
+  if (patch.opsManagerComment !== undefined) {
+    data.opsManagerComment = trimOrNull(patch.opsManagerComment);
+    notes.push("supervisor note updated");
+  }
+  if (patch.fieldWorkStatus !== undefined && patch.fieldWorkStatus !== null) {
+    data.fieldWorkStatus = patch.fieldWorkStatus as FieldWorkStatus;
+    notes.push(`field status → ${patch.fieldWorkStatus}`);
+  }
+
+  const map = await prisma.map.update({
+    where: { id: mapId },
+    data,
+    include: mapDetailIncludes,
+  });
+
+  if (notes.length) {
+    await logEvent(mapId, user.id, "spreadsheet_dates_updated", notes.join(", "));
+  }
+  return map;
+}
+
 const PIPELINE_STAGES = new Set(["UPLOAD", "MAPPING", "POLISH", "ACTIVATION"]);
 
 /**
@@ -2092,13 +2268,22 @@ export async function setMapPipeline(
       data.releasedToGraphics = true;
       data.task = MapTask.POLISH;
       break;
-    case "ACTIVATION":
-      phase = MapPhase.APPROVED;
+    case "ACTIVATION": {
+      // Stay on the active Maps board — APPROVED archives to History (LIVE only).
+      phase = MapPhase.POLISH;
       data.phase = phase;
+      data.releasedToGraphics = true;
+      data.task = MapTask.POLISH;
       data.uploadApproved = true;
       data.uploadCompletedAt = existing.uploadCompletedAt ?? new Date();
       data.fieldWorkStatus = FieldWorkStatus.COMPLETED;
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      data.activationAt = today;
+      data.activation = toSpreadsheetDateLabel(today);
+      data.dueDate = today;
       break;
+    }
   }
 
   const map = await prisma.map.update({

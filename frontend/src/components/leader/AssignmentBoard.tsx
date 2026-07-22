@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 import { api } from "../../api";
 import type { MapRecord, TeamMember } from "../../types";
 import { Badge } from "@/components/common/Badge";
+import { SpreadsheetDateInput } from "@/components/common/SpreadsheetDateInput";
+import { BoardTextInput } from "@/components/common/BoardTextInput";
 import { AssignMapModal } from "./AssignMapModal";
 import { AssignQaModal } from "./AssignQaModal";
 import { Modal } from "@/components/common/Modal";
@@ -24,7 +26,6 @@ import {
   canAssignInspector,
   canAssignQa,
   EMPTY_COLUMN_FILTERS,
-  formatCsvDateCell,
   getInspectorLabel,
   getMapDisplayState,
   getMapReceivedStatus,
@@ -46,6 +47,7 @@ import {
 import { getLeaderStatusOptions, type StatusOption } from "../../lib/activeMapsWorkflow";
 import { SHIFTS, getShiftInspectors, type ShiftId } from "../../lib/shifts";
 import {
+  getMappingCompletionLabel,
   getPipelineStage,
   PIPELINE_STAGE_LABELS,
   type PipelineStage,
@@ -477,6 +479,23 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
     setTaskStationSaving(map.id);
     try {
       const updated = await api.setMapReceived(map.id, received);
+      patch(updated);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setTaskStationSaving(null);
+    }
+  }
+
+
+  async function handleSpreadsheetDateChange(
+    map: MapRecord,
+    patchFields: Parameters<typeof api.updateMapSpreadsheetDates>[1]
+  ) {
+    setError("");
+    setTaskStationSaving(map.id);
+    try {
+      const updated = await api.updateMapSpreadsheetDates(map.id, patchFields);
       patch(updated);
     } catch (err) {
       setError((err as Error).message);
@@ -989,8 +1008,25 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
                         )}
                       </div>
                     </td>
-                    <td className="px-3 py-3 text-muted">{map.client}</td>
-                    <td className="px-3 py-3 text-muted text-xs">{map.batch?.trim() || "—"}</td>
+                    <td className="px-3 py-3">
+                      <BoardTextInput
+                        value={map.client}
+                        disabled={savingMeta || cancelled}
+                        title="Client"
+                        onCommit={(v) =>
+                          handleSpreadsheetDateChange(map, { client: v ?? "" })
+                        }
+                      />
+                    </td>
+                    <td className="px-3 py-3">
+                      <BoardTextInput
+                        value={map.batch}
+                        disabled={savingMeta || cancelled}
+                        title="Batch"
+                        className="text-muted"
+                        onCommit={(v) => handleSpreadsheetDateChange(map, { batch: v })}
+                      />
+                    </td>
                     <td className="px-3 py-3">
                       <select
                         value={getMapReceivedStatus(map.mapReceived)}
@@ -1009,21 +1045,34 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
                       {cancelled ? (
                         <Badge label="Cancelled" tone="CANCELLED" />
                       ) : (
-                        <select
-                          value={getPipelineStage(map.phase)}
-                          disabled={savingMeta}
-                          onChange={(e) =>
-                            handlePipelineChange(map, e.target.value as PipelineStage)
-                          }
-                          title="Change pipeline"
-                          className={selectClass}
-                        >
-                          {PIPELINE_OPTIONS.map((s) => (
-                            <option key={s} value={s}>
-                              {PIPELINE_STAGE_LABELS[s]}
-                            </option>
-                          ))}
-                        </select>
+                        (() => {
+                          const mappingStatus = getMappingCompletionLabel(map);
+                          return (
+                            <div className="flex items-center gap-1.5 min-w-[140px]">
+                              <select
+                                value={getPipelineStage(map)}
+                                disabled={savingMeta}
+                                onChange={(e) =>
+                                  handlePipelineChange(map, e.target.value as PipelineStage)
+                                }
+                                title="Change pipeline"
+                                className={`${selectClass} min-w-0 flex-1`}
+                              >
+                                {PIPELINE_OPTIONS.map((s) => (
+                                  <option key={s} value={s}>
+                                    {PIPELINE_STAGE_LABELS[s]}
+                                  </option>
+                                ))}
+                              </select>
+                              {mappingStatus && (
+                                <Badge
+                                  label={mappingStatus}
+                                  tone={mappingStatus === "Complete" ? "DONE" : "PROCESSING"}
+                                />
+                              )}
+                            </div>
+                          );
+                        })()
                       )}
                     </td>
                     <td className="px-3 py-3">
@@ -1158,23 +1207,61 @@ export function AssignmentBoard({ maps, team, onRefresh, onPatch }: Props) {
                         )}
                       </div>
                     </td>
-                    <td className="px-3 py-3 text-xs text-muted whitespace-nowrap">
-                      {formatCsvDateCell(map.scheduleAt, map.scheduleDate)}
+                    <td className="px-3 py-3">
+                      <SpreadsheetDateInput
+                        kind="schedule"
+                        value={map.scheduleAt}
+                        disabled={savingMeta || cancelled}
+                        title="Schedule (predicted mapping)"
+                        onChange={(v) => handleSpreadsheetDateChange(map, { scheduleAt: v })}
+                      />
                     </td>
-                    <td className="px-3 py-3 text-xs text-muted whitespace-nowrap">
-                      {formatCsvDateCell(map.mappingAt, map.mappingDate)}
+                    <td className="px-3 py-3">
+                      <SpreadsheetDateInput
+                        kind="mapping"
+                        value={map.mappingAt}
+                        disabled={savingMeta || cancelled}
+                        title="Mapping (actual / Hub date)"
+                        onChange={(v) => handleSpreadsheetDateChange(map, { mappingAt: v })}
+                      />
                     </td>
-                    <td className="px-3 py-3 text-xs text-muted whitespace-nowrap">
-                      {formatCsvDateCell(map.sentToStudioAt, map.sentToStudio)}
+                    <td className="px-3 py-3">
+                      <SpreadsheetDateInput
+                        kind="sentToStudio"
+                        value={map.sentToStudioAt}
+                        disabled={savingMeta || cancelled}
+                        title="Sent to studio"
+                        onChange={(v) => handleSpreadsheetDateChange(map, { sentToStudioAt: v })}
+                      />
                     </td>
-                    <td className="px-3 py-3 text-xs text-muted whitespace-nowrap">
-                      {formatCsvDateCell(map.receivedFromStudioAt, map.receivedFromStudio)}
+                    <td className="px-3 py-3">
+                      <SpreadsheetDateInput
+                        kind="receivedFromStudio"
+                        value={map.receivedFromStudioAt}
+                        disabled={savingMeta || cancelled}
+                        title="Received from studio"
+                        onChange={(v) =>
+                          handleSpreadsheetDateChange(map, { receivedFromStudioAt: v })
+                        }
+                      />
                     </td>
-                    <td className="px-3 py-3 text-xs text-muted whitespace-nowrap">
-                      {map.polishStage?.trim() || "—"}
+                    <td className="px-3 py-3">
+                      <BoardTextInput
+                        value={map.polishStage}
+                        disabled={savingMeta || cancelled}
+                        title="Polish"
+                        className="whitespace-nowrap"
+                        onCommit={(v) => handleSpreadsheetDateChange(map, { polishStage: v })}
+                      />
                     </td>
-                    <td className="px-3 py-3 text-xs text-muted whitespace-nowrap">
-                      {formatCsvDateCell(map.activationAt, map.activation)}
+                    <td className="px-3 py-3">
+                      <SpreadsheetDateInput
+                        kind="activation"
+                        value={map.activationAt}
+                        disabled={savingMeta || cancelled}
+                        title="Activation"
+                        onChange={(v) => handleSpreadsheetDateChange(map, { activationAt: v })}
+                      />
                     </td>
                     <td className="px-3 py-3">
                       <div className="flex flex-col gap-0.5 min-w-[100px]">

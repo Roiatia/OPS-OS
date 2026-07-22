@@ -4,7 +4,8 @@ import { authMiddleware, requireRoles, type AuthedRequest } from "../middleware/
 import { userHasOpsManagerRole } from "../domain/roles.js";
 import * as workflow from "../services/workflow.js";
 import { syncMapsFromSpreadsheet } from "../services/spreadsheetSync.js";
-import { importSamsClubCsv, previewSamsClubCsv, clearAllMaps } from "../services/csvImport.js";
+import { importSamsClubCsv, previewSamsClubCsv, clearAllMaps, resolveCsvImportConflicts } from "../services/csvImport.js";
+import type { CsvConflictResolution } from "../services/csvHybridMerge.js";
 import { checkMapsInDatabase } from "../services/mapPresence.js";
 
 const router = Router();
@@ -570,6 +571,27 @@ router.post(
   }
 );
 
+router.post(
+  "/import-csv/resolve-conflicts",
+  requireRoles(RoleName.OPS_ADMIN, RoleName.OPS_MANAGER_2, RoleName.GRAPHIC_TEAM_LEADER),
+  async (req, res) => {
+    try {
+      const { resolutions } = req.body as { resolutions?: CsvConflictResolution[] };
+      if (!Array.isArray(resolutions) || resolutions.length === 0) {
+        res.status(400).json({ error: "resolutions array required" });
+        return;
+      }
+      const result = await resolveCsvImportConflicts(
+        resolutions,
+        (req as AuthedRequest).user
+      );
+      res.json(result);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
 router.delete(
   "/all",
   requireRoles(RoleName.OPS_ADMIN, RoleName.OPS_MANAGER_2, RoleName.GRAPHIC_TEAM_LEADER),
@@ -657,6 +679,39 @@ router.patch(
       const map = await workflow.updateMapDueDate(
         req.params.id,
         dueDate ?? null,
+        (req as AuthedRequest).user
+      );
+      res.json(map);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+
+router.patch(
+  "/:id/spreadsheet-dates",
+  requireRoles(RoleName.GRAPHIC_TEAM_LEADER, RoleName.OPS_ADMIN),
+  async (req, res) => {
+    try {
+      const body = req.body as {
+        scheduleAt?: string | null;
+        mappingAt?: string | null;
+        sentToStudioAt?: string | null;
+        receivedFromStudioAt?: string | null;
+        activationAt?: string | null;
+        client?: string | null;
+        batch?: string | null;
+        area?: string | null;
+        address?: string | null;
+        mapperName?: string | null;
+        polishStage?: string | null;
+        opsManagerComment?: string | null;
+        fieldWorkStatus?: "UNCOMPLETED" | "COMPLETED" | "CANCELLED" | null;
+      };
+      const map = await workflow.updateMapSpreadsheetDates(
+        req.params.id,
+        body,
         (req as AuthedRequest).user
       );
       res.json(map);

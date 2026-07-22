@@ -4,10 +4,13 @@ import { api } from "../../api";
 import type { MapRecord, TeamMember } from "../../types";
 import { ROLE_LABELS } from "../../types";
 import { Badge } from "@/components/common/Badge";
+import { SpreadsheetDateInput } from "@/components/common/SpreadsheetDateInput";
+import { BoardTextInput } from "@/components/common/BoardTextInput";
 import { Modal } from "@/components/common/Modal";
 import { AssignSupervisorModal } from "./AssignSupervisorModal";
 import { AssignMapModal } from "../leader/AssignMapModal";
 import { AssignQaModal } from "../leader/AssignQaModal";
+import { getLeaderStatusOptions, type StatusOption } from "../../lib/activeMapsWorkflow";
 import {
   buildBalancedInspectorAssignments,
   buildBalancedSupervisorAssignments,
@@ -24,7 +27,6 @@ import { memberIsSupervisor } from "../../lib/roles";
 import {
   canAssignInspector,
   EMPTY_COLUMN_FILTERS,
-  formatCsvDateCell,
   getInspectorLabel,
   getMapDisplayState,
   getMapReceivedStatus,
@@ -47,6 +49,7 @@ import {
   toDateInputValue,
 } from "../../lib/dates";
 import {
+  getMappingCompletionLabel,
   getPipelineStage,
   PIPELINE_STAGE_LABELS,
   type PipelineStage,
@@ -63,11 +66,12 @@ import {
   OPS_QUEUE_TABS,
   opsStatusTone,
   sortOpsMaps,
+  FIELD_WORK_STATUS_LABELS,
   type OpsMapQueue,
 } from "../../lib/opsDisplay";
 import { ReadyToAcceptModal } from "./ReadyToAcceptModal";
 import type { OpsWorkloadAlert } from "../../lib/opsWorkload";
-import type { MapStation, MapTask } from "../../types";
+import type { FieldWorkStatus, MapStation, MapTask } from "../../types";
 
 const PIPELINE_OPTIONS: PipelineStage[] = ["UPLOAD", "MAPPING", "POLISH", "ACTIVATION"];
 const selectClass =
@@ -255,6 +259,36 @@ export function OpsMapsBoard({
     setError("");
     try {
       const updated = await api.setMapReceived(map.id, received);
+      patch(updated);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setMetaSaving(null);
+    }
+  }
+
+
+  async function handleSpreadsheetDateChange(
+    map: MapRecord,
+    patchFields: Parameters<typeof api.updateMapSpreadsheetDates>[1]
+  ) {
+    setMetaSaving(map.id);
+    setError("");
+    try {
+      const updated = await api.updateMapSpreadsheetDates(map.id, patchFields);
+      patch(updated);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setMetaSaving(null);
+    }
+  }
+
+  async function handleGraphicsStatusChange(map: MapRecord, option: StatusOption) {
+    setMetaSaving(map.id);
+    setError("");
+    try {
+      const updated = await api.setLeaderStatus(map.id, option.action);
       patch(updated);
     } catch (err) {
       setError((err as Error).message);
@@ -1018,8 +1052,25 @@ export function OpsMapsBoard({
                         </span>
                       )}
                     </td>
-                    <td className="px-3 py-3">{map.client}</td>
-                    <td className="px-3 py-3 text-muted text-xs">{map.batch?.trim() || "—"}</td>
+                    <td className="px-3 py-3">
+                      <BoardTextInput
+                        value={map.client}
+                        disabled={metaSaving === map.id || cancelled}
+                        title="Client"
+                        onCommit={(v) =>
+                          handleSpreadsheetDateChange(map, { client: v ?? "" })
+                        }
+                      />
+                    </td>
+                    <td className="px-3 py-3">
+                      <BoardTextInput
+                        value={map.batch}
+                        disabled={metaSaving === map.id || cancelled}
+                        title="Batch"
+                        className="text-muted"
+                        onCommit={(v) => handleSpreadsheetDateChange(map, { batch: v })}
+                      />
+                    </td>
                     <td className="px-3 py-3">
                       <select
                         value={getMapReceivedStatus(map.mapReceived)}
@@ -1038,29 +1089,51 @@ export function OpsMapsBoard({
                       {cancelled ? (
                         <Badge label="Cancelled" tone="CANCELLED" />
                       ) : (
-                        <>
-                          <select
-                            value={getPipelineStage(map.phase)}
-                            disabled={metaSaving === map.id}
-                            onChange={(e) =>
-                              handlePipelineChange(map, e.target.value as PipelineStage)
-                            }
-                            title="Change pipeline"
-                            className={selectClass}
-                          >
-                            {PIPELINE_OPTIONS.map((s) => (
-                              <option key={s} value={s}>
-                                {PIPELINE_STAGE_LABELS[s]}
-                              </option>
-                            ))}
-                          </select>
-                          <div
-                            className="mt-0.5 text-[10px] text-muted truncate"
-                            title={getOpsPipelineLabel(map)}
-                          >
-                            {getOpsPipelineLabel(map)}
-                          </div>
-                        </>
+                        (() => {
+                          const stage = getPipelineStage(map);
+                          const mappingStatus = getMappingCompletionLabel(map);
+                          const detail =
+                            stage === "MAPPING"
+                              ? null
+                              : getOpsPipelineLabel(map) !== PIPELINE_STAGE_LABELS[stage]
+                                ? getOpsPipelineLabel(map)
+                                : null;
+                          return (
+                            <div className="flex flex-col gap-1 min-w-[140px]">
+                              <div className="flex items-center gap-1.5">
+                                <select
+                                  value={stage}
+                                  disabled={metaSaving === map.id}
+                                  onChange={(e) =>
+                                    handlePipelineChange(map, e.target.value as PipelineStage)
+                                  }
+                                  title="Change pipeline"
+                                  className={`${selectClass} min-w-0 flex-1`}
+                                >
+                                  {PIPELINE_OPTIONS.map((s) => (
+                                    <option key={s} value={s}>
+                                      {PIPELINE_STAGE_LABELS[s]}
+                                    </option>
+                                  ))}
+                                </select>
+                                {mappingStatus && (
+                                  <Badge
+                                    label={mappingStatus}
+                                    tone={mappingStatus === "Complete" ? "DONE" : "PROCESSING"}
+                                  />
+                                )}
+                              </div>
+                              {detail && (
+                                <div
+                                  className="text-[10px] text-muted truncate"
+                                  title={detail}
+                                >
+                                  {detail}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()
                       )}
                     </td>
                     <td className="px-3 py-3">
@@ -1100,11 +1173,45 @@ export function OpsMapsBoard({
                       </select>
                     </td>
                     <td className="px-3 py-3">
-                      {graphicsState === "—" ? (
-                        "—"
-                      ) : (
-                        <Badge label={graphicsState} tone={workflowStateTone(graphicsState)} />
-                      )}
+                      {(() => {
+                        const statusOptions = getLeaderStatusOptions(map);
+                        if (statusOptions.length === 0) {
+                          return graphicsState === "—" ? (
+                            "—"
+                          ) : (
+                            <Badge label={graphicsState} tone={workflowStateTone(graphicsState)} />
+                          );
+                        }
+                        return (
+                          <select
+                            value=""
+                            disabled={metaSaving === map.id || cancelled}
+                            onChange={(e) => {
+                              const opt = statusOptions.find((o) => o.value === e.target.value);
+                              if (opt) handleGraphicsStatusChange(map, opt);
+                            }}
+                            title="Change graphics status"
+                            className={`w-full text-xs font-medium rounded-md border px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:opacity-50 ${
+                              graphicsState === "Fix"
+                                ? "bg-red-100 border-red-200 text-red-800"
+                                : graphicsState === "Approved"
+                                  ? "bg-emerald-100 border-emerald-200 text-emerald-800"
+                                  : graphicsState === "In QA"
+                                    ? "bg-sky-100 border-sky-200 text-sky-800"
+                                    : "bg-white border-border"
+                            }`}
+                          >
+                            <option value="" disabled>
+                              {graphicsState}
+                            </option>
+                            {statusOptions.map((o) => (
+                              <option key={o.value} value={o.value}>
+                                {o.label}
+                              </option>
+                            ))}
+                          </select>
+                        );
+                      })()}
                     </td>
                     <td className="px-3 py-3">
                       <div className="flex flex-col gap-1 min-w-[100px]">
@@ -1156,7 +1263,15 @@ export function OpsMapsBoard({
                         )}
                       </div>
                     </td>
-                    <td className="px-3 py-3 text-muted text-xs max-w-[120px]">{map.area ?? "—"}</td>
+                    <td className="px-3 py-3">
+                      <BoardTextInput
+                        value={map.area}
+                        disabled={metaSaving === map.id || cancelled}
+                        title="Address"
+                        className="text-muted"
+                        onCommit={(v) => handleSpreadsheetDateChange(map, { area: v })}
+                      />
+                    </td>
                     <td className="px-3 py-3">
                       <div className="flex flex-col gap-1">
                         {map.assignedSupervisor?.name ?? (
@@ -1178,33 +1293,105 @@ export function OpsMapsBoard({
                         )}
                       </div>
                     </td>
-                    <td className="px-3 py-3">{map.mapperName ?? "—"}</td>
-                    <td className="px-3 py-3 text-xs text-muted whitespace-nowrap">
-                      {formatCsvDateCell(map.scheduleAt, map.scheduleDate)}
-                    </td>
-                    <td className="px-3 py-3 text-xs text-muted whitespace-nowrap">
-                      {formatCsvDateCell(map.mappingAt, map.mappingDate)}
-                    </td>
-                    <td className="px-3 py-3 text-xs text-muted whitespace-nowrap">
-                      {formatCsvDateCell(map.sentToStudioAt, map.sentToStudio)}
-                    </td>
-                    <td className="px-3 py-3 text-xs text-muted whitespace-nowrap">
-                      {formatCsvDateCell(map.receivedFromStudioAt, map.receivedFromStudio)}
-                    </td>
-                    <td className="px-3 py-3 text-xs text-muted whitespace-nowrap">
-                      {map.polishStage?.trim() || "—"}
-                    </td>
-                    <td className="px-3 py-3 text-xs text-muted whitespace-nowrap">
-                      {formatCsvDateCell(map.activationAt, map.activation)}
+                    <td className="px-3 py-3">
+                      <BoardTextInput
+                        value={map.mapperName}
+                        disabled={metaSaving === map.id || cancelled}
+                        title="Mapper"
+                        onCommit={(v) => handleSpreadsheetDateChange(map, { mapperName: v })}
+                      />
                     </td>
                     <td className="px-3 py-3">
-                      <Badge label={getOpsStatusLabel(map)} tone={opsStatusTone(map)} />
+                      <SpreadsheetDateInput
+                        kind="schedule"
+                        value={map.scheduleAt}
+                        disabled={metaSaving === map.id || cancelled}
+                        title="Schedule (predicted mapping)"
+                        onChange={(v) => handleSpreadsheetDateChange(map, { scheduleAt: v })}
+                      />
                     </td>
-                    <td
-                      className="px-3 py-3 max-w-[140px] truncate text-xs text-muted"
-                      title={map.opsManagerComment ?? ""}
-                    >
-                      {map.opsManagerComment ?? "—"}
+                    <td className="px-3 py-3">
+                      <SpreadsheetDateInput
+                        kind="mapping"
+                        value={map.mappingAt}
+                        disabled={metaSaving === map.id || cancelled}
+                        title="Mapping (actual / Hub date)"
+                        onChange={(v) => handleSpreadsheetDateChange(map, { mappingAt: v })}
+                      />
+                    </td>
+                    <td className="px-3 py-3">
+                      <SpreadsheetDateInput
+                        kind="sentToStudio"
+                        value={map.sentToStudioAt}
+                        disabled={metaSaving === map.id || cancelled}
+                        title="Sent to studio"
+                        onChange={(v) => handleSpreadsheetDateChange(map, { sentToStudioAt: v })}
+                      />
+                    </td>
+                    <td className="px-3 py-3">
+                      <SpreadsheetDateInput
+                        kind="receivedFromStudio"
+                        value={map.receivedFromStudioAt}
+                        disabled={metaSaving === map.id || cancelled}
+                        title="Received from studio"
+                        onChange={(v) =>
+                          handleSpreadsheetDateChange(map, { receivedFromStudioAt: v })
+                        }
+                      />
+                    </td>
+                    <td className="px-3 py-3">
+                      <BoardTextInput
+                        value={map.polishStage}
+                        disabled={metaSaving === map.id || cancelled}
+                        title="Polish"
+                        className="whitespace-nowrap"
+                        onCommit={(v) => handleSpreadsheetDateChange(map, { polishStage: v })}
+                      />
+                    </td>
+                    <td className="px-3 py-3">
+                      <SpreadsheetDateInput
+                        kind="activation"
+                        value={map.activationAt}
+                        disabled={metaSaving === map.id || cancelled}
+                        title="Activation"
+                        onChange={(v) => handleSpreadsheetDateChange(map, { activationAt: v })}
+                      />
+                    </td>
+                    <td className="px-3 py-3">
+                      {cancelled ? (
+                        <Badge label={getOpsStatusLabel(map)} tone={opsStatusTone(map)} />
+                      ) : (
+                        <select
+                          value={map.fieldWorkStatus}
+                          disabled={metaSaving === map.id}
+                          onChange={(e) =>
+                            handleSpreadsheetDateChange(map, {
+                              fieldWorkStatus: e.target.value as FieldWorkStatus,
+                            })
+                          }
+                          title="Field / board status"
+                          className={selectClass}
+                        >
+                          {(Object.keys(FIELD_WORK_STATUS_LABELS) as FieldWorkStatus[]).map(
+                            (s) => (
+                              <option key={s} value={s}>
+                                {FIELD_WORK_STATUS_LABELS[s]}
+                              </option>
+                            )
+                          )}
+                        </select>
+                      )}
+                    </td>
+                    <td className="px-3 py-3 max-w-[140px]">
+                      <BoardTextInput
+                        value={map.opsManagerComment}
+                        disabled={metaSaving === map.id || cancelled}
+                        title="Supervisor note"
+                        className="text-muted"
+                        onCommit={(v) =>
+                          handleSpreadsheetDateChange(map, { opsManagerComment: v })
+                        }
+                      />
                     </td>
                     <td className="px-3 py-3">
                       <div className="flex flex-col gap-0.5 min-w-[100px]">

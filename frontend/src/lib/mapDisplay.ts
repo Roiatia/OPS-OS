@@ -168,7 +168,9 @@ export function canAssignInspector(map: MapRecord): boolean {
 }
 
 export function canAssignQa(map: MapRecord): boolean {
-  return ["UPLOAD_REVIEW", "QA_REVIEW"].includes(map.phase);
+  // Leaders/OPS may assign QA during prep, polish, field, and review — not only
+  // formal review phases. Matches maps-board Assign buttons + backend assignQa.
+  return map.phase !== "APPROVED" && map.phase !== "CANCELLED";
 }
 
 export function needsInspectorAssignment(map: MapRecord): boolean {
@@ -191,9 +193,8 @@ export function countQaWorkload(maps: MapRecord[], userId: string): number {
   return maps.filter(
     (m) =>
       m.assignedQa?.id === userId &&
-      (["UPLOAD_REVIEW", "QA_REVIEW"].includes(m.phase) ||
-        m.qaStatus === "FIX" ||
-        m.qaStatus === "FIX_DONE")
+      m.phase !== "APPROVED" &&
+      m.phase !== "CANCELLED"
   ).length;
 }
 
@@ -221,28 +222,48 @@ export function matchesQueue(map: MapRecord, queue: AssignmentQueue): boolean {
   }
 }
 
+/** Spreadsheet formula errors / blanks are not real assignee names. */
+function isUsableCsvName(raw: string | null | undefined): boolean {
+  const s = raw?.trim() ?? "";
+  if (!s) return false;
+  if (/^#ref!/i.test(s) || /^#n\/?a/i.test(s) || /^#value!/i.test(s)) return false;
+  return true;
+}
+
 export function getInspectorLabel(map: MapRecord): string {
   if (map.assignedInspector?.name) return map.assignedInspector.name;
   if (map.assigneeConflict) return "Please assign";
   if (map.task === "POLISH") {
-    return map.graphicsPolishAssignee ?? "Unassigned";
+    return isUsableCsvName(map.graphicsPolishAssignee)
+      ? map.graphicsPolishAssignee!
+      : "Unassigned";
   }
-  return map.graphicsUploadAssignee ?? map.graphicsPolishAssignee ?? "Unassigned";
+  if (isUsableCsvName(map.graphicsUploadAssignee)) return map.graphicsUploadAssignee!;
+  if (isUsableCsvName(map.graphicsPolishAssignee)) return map.graphicsPolishAssignee!;
+  return "Unassigned";
 }
 
 export function getQaLabel(map: MapRecord): string {
   if (map.assignedQa?.name) return map.assignedQa.name;
   if (map.assigneeConflict) return "Please assign";
   if (map.task === "POLISH") {
-    return map.polishQaAssignee ?? (canAssignQa(map) ? "Needs QA" : "—");
+    if (isUsableCsvName(map.polishQaAssignee)) return map.polishQaAssignee!;
+    return canAssignQa(map) ? "Needs QA" : "—";
   }
   const csv = map.uploadQaAssignee ?? map.polishQaAssignee;
-  if (csv) return csv;
+  if (isUsableCsvName(csv)) return csv!;
   if (!canAssignQa(map)) return "—";
   return "Needs QA";
 }
 
-/** Prefer typed date, else raw spreadsheet string. */
+/** Non-date spreadsheet placeholders (must never show as a date cell value). */
+export function isCsvDatePlaceholder(raw: string | null | undefined): boolean {
+  const s = raw?.trim() ?? "";
+  if (!s) return true;
+  return /^(done|v|✓|yes|-|--)$/i.test(s) || /^queued\b/i.test(s);
+}
+
+/** Prefer typed date; never show Done/done/v placeholders — use "—" instead. */
 export function formatCsvDateCell(
   at: string | null | undefined,
   raw: string | null | undefined
@@ -259,7 +280,39 @@ export function formatCsvDateCell(
     }
   }
   const s = raw?.trim();
-  return s || "—";
+  if (!s || isCsvDatePlaceholder(s)) return "—";
+  // Raw must look like a date (digit + letter), not a status word
+  if (!/\d/.test(s) || !/[A-Za-z]/.test(s)) return "—";
+  return s;
+}
+
+export type SpreadsheetDateKind =
+  | "schedule"
+  | "mapping"
+  | "sentToStudio"
+  | "receivedFromStudio"
+  | "activation";
+
+/** Colored chrome for editable spreadsheet date inputs. */
+export function spreadsheetDateFieldClass(
+  kind: SpreadsheetDateKind,
+  hasValue: boolean
+): string {
+  if (!hasValue) {
+    return "bg-amber-50 border-amber-200 text-amber-950";
+  }
+  switch (kind) {
+    case "schedule":
+      return "bg-sky-50 border-sky-300 text-sky-950";
+    case "mapping":
+      return "bg-indigo-50 border-indigo-300 text-indigo-950";
+    case "sentToStudio":
+      return "bg-teal-50 border-teal-300 text-teal-950";
+    case "receivedFromStudio":
+      return "bg-emerald-50 border-emerald-300 text-emerald-950";
+    case "activation":
+      return "bg-violet-50 border-violet-300 text-violet-950";
+  }
 }
 
 /** Active maps a team member is working on (inspector or QA), excluding approved. */

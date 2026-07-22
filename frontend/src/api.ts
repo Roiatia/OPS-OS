@@ -355,9 +355,43 @@ export const api = {
       hubReady: number;
       errors: { row: number; message: string }[];
       sampleMapNumbers: string[];
+      conflicts: Array<{
+        mapId: string;
+        mapNumber: string;
+        field:
+          | "batch"
+          | "scheduleAt"
+          | "mappingAt"
+          | "sentToStudioAt"
+          | "receivedFromStudioAt"
+          | "activationAt";
+        systemValue: string | null;
+        csvValue: string | null;
+        csvIsoDate: string | null;
+      }>;
     }>("/maps/import-csv", {
       method: "POST",
       body: JSON.stringify({ csv, ...opts }),
+    }),
+
+  resolveCsvImportConflicts: (
+    resolutions: Array<{
+      mapId: string;
+      field:
+        | "batch"
+        | "scheduleAt"
+        | "mappingAt"
+        | "sentToStudioAt"
+        | "receivedFromStudioAt"
+        | "activationAt";
+      choice: "system" | "csv";
+      csvValue?: string | null;
+      csvIsoDate?: string | null;
+    }>
+  ) =>
+    request<{ applied: number }>("/maps/import-csv/resolve-conflicts", {
+      method: "POST",
+      body: JSON.stringify({ resolutions }),
     }),
 
   deleteAllMaps: () =>
@@ -439,6 +473,31 @@ export const api = {
     }),
 
   /** Set CSV Map received flag (true → "v", false → empty / not received yet). */
+
+  /** Edit spreadsheet / board fields on the maps table. */
+  updateMapSpreadsheetDates: (
+    mapId: string,
+    patch: {
+      scheduleAt?: string | null;
+      mappingAt?: string | null;
+      sentToStudioAt?: string | null;
+      receivedFromStudioAt?: string | null;
+      activationAt?: string | null;
+      client?: string | null;
+      batch?: string | null;
+      area?: string | null;
+      address?: string | null;
+      mapperName?: string | null;
+      polishStage?: string | null;
+      opsManagerComment?: string | null;
+      fieldWorkStatus?: "UNCOMPLETED" | "COMPLETED" | "CANCELLED" | null;
+    }
+  ) =>
+    request<import("./types").MapRecord>(`/maps/${mapId}/spreadsheet-dates`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    }),
+
   setMapReceived: (mapId: string, received: boolean) =>
     request<import("./types").MapRecord>(`/maps/${mapId}/map-received`, {
       method: "PATCH",

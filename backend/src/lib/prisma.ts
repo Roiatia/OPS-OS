@@ -4,6 +4,7 @@ import {
   broadcastMapsUpsert,
   broadcastMapsDeleted,
   broadcastMapsInvalidate,
+  areBroadcastsSuppressed,
 } from "./realtimeBus.js";
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
@@ -24,6 +25,10 @@ function emitMapChange(
   operation: string,
   result: unknown
 ): void {
+  // Bulk importers wrap writes in withSuppressedBroadcasts — skip the expensive
+  // reshape findUnique or we flood the DB pool and leave the UI stuck loading.
+  if (areBroadcastsSuppressed()) return;
+
   void (async () => {
     try {
       const id =

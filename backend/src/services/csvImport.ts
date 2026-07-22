@@ -1,7 +1,29 @@
 import { parse } from "csv-parse/sync";
-import { FieldWorkStatus, MapPhase, MapTask, MapStation, Prisma } from "@prisma/client";
+import { FieldWorkStatus, MapPhase, MapTask, MapStation } from "@prisma/client";
+import {
+  applyPolishActivationPhase,
+  isActivationDatePast,
+  isPolishStageDone,
+} from "../domain/pipeline.js";
 import { prisma } from "../lib/prisma.js";
 import type { AuthUser } from "../lib/types.js";
+import {
+  buildHybridUpdate,
+  type CsvImportConflict,
+} from "./csvHybridMerge.js";
+
+export type {
+  CsvConflictField,
+  CsvConflictResolution,
+  CsvImportConflict,
+} from "./csvHybridMerge.js";
+export {
+  buildHybridUpdate,
+  isMapReceivedValue,
+  mergePolishForward,
+  mergeTaskForward,
+  resolveCsvImportConflicts,
+} from "./csvHybridMerge.js";
 
 /** CSV header (row index 5) → Map string field. Empty CSV columns are omitted. */
 const HEADER_TO_FIELD: Record<string, string> = {
@@ -50,6 +72,8 @@ export type CsvImportResult = {
   hubReady: number;
   errors: { row: number; message: string }[];
   sampleMapNumbers: string[];
+  /** Date / batch conflicts left for the manager to resolve (non-blocking). */
+  conflicts: CsvImportConflict[];
 };
 
 /** Trim CR/LF and whitespace from a CSV header cell. */
@@ -112,6 +136,15 @@ export function parseCsvDate(raw: string, fallbackYear?: number): Date | null {
     return direct;
   }
   return null;
+}
+
+
+/** Drop Done/done/v placeholders — these columns should be dates or empty. */
+function dateCellOrNull(raw: string | null): string | null {
+  if (!raw) return null;
+  const s = raw.trim();
+  if (!s || /^(done|v|✓|yes|-|--)$/i.test(s) || /^queued\b/i.test(s)) return null;
+  return s;
 }
 
 /** Infer board Task from CSV Setup column when possible (no phase coupling). */
@@ -234,7 +267,13 @@ function parseSpreadsheetDates(row: Record<string, string>): SpreadsheetDates {
  */
 function hubFieldsForMapping(
   mappingAt: Date | null,
-  opts: { cancelled: boolean; finished: boolean; existingPhase?: MapPhase }
+  opts: {
+    cancelled: boolean;
+    finished: boolean;
+    existingPhase?: MapPhase;
+    activationAt?: Date | null;
+    polishStage?: string | null;
+  }
 ): {
   fieldDate: Date | null;
   phase: MapPhase;
@@ -267,6 +306,19 @@ function hubFieldsForMapping(
     // Don't pull polish/QA work back into FIELD on re-import.
     // APPROVED without LIVE is un-archived so past Activation maps stay visible.
     if (existing === MapPhase.APPROVED && !opts.finished) {
+      // Past Activation / polish Done must stay on the active board (not archived).
+      if (
+        isActivationDatePast(opts.activationAt) ||
+        (isPolishStageDone(opts.polishStage) && !opts.activationAt)
+      ) {
+        return {
+          fieldDate: mappingAt,
+          phase: MapPhase.POLISH,
+          uploadApproved: true,
+          uploadCompletedAt: new Date(),
+          fieldWorkStatus: FieldWorkStatus.COMPLETED,
+        };
+      }
       return {
         fieldDate: mappingAt,
         phase: MapPhase.FIELD,
@@ -301,6 +353,18 @@ function hubFieldsForMapping(
   // Un-archive APPROVED when CSV is not LIVE so past Activation maps stay visible.
   const existing = opts.existingPhase;
   if (existing === MapPhase.APPROVED && !opts.finished) {
+    if (
+      isActivationDatePast(opts.activationAt) ||
+      (isPolishStageDone(opts.polishStage) && !opts.activationAt)
+    ) {
+      return {
+        fieldDate: null,
+        phase: MapPhase.POLISH,
+        uploadApproved: false,
+        uploadCompletedAt: null,
+        fieldWorkStatus: FieldWorkStatus.COMPLETED,
+      };
+    }
     return {
       fieldDate: null,
       phase: MapPhase.PREP,
@@ -475,10 +539,14 @@ function buildRowData(
     .filter(Boolean)
     .join(" · ");
 
+  const polishStage = emptyToNull(cell(row, "Polish"));
+
   const hub = hubFieldsForMapping(dates.mappingAt, {
     cancelled: isCancelled,
     finished,
     existingPhase,
+    activationAt: dates.activationAt,
+    polishStage,
   });
 
   let phase = hub.phase;
@@ -488,7 +556,18 @@ function buildRowData(
     phase = initialPhaseWithoutMapping(row, isCancelled, finished);
   }
 
+  phase = applyPolishActivationPhase(phase, {
+    polishStage,
+    activationAt: dates.activationAt,
+    cancelled: isCancelled,
+    finished,
+  });
+
   const assignees = resolveTaskFromAssignees(row);
+  let task = assignees.task;
+  if (phase === MapPhase.POLISH) {
+    task = MapTask.POLISH;
+  }
 
   return {
     mapNumber,
@@ -496,7 +575,7 @@ function buildRowData(
     area: address,
     description: commentBits || null,
     phase,
-    task: assignees.task,
+    task,
     station: MapStation.GRAPHICS,
     fieldDate: hub.fieldDate,
     dueDate: dates.activationAt,
@@ -516,9 +595,13 @@ function buildRowData(
     mappingDate: spreadsheetData.mappingDate,
     mappingAt: dates.mappingAt,
     postMappingDate: spreadsheetData.postMappingDate,
-    sentToStudio: spreadsheetData.sentToStudio,
+    sentToStudio: dates.sentToStudioAt
+      ? dateCellOrNull(spreadsheetData.sentToStudio)
+      : null,
     sentToStudioAt: dates.sentToStudioAt,
-    receivedFromStudio: spreadsheetData.receivedFromStudio,
+    receivedFromStudio: dates.receivedFromStudioAt
+      ? dateCellOrNull(spreadsheetData.receivedFromStudio)
+      : null,
     receivedFromStudioAt: dates.receivedFromStudioAt,
     graphicsUploadAssignee: assignees.graphicsUploadAssignee,
     uploadQaAssignee: assignees.uploadQaAssignee,
@@ -540,7 +623,7 @@ function buildRowData(
 
 /**
  * Upsert maps from a Sam's Club CSV; optionally clear existing maps first.
- * Actual Mapping date → fieldDate + Hub eligibility; Schedule alone does not.
+ * Existing maps use hybrid merge (fill empty + forward-only + date/batch conflicts).
  */
 export async function importSamsClubCsv(
   csvText: string,
@@ -561,6 +644,7 @@ export async function importSamsClubCsv(
   let skipped = 0;
   let hubReady = 0;
   const sampleMapNumbers: string[] = [];
+  const conflicts: CsvImportConflict[] = [];
 
   const toCreate: MapCsvRowData[] = [];
 
@@ -598,63 +682,29 @@ export async function importSamsClubCsv(
       }
 
       if (existing) {
-        const updateData: Prisma.MapUpdateInput = {
-          client: data.client,
-          area: data.area,
-          description: data.description,
-          phase: data.phase,
-          fieldDate: data.fieldDate,
-          dueDate: data.dueDate,
-          uploadApproved: data.uploadApproved,
-          uploadCompletedAt: data.uploadCompletedAt,
-          fieldWorkStatus: data.fieldWorkStatus,
-          releasedToGraphics: data.releasedToGraphics || existing.releasedToGraphics,
-          batch: data.batch,
-          building: data.building,
-          address: data.address,
-          mapReceived: data.mapReceived,
-          setupStage: data.setupStage,
-          mapperSource: data.mapperSource,
-          mapperName: data.mapperName,
-          scheduleDate: data.scheduleDate,
-          scheduleAt: data.scheduleAt,
-          mappingDate: data.mappingDate,
-          mappingAt: data.mappingAt,
-          postMappingDate: data.postMappingDate,
-          sentToStudio: data.sentToStudio,
-          sentToStudioAt: data.sentToStudioAt,
-          receivedFromStudio: data.receivedFromStudio,
-          receivedFromStudioAt: data.receivedFromStudioAt,
-          graphicsUploadAssignee: data.graphicsUploadAssignee,
-          uploadQaAssignee: data.uploadQaAssignee,
-          graphicsPolishAssignee: data.graphicsPolishAssignee,
-          graphicsPolishStatus: data.graphicsPolishStatus,
-          polishQaAssignee: data.polishQaAssignee,
-          assigneeConflict: data.assigneeConflict,
-          conversion: data.conversion,
-          polishStage: data.polishStage,
-          activation: data.activation,
-          activationAt: data.activationAt,
-          remappingDate: data.remappingDate,
-          dashboardDate: data.dashboardDate,
-          maintDate: data.maintDate,
-          commentExternal: data.commentExternal,
-          commentInternal: data.commentInternal,
-          task: data.task,
-        };
+        const { updateData, conflicts: rowConflicts } = buildHybridUpdate(existing, data);
+        conflicts.push(...rowConflicts);
 
-        await prisma.map.update({ where: { id: existing.id }, data: updateData });
-        await prisma.mapEvent.create({
-          data: {
-            mapId: existing.id,
-            userId: user.id,
-            action: "csv_import_updated",
-            note: data.mappingAt
-              ? `Updated from CSV (${mapNumber}); mapping ${data.mappingAt.toISOString().slice(0, 10)}`
-              : `Updated from CSV (${mapNumber}); mapping cleared — off Hub`,
-          },
-        });
-        updated++;
+        if (Object.keys(updateData).length > 0) {
+          await prisma.map.update({ where: { id: existing.id }, data: updateData });
+          await prisma.mapEvent.create({
+            data: {
+              mapId: existing.id,
+              userId: user.id,
+              action: "csv_import_updated",
+              note:
+                rowConflicts.length > 0
+                  ? `Hybrid CSV update (${mapNumber}); ${rowConflicts.length} conflict(s) pending`
+                  : `Hybrid CSV update (${mapNumber})`,
+            },
+          });
+          updated++;
+        } else if (rowConflicts.length > 0) {
+          updated++;
+        } else {
+          skipped++;
+        }
+
         if (data.uploadApproved && data.phase === MapPhase.FIELD) hubReady++;
       } else {
         const map = await prisma.map.create({ data });
@@ -716,7 +766,7 @@ export async function importSamsClubCsv(
   }
 
   void SPREADSHEET_FIELDS;
-  return { created, updated, skipped, cleared, hubReady, errors, sampleMapNumbers };
+  return { created, updated, skipped, cleared, hubReady, errors, sampleMapNumbers, conflicts };
 }
 
 /** Dry-run CSV parse: row counts and sample buildings, no DB writes. */
