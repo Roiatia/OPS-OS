@@ -6,7 +6,12 @@ import { AVAILABILITY_DAYS } from "../availabilityRules";
 function staffMember(
   userId: string,
   name: string,
-  opts: { isShiftLeader?: boolean; rating?: number; offerDays?: number[] } = {}
+  opts: {
+    isShiftLeader?: boolean;
+    rating?: number;
+    offerDays?: number[];
+    maxShiftsPerWeek?: number;
+  } = {}
 ): ShiftPlanStaff {
   const offerDays = new Set(opts.offerDays ?? [...AVAILABILITY_DAYS]);
   return {
@@ -15,6 +20,7 @@ function staffMember(
     isShiftLeader: opts.isShiftLeader ?? false,
     submitted: true,
     supervisorRating: opts.rating ?? 4,
+    maxShiftsPerWeek: opts.maxShiftsPerWeek ?? null,
     daysOffered: offerDays.size,
     days: AVAILABILITY_DAYS.map((dayOfWeek) => ({
       dayOfWeek,
@@ -98,5 +104,27 @@ describe("autoPlanAvailability evenness", () => {
       const offered = s.daysOffered ?? s.days.filter((d) => d.canWork).length;
       expect(counts.get(s.userId) ?? 0).toBeLessThanOrEqual(offered);
     }
+  });
+
+  it("never exceeds a weekly shift cap even when someone offers every day", () => {
+    const staff: ShiftPlanStaff[] = [
+      staffMember("millie", "Millie", { rating: 4, maxShiftsPerWeek: 3 }),
+      staffMember("igor", "Igor", { rating: 4 }),
+      staffMember("noam", "Noam", { rating: 4 }),
+      staffMember("zach", "Zach", { isShiftLeader: true, rating: 9 }),
+      staffMember("erez", "Erez", { isShiftLeader: true, rating: 9 }),
+    ];
+
+    const mapsPerDay = AVAILABILITY_DAYS.map((dayOfWeek) => ({
+      dayOfWeek,
+      count: 6,
+      maps: mapsForDay(dayOfWeek, 6),
+    }));
+
+    const result = autoPlanAvailability({ staff, mapsPerDay });
+    const millieDays = result.assignments.filter((a) => a.userId === "millie").length;
+
+    expect(millieDays).toBeLessThanOrEqual(3);
+    expect(millieDays).toBeGreaterThan(0);
   });
 });

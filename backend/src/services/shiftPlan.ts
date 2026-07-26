@@ -136,6 +136,7 @@ async function loadPlannerContext(weekStart: Date) {
         hagimOk: sub?.hagimOk ?? sup.hagimOk,
         // SLs are senior supervisors — always capacity as rating 9
         supervisorRating: isShiftLeader ? 9 : (sup.supervisorRating ?? 5),
+        maxShiftsPerWeek: sup.maxShiftsPerWeek,
         allowedClients: sup.supervisorClients.map((c) => c.client),
         days:
           sub?.days.map((d) => ({
@@ -228,6 +229,7 @@ export async function getShiftPlan(user: AuthUser, weekStartRaw?: string) {
         fridayContract: s.fridayContract,
         hagimOk: s.hagimOk,
         supervisorRating: s.supervisorRating,
+        maxShiftsPerWeek: s.maxShiftsPerWeek,
         allowedClients: s.allowedClients,
         daysOffered,
         days: s.days.map((d) => ({

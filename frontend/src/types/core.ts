@@ -94,6 +94,10 @@ export interface MapRecord {
   loomDone: boolean;
   positioning: boolean;
   mapperName: string | null;
+  /** Google Meet link for the mapping session (daily hub CSV). */
+  meetLink?: string | null;
+  /** First-time site from the daily hub CSV. */
+  isNewStore?: boolean;
   opsManagerComment: string | null;
   fieldWorkStatus: FieldWorkStatus;
   fieldProgressPercent: number;

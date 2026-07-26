@@ -121,6 +121,8 @@ export interface ShiftPlanStaff {
   fridayContract?: boolean;
   hagimOk?: boolean;
   supervisorRating?: number | null;
+  /** Hard cap on assigned days this week (null = availability is the only limit). */
+  maxShiftsPerWeek?: number | null;
   allowedClients?: string[];
   /** How many Sun–Fri days they marked available */
   daysOffered?: number;
