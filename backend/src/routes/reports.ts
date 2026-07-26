@@ -31,6 +31,24 @@ router.get("/:id", async (req, res) => {
   }
 });
 
+router.get("/:id/hub-csv", async (req, res) => {
+  try {
+    const file = await dailyReport.getOpsDailyReportHubCsv(req.params.id);
+    if (!file) {
+      res.status(404).json({ error: "Report not found" });
+      return;
+    }
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${file.filename}"`
+    );
+    res.send(file.csv);
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
 router.patch("/:id/note", async (req, res) => {
   try {
     const note = (req.body as { opsManagerNote?: string | null }).opsManagerNote ?? null;

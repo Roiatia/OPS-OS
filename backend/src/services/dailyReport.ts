@@ -1,4 +1,4 @@
-import { MapPhase, RoleName } from "@prisma/client";
+import { MapPhase, Prisma, RoleName } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import {
   getActivityLabel,
@@ -39,6 +39,17 @@ export interface OpsDailyReportTeamMember {
   role: string;
 }
 
+export interface OpsDailyReportHubMapsSummary {
+  total: number;
+  completed: number;
+  incomplete: number;
+  cancelled: number;
+  active: number;
+  intake: number;
+  /** Full Hub day CSV (UTF-8), generated at report time. */
+  csv?: string;
+}
+
 export interface OpsDailyReportPayload {
   reportDate: string;
   shift: {
@@ -56,6 +67,8 @@ export interface OpsDailyReportPayload {
     incomplete: OpsDailyReportMapItem[];
     cancelled: OpsDailyReportMapItem[];
   };
+  /** Hub maps for this report day + downloadable CSV snapshot. */
+  hubMaps?: OpsDailyReportHubMapsSummary;
   graphics: {
     milestones: OpsDailyReportMilestone[];
   };
@@ -90,6 +103,14 @@ export interface OpsDailyReportDetail extends OpsDailyReportListItem {
   payload: OpsDailyReportPayload;
 }
 
+function reportPayloadFromJson(value: Prisma.JsonValue): OpsDailyReportPayload {
+  return value as unknown as OpsDailyReportPayload;
+}
+
+function reportPayloadToJson(value: OpsDailyReportPayload): Prisma.InputJsonValue {
+  return value as unknown as Prisma.InputJsonValue;
+}
+
 const GRAPHICS_PHASES: MapPhase[] = [
   MapPhase.PREP,
   MapPhase.UPLOAD_REVIEW,
@@ -110,7 +131,10 @@ function endOfDay(date: Date): Date {
 }
 
 function formatReportDate(date: Date): string {
-  return date.toISOString().slice(0, 10);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function formatReportTitle(date: Date): string {
@@ -122,12 +146,22 @@ function formatReportTitle(date: Date): string {
   })}`;
 }
 
+function dateFromReportTitle(title: string, fallback: Date): Date {
+  const label = title.split("—").slice(1).join("—").trim();
+  if (!label) return fallback;
+  const parsed = new Date(`${label} 12:00:00`);
+  return Number.isNaN(parsed.getTime()) ? fallback : parsed;
+}
+
 function buildSummary(payload: OpsDailyReportPayload): string {
   const parts = [
     payload.reportDate,
     `${payload.field.completed.length} field complete`,
     `${payload.field.incomplete.length} field incomplete`,
     `${payload.field.cancelled.length} field cancelled`,
+    payload.hubMaps
+      ? `${payload.hubMaps.total} hub maps (${payload.hubMaps.completed} completed, ${payload.hubMaps.incomplete} incomplete, ${payload.hubMaps.cancelled} cancelled)`
+      : "",
     `${payload.graphics.milestones.length} graphics milestones`,
     `${payload.ops.acceptedToPolish.length} accepted to polish`,
     `${payload.shift.members.length} on shift`,
@@ -157,7 +191,7 @@ function toListItem(
   const payload = row.payload as OpsDailyReportPayload;
   return {
     id: row.id,
-    reportDate: formatReportDate(row.reportDate),
+    reportDate: formatReportDate(dateFromReportTitle(row.title, row.reportDate)),
     title: row.title,
     summary: row.summary,
     generatedAt: row.generatedAt.toISOString(),
@@ -176,12 +210,154 @@ function incompleteReason(note: string | null, opsComment: string | null): strin
   return opsComment?.trim() || note?.trim() || null;
 }
 
+function csvEscape(value: string | number | boolean | null | undefined): string {
+  if (value == null) return "";
+  const s = String(value);
+  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+function hubZoneForMap(map: {
+  onHubStatusBoard: boolean;
+  fieldWorkStatus: string;
+  assignedSupervisorId: string | null;
+}): "completed" | "incomplete" | "cancelled" | "active" | "intake" {
+  if (map.onHubStatusBoard) {
+    if (map.fieldWorkStatus === "COMPLETED") return "completed";
+    if (map.fieldWorkStatus === "CANCELLED") return "cancelled";
+    return "incomplete";
+  }
+  if (map.assignedSupervisorId) return "active";
+  return "intake";
+}
+
+function statusLabelForZone(
+  zone: "completed" | "incomplete" | "cancelled" | "active" | "intake"
+): string {
+  switch (zone) {
+    case "completed":
+      return "COMPLETED";
+    case "incomplete":
+      return "INCOMPLETE";
+    case "cancelled":
+      return "CANCELLED";
+    case "active":
+      return "ACTIVE";
+    case "intake":
+      return "INTAKE";
+  }
+}
+
+interface HistoricalHubMapFallback extends OpsDailyReportMapItem {
+  zone: "completed" | "incomplete" | "cancelled";
+}
+
+/**
+ * End-of-day Hub CSV: every map loaded onto Hub that day (hubSessionAt),
+ * plus any map that received a hub_completed/uncompleted/cancelled event
+ * that day (covers late status moves). Historical report items are accepted
+ * as fallbacks because old demo maps/events may have since been deleted.
+ */
+export async function buildHubDayMapsCsv(
+  reportDate: Date,
+  historicalFallbacks: HistoricalHubMapFallback[] = []
+): Promise<OpsDailyReportHubMapsSummary> {
+  const dayStart = startOfDay(reportDate);
+  const dayEnd = endOfDay(reportDate);
+
+  const eventMapIds = (
+    await prisma.mapEvent.findMany({
+      where: {
+        createdAt: { gte: dayStart, lte: dayEnd },
+        action: { in: ["hub_completed", "hub_uncompleted", "hub_cancelled"] },
+      },
+      select: { mapId: true },
+      distinct: ["mapId"],
+    })
+  ).map((e) => e.mapId);
+
+  const maps = await prisma.map.findMany({
+    where: {
+      OR: [
+        { hubSessionAt: { gte: dayStart, lte: dayEnd } },
+        ...(eventMapIds.length > 0 ? [{ id: { in: eventMapIds } }] : []),
+        ...(historicalFallbacks.length > 0
+          ? [{ id: { in: historicalFallbacks.map((item) => item.mapId) } }]
+          : []),
+      ],
+    },
+    select: {
+      id: true,
+      mapNumber: true,
+      mapperName: true,
+      fieldWorkStatus: true,
+      onHubStatusBoard: true,
+      opsManagerComment: true,
+      assignedSupervisorId: true,
+      assignedSupervisor: { select: { name: true } },
+    },
+    orderBy: [{ fieldDate: "asc" }, { mapNumber: "asc" }],
+  });
+
+  const headers = ["status", "mapper", "supervisor", "mapNumber", "opsManagerNote"];
+
+  const totals = {
+    total: 0,
+    completed: 0,
+    incomplete: 0,
+    cancelled: 0,
+    active: 0,
+    intake: 0,
+  };
+
+  const fallbackById = new Map(
+    historicalFallbacks.map((item) => [item.mapId, item])
+  );
+  const rows = maps.map((map) => {
+    const fallback = fallbackById.get(map.id);
+    const zone = fallback?.zone ?? hubZoneForMap(map);
+    totals.total += 1;
+    totals[zone] += 1;
+    return [
+      statusLabelForZone(zone),
+      map.mapperName ?? "",
+      fallback?.supervisorName ?? map.assignedSupervisor?.name ?? "",
+      map.mapNumber,
+      fallback?.reason ?? map.opsManagerComment ?? "",
+    ]
+      .map(csvEscape)
+      .join(",");
+  });
+
+  const foundIds = new Set(maps.map((map) => map.id));
+  for (const item of historicalFallbacks) {
+    if (foundIds.has(item.mapId)) continue;
+    totals.total += 1;
+    totals[item.zone] += 1;
+    rows.push(
+      [
+        statusLabelForZone(item.zone),
+        "",
+        item.supervisorName ?? "",
+        item.mapNumber,
+        item.reason ?? "",
+      ]
+        .map(csvEscape)
+        .join(",")
+    );
+  }
+
+  const csv = [headers.join(","), ...rows].join("\n") + (rows.length ? "\n" : "");
+
+  return { ...totals, csv };
+}
+
 export async function buildDailyReportPayload(reportDate: Date): Promise<OpsDailyReportPayload> {
   const dayStart = startOfDay(reportDate);
   const dayEnd = endOfDay(reportDate);
   const dateKey = formatReportDate(reportDate);
 
-  const [onShift, events, maps, eventActors] = await Promise.all([
+  const [onShift, events, maps, eventActors, hubMaps] = await Promise.all([
     prisma.user.findMany({
       where: {
         roles: { some: { role: { in: [...SUPERVISOR_ROLE_NAMES] } } },
@@ -231,6 +407,7 @@ export async function buildDailyReportPayload(reportDate: Date): Promise<OpsDail
       },
       orderBy: { name: "asc" },
     }),
+    buildHubDayMapsCsv(reportDate),
   ]);
 
   const shiftMembers: OpsDailyReportShiftMember[] = onShift.map((u) => ({
@@ -396,6 +573,7 @@ export async function buildDailyReportPayload(reportDate: Date): Promise<OpsDail
       ops: opsTeam,
     },
     field: { completed, incomplete, cancelled },
+    hubMaps,
     graphics: { milestones: graphicsMilestones },
     ops: { acceptedToPolish },
     pipeline,
@@ -409,7 +587,7 @@ export async function generateDailyReport(reportDate: Date) {
   const existing = await prisma.opsDailyReport.findUnique({ where: { reportDate: day } });
   const previousNote =
     existing && typeof existing.payload === "object" && existing.payload !== null
-      ? ((existing.payload as OpsDailyReportPayload).opsManagerNote ?? null)
+      ? (reportPayloadFromJson(existing.payload).opsManagerNote ?? null)
       : null;
 
   const payload = await buildDailyReportPayload(day);
@@ -422,14 +600,14 @@ export async function generateDailyReport(reportDate: Date) {
     update: {
       title,
       summary,
-      payload,
+      payload: reportPayloadToJson(payload),
       generatedAt: new Date(),
     },
     create: {
       reportDate: day,
       title,
       summary,
-      payload,
+      payload: reportPayloadToJson(payload),
     },
   });
 }
@@ -455,15 +633,64 @@ export async function listOpsDailyReports(query?: string): Promise<OpsDailyRepor
 export async function getOpsDailyReport(id: string): Promise<OpsDailyReportDetail | null> {
   const row = await prisma.opsDailyReport.findUnique({ where: { id } });
   if (!row) return null;
-  const payload = row.payload as OpsDailyReportPayload;
+  const payload = reportPayloadFromJson(row.payload);
+  const hubMaps = payload.hubMaps
+    ? {
+        total: payload.hubMaps.total,
+        completed: payload.hubMaps.completed,
+        incomplete: payload.hubMaps.incomplete,
+        cancelled: payload.hubMaps.cancelled,
+        active: payload.hubMaps.active,
+        intake: payload.hubMaps.intake,
+      }
+    : undefined;
   return {
     ...toListItem(row),
     payload: {
       ...payload,
+      hubMaps,
       team: payload.team ?? { field: [], graphics: [], ops: [] },
       opsManagerNote: payload.opsManagerNote ?? null,
     },
   };
+}
+
+/** CSV download for a report — rebuilds historical rows from the report snapshot when needed. */
+export async function getOpsDailyReportHubCsv(
+  id: string
+): Promise<{ filename: string; csv: string } | null> {
+  const row = await prisma.opsDailyReport.findUnique({ where: { id } });
+  if (!row) return null;
+
+  const payload = reportPayloadFromJson(row.payload);
+  const reportDay = dateFromReportTitle(row.title, row.reportDate);
+  const dateKey = formatReportDate(reportDay);
+  const filename = `hub-maps-${dateKey}.csv`;
+
+  const historicalByMapId = new Map<string, HistoricalHubMapFallback>();
+  for (const item of payload.field?.completed ?? []) {
+    historicalByMapId.set(item.mapId, { ...item, zone: "completed" });
+  }
+  for (const item of payload.field?.incomplete ?? []) {
+    historicalByMapId.set(item.mapId, { ...item, zone: "incomplete" });
+  }
+  for (const item of payload.field?.cancelled ?? []) {
+    historicalByMapId.set(item.mapId, { ...item, zone: "cancelled" });
+  }
+  const historicalFallbacks = [...historicalByMapId.values()];
+
+  // Always rebuild so column shape stays current (older snapshots had extra columns).
+  const hubMaps = await buildHubDayMapsCsv(reportDay, historicalFallbacks);
+  const nextPayload: OpsDailyReportPayload = { ...payload, hubMaps };
+  await prisma.opsDailyReport.update({
+    where: { id },
+    data: {
+      payload: reportPayloadToJson(nextPayload),
+      summary: buildSummary(nextPayload),
+    },
+  });
+
+  return { filename, csv: hubMaps.csv ?? "" };
 }
 
 export async function updateOpsDailyReportNote(
@@ -474,14 +701,14 @@ export async function updateOpsDailyReportNote(
   if (!row) return null;
 
   const payload = {
-    ...(row.payload as OpsDailyReportPayload),
+    ...reportPayloadFromJson(row.payload),
     opsManagerNote: opsManagerNote?.trim() || null,
   };
   const summary = buildSummary(payload);
 
   const updated = await prisma.opsDailyReport.update({
     where: { id },
-    data: { payload, summary },
+    data: { payload: reportPayloadToJson(payload), summary },
   });
 
   return {

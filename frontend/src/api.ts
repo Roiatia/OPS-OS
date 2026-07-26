@@ -643,6 +643,36 @@ export const api = {
   getReport: (id: string) =>
     request<import("./types/report").OpsDailyReportDetail>(`/reports/${id}`),
 
+  downloadReportHubCsv: async (id: string) => {
+    const token = getToken();
+    let res: Response;
+    try {
+      res = await fetch(`${API}/reports/${id}/hub-csv`, {
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+    } catch {
+      throw new Error("Cannot reach the API — is the backend running on port 3001?");
+    }
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({} as { error?: string }));
+      throw new Error(body.error || `Download failed (${res.status})`);
+    }
+    const blob = await res.blob();
+    const disposition = res.headers.get("Content-Disposition") ?? "";
+    const match = /filename="([^"]+)"/.exec(disposition);
+    const filename = match?.[1] ?? `hub-maps-${id}.csv`;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
+
   updateReportNote: (id: string, opsManagerNote: string | null) =>
     request<import("./types/report").OpsDailyReportDetail>(`/reports/${id}/note`, {
       method: "PATCH",

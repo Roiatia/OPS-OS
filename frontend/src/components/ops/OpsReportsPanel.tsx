@@ -189,13 +189,17 @@ function ReportDetail({
 }) {
   const { payload } = report;
   const team = payload.team ?? { field: [], graphics: [], ops: [] };
+  const hubMaps = payload.hubMaps;
   const [note, setNote] = useState(payload.opsManagerNote ?? "");
   const [savingNote, setSavingNote] = useState(false);
   const [noteMsg, setNoteMsg] = useState("");
+  const [downloadingCsv, setDownloadingCsv] = useState(false);
+  const [csvMsg, setCsvMsg] = useState("");
 
   useEffect(() => {
     setNote(payload.opsManagerNote ?? "");
     setNoteMsg("");
+    setCsvMsg("");
   }, [report.id, payload.opsManagerNote]);
 
   async function saveNote() {
@@ -212,6 +216,19 @@ function ReportDetail({
     }
   }
 
+  async function downloadHubCsv() {
+    setDownloadingCsv(true);
+    setCsvMsg("");
+    try {
+      await api.downloadReportHubCsv(report.id);
+      setCsvMsg("CSV downloaded.");
+    } catch (err) {
+      setCsvMsg((err as Error).message);
+    } finally {
+      setDownloadingCsv(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="rounded-2xl border border-border bg-white p-5 shadow-sm">
@@ -220,6 +237,17 @@ function ReportDetail({
         <p className="text-sm text-muted mt-1">
           Generated at {formatGeneratedAt(report.generatedAt)}
         </p>
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={() => void downloadHubCsv()}
+            disabled={downloadingCsv}
+            className="px-4 py-2 bg-brand-600 text-white text-sm font-medium rounded-xl hover:bg-brand-700 disabled:opacity-50"
+          >
+            {downloadingCsv ? "Preparing CSV…" : "Download Hub CSV"}
+          </button>
+          {csvMsg && <p className="text-xs text-muted">{csvMsg}</p>}
+        </div>
       </div>
 
       <section className="grid grid-cols-3 gap-3">
@@ -253,6 +281,29 @@ function ReportDetail({
           </div>
         ))}
       </section>
+
+      {hubMaps && (
+        <section className="rounded-2xl border border-border bg-white p-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-sm font-bold text-slate-900">Hub maps that day</h3>
+            <p className="text-xs text-muted">{hubMaps.total} maps in end-of-day CSV</p>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+            {[
+              { label: "Completed", value: hubMaps.completed },
+              { label: "Incomplete", value: hubMaps.incomplete },
+              { label: "Cancelled", value: hubMaps.cancelled },
+              { label: "Active", value: hubMaps.active },
+              { label: "Intake", value: hubMaps.intake },
+            ].map((s) => (
+              <div key={s.label} className="rounded-xl border border-border bg-slate-50 px-3 py-2">
+                <div className="text-lg font-bold text-slate-800">{s.value}</div>
+                <div className="text-[11px] text-muted">{s.label}</div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {payload.alerts.length > 0 && (
         <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 space-y-2">

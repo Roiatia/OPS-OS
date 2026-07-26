@@ -16,7 +16,6 @@ import {
   catchUpDailyReportIfNeeded,
   runDailyReportSchedulerTick,
 } from "./services/dailyReport.js";
-import { fixRoleNameEnumMismatch } from "./db/fixRoleNameEnum.js";
 
 const app = express();
 const port = env.PORT;
@@ -52,10 +51,6 @@ app.use("/api/usage", usageRoutes);
 app.use("/api/users", usersRoutes);
 
 const REPORT_SCHEDULER_MS = 60_000;
-
-void fixRoleNameEnumMismatch().catch((err) => {
-  console.error("RoleName enum repair failed:", err);
-});
 
 void catchUpDailyReportIfNeeded().catch((err) => {
   console.error("Daily report catch-up failed:", err);

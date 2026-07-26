@@ -29,6 +29,17 @@ export interface OpsDailyReportTeamMember {
   role: string;
 }
 
+export interface OpsDailyReportHubMapsSummary {
+  total: number;
+  completed: number;
+  incomplete: number;
+  cancelled: number;
+  active: number;
+  intake: number;
+  /** Full Hub day CSV — prefer downloading via API rather than rendering. */
+  csv?: string;
+}
+
 export interface OpsDailyReportPayload {
   reportDate: string;
   shift: {
@@ -47,6 +58,8 @@ export interface OpsDailyReportPayload {
     incomplete: OpsDailyReportMapItem[];
     cancelled: OpsDailyReportMapItem[];
   };
+  /** Hub maps for this report day + downloadable CSV snapshot. */
+  hubMaps?: OpsDailyReportHubMapsSummary;
   graphics: {
     milestones: OpsDailyReportMilestone[];
   };
