@@ -1,6 +1,6 @@
 /**
  * Small shift-plan demo for checking auto-plan logic.
- * - Ensures 3 supervisors + 3 shift leaders (plan-sup-01..03 / plan-sl-01..03 @ops-demo.local)
+ * - Ensures Eyal/Bashar/Cosmin + Erez/Oren/Rachel exist with availability
  * - Does NOT wipe other supervisors' availability — fill-availability covers everyone
  * - 60 FIELD tasks for next week + Sun meeting + Mon mapping refresh
  *
@@ -17,9 +17,17 @@ import {
 
 const prisma = new PrismaClient();
 
-const SUP_NAMES = ["Eyal (Sup)", "Bashar (Sup)", "Cosmin (Sup)"];
+const SUP_STAFF = [
+  { email: "eyal@ops-demo.local", name: "Eyal" },
+  { email: "bashar@ops-demo.local", name: "Bashar" },
+  { email: "cosmin@ops-demo.local", name: "Cosmin" },
+] as const;
 
-const SL_NAMES = ["Erez (SL)", "Oren (SL)", "Rachel (SL)"];
+const SL_STAFF = [
+  { email: "erez@ops-demo.local", name: "Erez" },
+  { email: "oren@ops-demo.local", name: "Oren" },
+  { email: "rachel@ops-demo.local", name: "Rachel" },
+] as const;
 
 function weekStartSunday(date = new Date()): Date {
   const d = new Date(date);
@@ -235,26 +243,19 @@ async function deleteExtraPlanUsers() {
     select: { id: true, email: true },
   });
 
-  const keep = new Set([
-    ...[1, 2, 3].map((i) => `plan-sup-${String(i).padStart(2, "0")}@ops-demo.local`),
-    ...[1, 2, 3].map((i) => `plan-sl-${String(i).padStart(2, "0")}@ops-demo.local`),
-  ]);
-
-  const toDelete = extras.filter((u) => !keep.has(u.email));
-  if (toDelete.length === 0) {
-    console.log("No extra plan-* users to remove.");
+  if (extras.length === 0) {
+    console.log("No leftover plan-* users to remove.");
     return;
   }
 
-  const ids = toDelete.map((u) => u.id);
-  console.log(`Removing ${ids.length} extra plan-* users…`);
-  // Cascades / related rows — delete dependents that may block user delete
+  const ids = extras.map((u) => u.id);
+  console.log(`Removing ${ids.length} leftover plan-* users…`);
   await prisma.shiftPlanAssignment.deleteMany({ where: { userId: { in: ids } } });
   await prisma.availabilitySubmission.deleteMany({ where: { userId: { in: ids } } });
   await prisma.supervisorClientCapability.deleteMany({ where: { userId: { in: ids } } });
   await prisma.userRole.deleteMany({ where: { userId: { in: ids } } });
   await prisma.user.deleteMany({ where: { id: { in: ids } } });
-  for (const u of toDelete) console.log(`  ✗ ${u.email}`);
+  for (const u of extras) console.log(`  ✗ ${u.email}`);
 }
 
 async function clearOtherAvailabilityForWeek(_weekStart: Date, _keepUserIds: string[]) {
@@ -272,37 +273,38 @@ async function main() {
   const keepIds: string[] = [];
 
   console.log("Seeding 3 supervisors…");
-  for (let i = 1; i <= 3; i++) {
-    const email = `plan-sup-${String(i).padStart(2, "0")}@ops-demo.local`;
-    const fridayContract = i === 1;
+  for (let i = 0; i < SUP_STAFF.length; i++) {
+    const person = SUP_STAFF[i]!;
+    const fridayContract = i === 0;
+    const rating = i + 1; // 1..3
     const user = await upsertStaff({
-      email,
-      name: SUP_NAMES[i - 1]!,
+      email: person.email,
+      name: person.name,
       role: RoleName.SUPERVISOR,
-      rating: i, // 1..3
+      rating,
       fridayContract,
     });
     keepIds.push(user.id);
-    await seedAvailability(user.id, weekStart, fridayContract, "sup", i);
-    const offeredSup = buildDayAvailability("sup", i, fridayContract).filter((d) => d.canWork).length;
-    console.log(`  ✓ ${SUP_NAMES[i - 1]} · rating ${i} · ${offeredSup}/6 days`);
+    await seedAvailability(user.id, weekStart, fridayContract, "sup", rating);
+    const offeredSup = buildDayAvailability("sup", rating, fridayContract).filter((d) => d.canWork).length;
+    console.log(`  ✓ ${person.name} · rating ${rating} · ${offeredSup}/6 days`);
   }
 
   console.log("Seeding 3 shift leaders…");
-  for (let i = 1; i <= 3; i++) {
-    const email = `plan-sl-${String(i).padStart(2, "0")}@ops-demo.local`;
-    const fridayContract = i % 2 === 0;
+  for (let i = 0; i < SL_STAFF.length; i++) {
+    const person = SL_STAFF[i]!;
+    const fridayContract = (i + 1) % 2 === 0;
     const user = await upsertStaff({
-      email,
-      name: SL_NAMES[i - 1]!,
+      email: person.email,
+      name: person.name,
       role: RoleName.SUPERVISOR_SHIFT_LEADER,
       rating: 5,
       fridayContract,
     });
     keepIds.push(user.id);
-    await seedAvailability(user.id, weekStart, fridayContract, "sl", i);
-    const offeredSl = buildDayAvailability("sl", i, fridayContract).filter((d) => d.canWork).length;
-    console.log(`  ✓ ${SL_NAMES[i - 1]} · rating 5 · ${offeredSl}/6 days`);
+    await seedAvailability(user.id, weekStart, fridayContract, "sl", i + 1);
+    const offeredSl = buildDayAvailability("sl", i + 1, fridayContract).filter((d) => d.canWork).length;
+    console.log(`  ✓ ${person.name} · rating 5 · ${offeredSl}/6 days`);
   }
 
   await clearOtherAvailabilityForWeek(weekStart, keepIds);
@@ -425,7 +427,7 @@ async function main() {
   console.log("  • Sun: company meeting 13–15 (6h stay rule)");
   console.log("  • Mon: mapping refresh 13–19");
   console.log("  1. npm run db:fill-availability");
-  console.log("  2. Login ops@ops-demo.local → Availability → Shift plan → Auto-plan");
+  console.log("  2. Login magali@ops-demo.local → Availability → Shift plan → Auto-plan");
   console.log("  3. Expect varied offer counts + fair assigned/offered ratios");
 }
 

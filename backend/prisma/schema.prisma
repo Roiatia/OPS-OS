@@ -121,6 +121,8 @@ model User {
   supervisorRating Int?
   /** Preferred max hours per shift if less than 12. */
   maxRequestedHours Int?
+  /** Hard cap on shift-plan days per week (null = only limited by availability). */
+  maxShiftsPerWeek Int?
   roles     UserRole[]
   assignedMapsAsInspector Map[]  @relation("InspectorMaps")
   assignedMapsAsQa      Map[]  @relation("QaMaps")
@@ -186,6 +188,12 @@ model Map {
   loomDone        Boolean          @default(false)
   positioning     Boolean          @default(false)
   mapperName      String?
+  /** Google Meet link for the mapping session (daily hub CSV). */
+  meetLink        String?
+  /** First-time site from the daily hub CSV `isNew` column. */
+  isNewStore      Boolean          @default(false)
+  /** Day this map was loaded onto the Hub by the daily session CSV. */
+  hubSessionAt    DateTime?
   opsManagerComment String?
   fieldWorkStatus FieldWorkStatus  @default(UNCOMPLETED)
   fieldProgressPercent Int          @default(0)
@@ -290,6 +298,7 @@ model Map {
   @@index([helpAskBatchId])
   @@index([fieldDate])
   @@index([mappingAt])
+  @@index([hubSessionAt])
 }
 
 /** Teammate declined (hid) a swap batch — offer stays open for others. */

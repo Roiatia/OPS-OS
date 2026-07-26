@@ -67,9 +67,9 @@ function endOfToday(): Date {
 }
 
 /**
- * Hub maps: only those already on the status board, or assigned and still in
- * progress. Mapping/fieldDate alone must NOT auto-load maps into the Hub —
- * intake will use a separate technique later.
+ * Hub maps: those already on the status board, assigned and still in progress,
+ * or loaded for today by the daily session CSV. Mapping/fieldDate alone must
+ * NOT auto-load maps into the Hub — only an explicit CSV session does.
  */
 function hubMapsWhereClause() {
   return {
@@ -90,6 +90,7 @@ function hubMapsWhereClause() {
             assignedSupervisorId: { not: null },
             fieldWorkStatus: FieldWorkStatus.UNCOMPLETED,
           },
+          { hubSessionAt: { gte: startOfToday(), lte: endOfToday() } },
         ],
       },
     ],

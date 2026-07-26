@@ -20,9 +20,9 @@ export type DemoMapInput = {
   uploadApproved?: boolean;
   assignInspector?: boolean;
   assignQa?: boolean;
-  /** Assign to Alex Ben-Ami (supervisor@ops-demo.local) */
+  /** Assign to Igor (igor@ops-demo.local) */
   assignSupervisor?: boolean;
-  /** Assign to Dana Weiss (supervisor2@ops-demo.local, shift leader) */
+  /** Assign to Zach (zach@ops-demo.local, shift leader) */
   assignSupervisor2?: boolean;
   /** Assign to Noam Katz (supervisor3@ops-demo.local) */
   assignSupervisor3?: boolean;
@@ -274,12 +274,12 @@ export const DEMO_MAPS: DemoMapInput[] = [
 ];
 
 export async function seedDemoMaps(prisma: PrismaClient) {
-  const leader = await prisma.user.findUnique({ where: { email: "leader@ops-demo.local" } });
+  const leader = await prisma.user.findUnique({ where: { email: "eitan@ops-demo.local" } });
   const inspector = await prisma.user.findUnique({ where: { email: "inspector@ops-demo.local" } });
   const qa = await prisma.user.findUnique({ where: { email: "qa@ops-demo.local" } });
-  const supervisor = await prisma.user.findUnique({ where: { email: "supervisor@ops-demo.local" } });
-  const supervisor2 = await prisma.user.findUnique({ where: { email: "supervisor2@ops-demo.local" } });
-  const supervisor3 = await prisma.user.findUnique({ where: { email: "supervisor3@ops-demo.local" } });
+  const supervisor = await prisma.user.findUnique({ where: { email: "igor@ops-demo.local" } });
+  const supervisor2 = await prisma.user.findUnique({ where: { email: "zach@ops-demo.local" } });
+  const supervisor3 = await prisma.user.findUnique({ where: { email: "noam@ops-demo.local" } });
 
   if (!leader || !inspector || !qa || !supervisor || !supervisor2 || !supervisor3) {
     throw new Error("Demo users must exist before seeding maps. Run user seed first.");
@@ -366,7 +366,7 @@ export async function seedDemoMaps(prisma: PrismaClient) {
     });
   }
 
-  const ops = await prisma.user.findUnique({ where: { email: "ops@ops-demo.local" } });
+  const ops = await prisma.user.findUnique({ where: { email: "magali@ops-demo.local" } });
   if (ops) {
     await seedDemoUpdateEvents(prisma, {
       qa,

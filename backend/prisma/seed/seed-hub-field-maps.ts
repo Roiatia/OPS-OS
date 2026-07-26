@@ -21,12 +21,12 @@ function todayAt(hour: number, minute = 0): Date {
 }
 
 const STAFF = [
-  { email: "plan-sup-01@ops-demo.local", key: "eyal" as const, name: "Eyal", at: () => todayAt(8, 0) },
-  { email: "plan-sup-02@ops-demo.local", key: "bashar" as const, name: "Bashar", at: () => todayAt(8, 10) },
-  { email: "plan-sup-03@ops-demo.local", key: "cosmin" as const, name: "Cosmin", at: () => todayAt(8, 20) },
-  { email: "plan-sl-01@ops-demo.local", key: "erez" as const, name: "Erez", at: () => todayAt(7, 30) },
-  { email: "plan-sl-02@ops-demo.local", key: "oren" as const, name: "Oren", at: () => todayAt(7, 45) },
-  { email: "plan-sl-03@ops-demo.local", key: "rachel" as const, name: "Rachel", at: () => todayAt(8, 5) },
+  { email: "eyal@ops-demo.local", key: "eyal" as const, name: "Eyal", at: () => todayAt(8, 0) },
+  { email: "bashar@ops-demo.local", key: "bashar" as const, name: "Bashar", at: () => todayAt(8, 10) },
+  { email: "cosmin@ops-demo.local", key: "cosmin" as const, name: "Cosmin", at: () => todayAt(8, 20) },
+  { email: "erez@ops-demo.local", key: "erez" as const, name: "Erez", at: () => todayAt(7, 30) },
+  { email: "oren@ops-demo.local", key: "oren" as const, name: "Oren", at: () => todayAt(7, 45) },
+  { email: "rachel@ops-demo.local", key: "rachel" as const, name: "Rachel", at: () => todayAt(8, 5) },
 ];
 
 type StaffKey = (typeof STAFF)[number]["key"];
@@ -64,7 +64,7 @@ async function main() {
 
   const ops =
     (await prisma.user.findFirst({
-      where: { email: { in: ["ops@ops-demo.local", "ops2@ops-demo.local"] } },
+      where: { email: { in: ["magali@ops-demo.local", "natali@ops-demo.local"] } },
     })) ?? users[0]!.user;
 
   const inspector = await prisma.user.findFirst({

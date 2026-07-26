@@ -8,9 +8,9 @@ async function main() {
 
   const qa = await prisma.user.findUnique({ where: { email: "qa@ops-demo.local" } });
   const inspector = await prisma.user.findUnique({ where: { email: "inspector@ops-demo.local" } });
-  const supervisor = await prisma.user.findUnique({ where: { email: "supervisor@ops-demo.local" } });
-  const supervisor2 = await prisma.user.findUnique({ where: { email: "supervisor2@ops-demo.local" } });
-  const ops = await prisma.user.findUnique({ where: { email: "ops@ops-demo.local" } });
+  const supervisor = await prisma.user.findUnique({ where: { email: "igor@ops-demo.local" } });
+  const supervisor2 = await prisma.user.findUnique({ where: { email: "zach@ops-demo.local" } });
+  const ops = await prisma.user.findUnique({ where: { email: "magali@ops-demo.local" } });
 
   if (!qa || !inspector || !supervisor || !supervisor2 || !ops) {
     throw new Error("Demo users missing — run npm run db:seed first");

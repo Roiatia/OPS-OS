@@ -6,6 +6,7 @@ import * as workflow from "../services/workflow.js";
 import { syncMapsFromSpreadsheet } from "../services/spreadsheetSync.js";
 import { importSamsClubCsv, previewSamsClubCsv, clearAllMaps, resolveCsvImportConflicts } from "../services/csvImport.js";
 import type { CsvConflictResolution } from "../services/csvHybridMerge.js";
+import { importHubSessionCsv, previewHubSessionCsv } from "../services/hubSessionCsv.js";
 import { checkMapsInDatabase } from "../services/mapPresence.js";
 
 const router = Router();
@@ -585,6 +586,49 @@ router.post(
         resolutions,
         (req as AuthedRequest).user
       );
+      res.json(result);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+/** Daily mapping-session CSV → Hub (name,number,time,mapper,isNew,status,meetLink). */
+router.post(
+  "/hub/import-csv/preview",
+  requireRoles(RoleName.OPS_ADMIN, RoleName.OPS_MANAGER_2),
+  async (req, res) => {
+    try {
+      const { csv, sessionDate } = req.body as { csv?: string; sessionDate?: string };
+      if (!csv?.trim()) {
+        res.status(400).json({ error: "csv is required" });
+        return;
+      }
+      res.json(await previewHubSessionCsv(csv, sessionDate));
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+router.post(
+  "/hub/import-csv",
+  requireRoles(RoleName.OPS_ADMIN, RoleName.OPS_MANAGER_2),
+  async (req, res) => {
+    try {
+      const { csv, sessionDate, replaceDay } = req.body as {
+        csv?: string;
+        sessionDate?: string;
+        replaceDay?: boolean;
+      };
+      if (!csv?.trim()) {
+        res.status(400).json({ error: "csv is required" });
+        return;
+      }
+      const result = await importHubSessionCsv(csv, (req as AuthedRequest).user, {
+        sessionDate,
+        replaceDay,
+      });
       res.json(result);
     } catch (e) {
       res.status(400).json({ error: (e as Error).message });

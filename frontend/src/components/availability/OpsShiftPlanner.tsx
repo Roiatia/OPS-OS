@@ -459,7 +459,9 @@ export function OpsShiftPlanner() {
     return (data?.staff ?? [])
       .filter((s) => s.submitted || (s.daysOffered ?? 0) > 0)
       .map((s) => {
-        const offered = s.daysOffered ?? s.days.filter((d) => d.canWork).length;
+        const rawOffered = s.daysOffered ?? s.days.filter((d) => d.canWork).length;
+        const cap = s.maxShiftsPerWeek;
+        const offered = cap != null && cap >= 0 ? Math.min(rawOffered, cap) : rawOffered;
         const assigned = assignedCountByUser.get(s.userId) ?? 0;
         return {
           ...s,
@@ -1694,6 +1696,7 @@ export function OpsShiftPlanner() {
                       <span className="font-medium text-slate-800">{s.name}</span>
                       <span className="block text-muted">
                         {s.isShiftLeader ? "SL" : "Sup"} · {ratingLabel(s)}
+                        {s.maxShiftsPerWeek != null && ` · max ${s.maxShiftsPerWeek}/week`}
                       </span>
                     </span>
                     <span className="shrink-0 tabular-nums text-right">

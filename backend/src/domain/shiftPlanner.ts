@@ -21,6 +21,8 @@ export type PlannerStaff = {
   fridayContract?: boolean;
   hagimOk?: boolean;
   supervisorRating?: number | null;
+  /** Hard cap on assigned days this week (null = availability is the only limit). */
+  maxShiftsPerWeek?: number | null;
   allowedClients?: string[];
   days: {
     dayOfWeek: number;
@@ -101,6 +103,19 @@ function dayLabel(dayOfWeek: number): string {
 function canWorkOnDay(staff: PlannerStaff, dayOfWeek: number): boolean {
   const day = staff.days.find((d) => d.dayOfWeek === dayOfWeek);
   return Boolean(day?.canWork);
+}
+
+/** Contract cap (e.g. Millie ≤ 3 days) — never exceeded, even to fill a short day. */
+export function atWeeklyShiftCap(staff: PlannerStaff, assignedDays: number): boolean {
+  const max = staff.maxShiftsPerWeek;
+  return max != null && max >= 0 && assignedDays >= max;
+}
+
+/** Days they can actually be given, so fairness compares against real capacity. */
+function offeredDaysWithinCap(staff: PlannerStaff): number {
+  const offered = availableDaysCount(staff.days);
+  const max = staff.maxShiftsPerWeek;
+  return max != null && max >= 0 ? Math.min(offered, max) : offered;
 }
 
 function staffEligibleForDay(
@@ -195,6 +210,7 @@ function canBeOpenCloseSl(
   if (!s.isShiftLeader) return false;
   if (!staffEligibleForDay(s, dayOfWeek, weekStart)) return false;
   if (assignedDaysByUser.get(s.userId)?.has(dayOfWeek)) return false;
+  if (atWeeklyShiftCap(s, assignedDaysByUser.get(s.userId)?.size ?? 0)) return false;
   const days = assignedDaysByUser.get(s.userId) ?? new Set();
   const next = new Set(days);
   next.add(dayOfWeek);
@@ -423,6 +439,7 @@ function pickStaff(
       return nightShiftsIfAssigned(s, next) <= MAX_NIGHT_SHIFTS_PER_TWO_WEEKS;
     })
     .filter((s) => !(assignedDaysByUser.get(s.userId)?.has(dayOfWeek)))
+    .filter((s) => !atWeeklyShiftCap(s, load.get(s.userId) ?? 0))
     .sort((a, b) => {
       const avoidA = avoidPenalty(a.userId, opts?.avoidUserIds);
       const avoidB = avoidPenalty(b.userId, opts?.avoidUserIds);
@@ -431,8 +448,8 @@ function pickStaff(
       // Prefer supervisors over extra SLs (1 SL already reserved for open/close)
       if (a.isShiftLeader !== b.isShiftLeader) return a.isShiftLeader ? 1 : -1;
 
-      const offeredA = Math.max(1, availableDaysCount(a.days));
-      const offeredB = Math.max(1, availableDaysCount(b.days));
+      const offeredA = Math.max(1, offeredDaysWithinCap(a));
+      const offeredB = Math.max(1, offeredDaysWithinCap(b));
       const loadA = load.get(a.userId) ?? 0;
       const loadB = load.get(b.userId) ?? 0;
       const utilA = availabilityUtilization(loadA, offeredA);
@@ -821,6 +838,21 @@ export function validatePlanAssignments(input: {
       ok,
       issues,
     });
+  }
+
+  // Manual edits can still push someone past their contract cap — flag it.
+  const weekLoad = new Map<string, number>();
+  for (const a of input.assignments) {
+    weekLoad.set(a.userId, (weekLoad.get(a.userId) ?? 0) + 1);
+  }
+  for (const [userId, days] of weekLoad) {
+    const person = staffById.get(userId);
+    if (!person?.maxShiftsPerWeek) continue;
+    if (days > person.maxShiftsPerWeek) {
+      warnings.push(
+        `${person.name}: ${days} shifts planned — over their ${person.maxShiftsPerWeek}/week limit.`
+      );
+    }
   }
 
   return { dayPlans, warnings };

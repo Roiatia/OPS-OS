@@ -333,6 +333,47 @@ export const api = {
       body: JSON.stringify({ csv }),
     }),
 
+  /** Daily Hub session CSV: name,number,time,mapper,isNew,status,meetLink */
+  previewHubCsvImport: (csv: string, sessionDate?: string) =>
+    request<{
+      sessionDate: string;
+      totalRows: number;
+      active: number;
+      cancelled: number;
+      newStores: number;
+      withMeetLink: number;
+      existingMaps: number;
+      newMaps: number;
+      errors: { row: number; message: string }[];
+      samples: {
+        row: number;
+        mapNumber: string;
+        client: string;
+        storeNumber: string;
+        timeLabel: string;
+        mapperName: string | null;
+        isNewStore: boolean;
+        fieldWorkStatus: string;
+        meetLink: string | null;
+      }[];
+    }>("/maps/hub/import-csv/preview", {
+      method: "POST",
+      body: JSON.stringify({ csv, sessionDate }),
+    }),
+
+  importHubCsv: (csv: string, opts?: { sessionDate?: string; replaceDay?: boolean }) =>
+    request<{
+      sessionDate: string;
+      created: number;
+      updated: number;
+      skipped: number;
+      errors: { row: number; message: string }[];
+      sampleMapNumbers: string[];
+    }>("/maps/hub/import-csv", {
+      method: "POST",
+      body: JSON.stringify({ csv, ...opts }),
+    }),
+
   /** Check which building / map numbers are missing from the database. */
   checkMissingMaps: (numbers: Array<string | number>) =>
     request<{

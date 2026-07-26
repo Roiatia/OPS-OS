@@ -29,8 +29,17 @@ function canWorkDay(s: ShiftPlanStaff, dayOfWeek: number): boolean {
   return s.days.some((d) => d.dayOfWeek === dayOfWeek && d.canWork);
 }
 
+/** Days they can actually be given, so fairness compares against real capacity. */
 function offeredDays(s: ShiftPlanStaff): number {
-  return s.daysOffered ?? s.days.filter((d) => d.canWork).length;
+  const offered = s.daysOffered ?? s.days.filter((d) => d.canWork).length;
+  const max = s.maxShiftsPerWeek;
+  return max != null && max >= 0 ? Math.min(offered, max) : offered;
+}
+
+/** Contract cap (e.g. Millie ≤ 3 days) — never exceeded, even to fill a short day. */
+function atWeeklyShiftCap(s: ShiftPlanStaff, assignedDays: number): boolean {
+  const max = s.maxShiftsPerWeek;
+  return max != null && max >= 0 && assignedDays >= max;
 }
 
 /**
@@ -159,7 +168,11 @@ export function autoPlanAvailability(input: {
       continue;
     }
 
-    const eligible = input.staff.filter((s) => canWorkDay(s, dayOfWeek));
+    const offeredToday = input.staff.filter((s) => canWorkDay(s, dayOfWeek));
+    const eligible = offeredToday.filter(
+      (s) => !atWeeklyShiftCap(s, assignedCount.get(s.userId) ?? 0)
+    );
+    const cappedOut = offeredToday.filter((s) => !eligible.includes(s));
     const staffing = staffingForMaps(mapsCount, eligible.length);
     const todayOffered = eligible.length;
     const todayAbundant = todayOffered >= 5;
@@ -170,6 +183,13 @@ export function autoPlanAvailability(input: {
         todayScarce ? " · scarce day (planned early)" : todayAbundant ? " · abundant day" : ""
       }`,
     ];
+    if (cappedOut.length > 0) {
+      logicNotes.push(
+        `At weekly limit: ${cappedOut
+          .map((s) => `${s.name} (${s.maxShiftsPerWeek}/week)`)
+          .join(", ")}`
+      );
+    }
 
     const score = (s: ShiftPlanStaff) => {
       const assigned = assignedCount.get(s.userId) ?? 0;

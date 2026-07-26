@@ -21,6 +21,7 @@ import {
   type HubDropZone,
 } from "../../lib/hubDisplay";
 import { normalizeMapRecord } from "../../lib/mapSync";
+import { HubCsvImportModal } from "./HubCsvImportModal";
 import { SwapOffersPanel } from "../supervisor/SwapOffersPanel";
 import {
   hasOpsManagerRole,
@@ -139,6 +140,7 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
   const [hubDialog, setHubDialog] = useState<HubDialog>(null);
   const [filterSupervisorId, setFilterSupervisorId] = useState<"all" | string>("all");
   const [search, setSearch] = useState("");
+  const [csvImportOpen, setCsvImportOpen] = useState(false);
   const [progressDraft, setProgressDraft] = useState<{ mapId: string; pct: number } | null>(
     null
   );
@@ -820,6 +822,17 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
         {map.mapperName && (
           <p className="text-[11px] text-muted truncate">Mapper · {map.mapperName}</p>
         )}
+        {map.meetLink && (
+          <a
+            href={map.meetLink}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="text-[11px] font-medium text-brand-600 hover:underline"
+          >
+            Join Meet
+          </a>
+        )}
         {canReportMapperNotArrived(map) && (
           <div className="mt-1.5" onClick={(e) => e.stopPropagation()}>
             <button
@@ -1162,6 +1175,15 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
             ))}
           </select>
         </label>
+        {isOpsManager && (
+          <button
+            type="button"
+            onClick={() => setCsvImportOpen(true)}
+            className="shrink-0 px-2.5 py-1 text-xs font-semibold rounded-md border border-brand-300 bg-brand-50 text-brand-800 hover:bg-brand-100"
+          >
+            Upload CSV
+          </button>
+        )}
       </div>
 
       {error && (
@@ -1485,6 +1507,16 @@ export function MapHubBoard({ mode, currentUserId, onMutate }: Props) {
             </div>
           </div>
         </div>
+      )}
+
+      {csvImportOpen && (
+        <HubCsvImportModal
+          onClose={() => setCsvImportOpen(false)}
+          onImported={async () => {
+            await refetchHub();
+            onMutateRef.current?.();
+          }}
+        />
       )}
     </div>
   );
