@@ -21,6 +21,12 @@ const envSchema = z.object({
   GOOGLE_CLIENT_ID: z.string().optional(),
   CORS_ORIGINS: z.string().optional(),
   ALLOWED_EMAIL_DOMAINS: z.string().optional(),
+  /**
+   * Plaintext password required for Super Admin demo login (DEMO_MODE only).
+   * Local/demo convenience — never commit a real value. Compared via SHA-256 +
+   * timingSafeEqual. If unset, Super Admin demo login returns 503.
+   */
+  SUPER_ADMIN_PASSWORD: z.string().optional(),
 });
 
 const parsed = envSchema.parse(process.env);
@@ -66,12 +72,29 @@ function parseCsv(value: string | undefined): string[] {
     .filter((s) => s.length > 0);
 }
 
+/**
+ * Normalize a secret from .env: trim whitespace and strip a single pair of
+ * surrounding quotes when a loader left them in the value.
+ */
+function normalizeEnvSecret(value: string | undefined): string | undefined {
+  if (value == null) return undefined;
+  let v = value.trim();
+  if (
+    (v.startsWith('"') && v.endsWith('"') && v.length >= 2) ||
+    (v.startsWith("'") && v.endsWith("'") && v.length >= 2)
+  ) {
+    v = v.slice(1, -1).trim();
+  }
+  return v.length > 0 ? v : undefined;
+}
+
 export const env = {
   ...parsed,
   isProduction,
   JWT_SECRET: jwtSecret,
   jwtSecret,
   demoMode,
+  SUPER_ADMIN_PASSWORD: normalizeEnvSecret(parsed.SUPER_ADMIN_PASSWORD),
   corsOrigins: parseCsv(parsed.CORS_ORIGINS),
   allowedEmailDomains: parseCsv(parsed.ALLOWED_EMAIL_DOMAINS).map((d) =>
     d.toLowerCase()

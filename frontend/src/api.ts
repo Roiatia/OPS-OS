@@ -49,11 +49,15 @@ function buildQuery(params: Record<string, string | undefined>): string {
 export const api = {
   getConfig: () => request<{ demoMode: boolean; googleClientId: string | null }>("/auth/config"),
 
-  demoLogin: (email: string) =>
-    request<{ token: string; user: import("./types").User }>("/auth/demo", {
+  demoLogin: (email: string, password?: string) => {
+    const trimmed = typeof password === "string" ? password.trim() : undefined;
+    return request<{ token: string; user: import("./types").User }>("/auth/demo", {
       method: "POST",
-      body: JSON.stringify({ email }),
-    }),
+      body: JSON.stringify(
+        trimmed ? { email, password: trimmed } : { email }
+      ),
+    });
+  },
 
   googleLogin: (credential: string) =>
     request<{ token: string; user: import("./types").User }>("/auth/google", {
@@ -760,6 +764,85 @@ export const api = {
       `/availability/shift-changes/${id}/ops-reject`,
       { method: "POST" }
     ),
+
+  // ---- Super Admin / features / usage ----
+
+  getMyFeatures: () =>
+    request<import("./types").ResolvedFeature[]>("/features/mine"),
+
+  setMyFeatureOverride: (key: string, enabled: boolean | null) =>
+    request<import("./types").ResolvedFeature>(`/features/${encodeURIComponent(key)}/mine`, {
+      method: "POST",
+      body: JSON.stringify({ enabled }),
+    }),
+
+  listFeatureFlags: () =>
+    request<import("./types").FeatureFlag[]>("/features"),
+
+  updateFeatureFlag: (
+    key: string,
+    data: {
+      enabled?: boolean;
+      isExperimental?: boolean;
+      rolloutRoles?: import("./types").RoleName[];
+      label?: string;
+      description?: string | null;
+    }
+  ) =>
+    request<import("./types").FeatureFlag>(`/features/${encodeURIComponent(key)}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  setFeatureOverride: (key: string, userId: string, enabled: boolean | null) =>
+    request<import("./types").FeatureFlag>(
+      `/features/${encodeURIComponent(key)}/override`,
+      {
+        method: "POST",
+        body: JSON.stringify({ userId, enabled }),
+      }
+    ),
+
+  listUsers: () => request<import("./types").AdminUser[]>("/users"),
+
+  getAssignableRoles: () =>
+    request<import("./types").AssignableRole[]>("/users/roles"),
+
+  createUser: (data: {
+    email: string;
+    name: string;
+    roles: import("./types").RoleName[];
+  }) =>
+    request<import("./types").AdminUser>("/users", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  setUserRoles: (id: string, roles: import("./types").RoleName[]) =>
+    request<import("./types").AdminUser>(`/users/${id}/roles`, {
+      method: "PATCH",
+      body: JSON.stringify({ roles }),
+    }),
+
+  setUserActive: (id: string, active: boolean) =>
+    request<import("./types").AdminUser>(`/users/${id}/active`, {
+      method: "PATCH",
+      body: JSON.stringify({ active }),
+    }),
+
+  getMetrics: (days?: number) =>
+    request<import("./types").UsageMetrics>(
+      `/metrics${buildQuery({ days: days != null ? String(days) : undefined })}`
+    ),
+
+  getAuditLog: (q?: string) =>
+    request<import("./types").AuditLogEntry[]>(`/metrics/audit${buildQuery({ q })}`),
+
+  trackUsage: (events: { event: string; section?: string; metadata?: Record<string, unknown> }[]) =>
+    request<{ recorded: number }>("/usage", {
+      method: "POST",
+      body: JSON.stringify({ events }),
+    }),
 };
 
 export function setAuthToken(token: string | null) {

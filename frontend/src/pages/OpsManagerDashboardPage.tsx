@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useMemo, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { SettingsPanel } from "../components/leader/SettingsPanel";
@@ -6,6 +6,9 @@ import { CsvImportPanel } from "../components/leader/CsvImportPanel";
 import { MapHubBoard } from "../components/hub/MapHubBoard";
 import { OpsManagerSidebar, type OpsSection } from "../components/ops/OpsManagerSidebar";
 import { ConfluencePanel } from "../components/shared/ConfluencePanel";
+import { useFeatures } from "../hooks/useFeatures";
+import { filterVisibleSections } from "../lib/features";
+import { useTrackSection } from "../hooks/useUsageTracker";
 
 // Heavy, non-default sections are code-split so the initial Hub paint doesn't
 // download the maps board (~1200 lines), reports, history or availability code.
@@ -76,11 +79,24 @@ const SECTION_TITLES: Record<OpsSection, { title: string; subtitle: string }> = 
 export function OpsManagerDashboardPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
+  const { map: featureMap } = useFeatures(Boolean(user));
+  const visibleSections = useMemo(
+    () => filterVisibleSections(OPS_SECTIONS.map((id) => ({ id })), featureMap).map((s) => s.id),
+    [featureMap]
+  );
   const [showAddMap, setShowAddMap] = useState(false);
   const [showCsvImport, setShowCsvImport] = useState(false);
   const [readyPanelOpen, setReadyPanelOpen] = useState(false);
   const [error, setError] = useState("");
   const [activeSection, setActiveSection] = useSectionRoute("/app/ops", OPS_SECTIONS, "hub");
+  useTrackSection(activeSection);
+
+  useEffect(() => {
+    if (visibleSections.length > 0 && !visibleSections.includes(activeSection)) {
+      setActiveSection(visibleSections[0] ?? "hub");
+    }
+  }, [activeSection, visibleSections, setActiveSection]);
+
   const [form, setForm] = useState({
     mapNumber: "",
     jiraTicketId: "",
@@ -200,6 +216,7 @@ export function OpsManagerDashboardPage() {
         readyCount={stats.ready}
         lightLoadCount={workloadAlerts.length}
         updateCount={opsUpdates.unreadCount}
+        visibleIds={visibleSections}
       />
 
       <div className="flex-1 min-w-0 px-6 py-6 overflow-y-auto">

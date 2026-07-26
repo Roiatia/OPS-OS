@@ -10,6 +10,7 @@ export const ROLE_LABELS: Record<string, string> = {
   OPS_ADMIN: "OPS Manager",
   OPS_MANAGER: "OPS Manager",
   OPS_MANAGER_2: "OPS Manager 2",
+  SUPER_ADMIN: "Super Admin",
 };
 
 export const PHASE_LABELS: Record<string, string> = {

@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { GoogleLogin } from "@react-oauth/google";
 import { useAuth } from "../context/AuthContext";
 import { useConfigQuery, useDemoUsersQuery } from "../hooks/queries";
 import { OriientLogo } from "@/components/common/OriientLogo";
+
+const SUPER_ADMIN_DEMO_EMAIL = "admin@ops-demo.local";
 
 /** Fallback when /auth/demo-users is unavailable — keep in sync with prisma/seed/seed.ts */
 const KNOWN_DEMO_USERS = [
@@ -52,7 +54,15 @@ const KNOWN_DEMO_USERS = [
 
 type DemoHint = { email: string; name: string; label: string };
 
+function isSuperAdminDemoUser(hint: DemoHint): boolean {
+  return (
+    hint.email.toLowerCase() === SUPER_ADMIN_DEMO_EMAIL ||
+    hint.label.toLowerCase().includes("super admin")
+  );
+}
+
 function roleRank(label: string): number {
+  if (label.includes("Super Admin")) return -1;
   if (label.includes("OPS Manager")) return 0;
   if (label.includes("Shift Leader")) return 1;
   if (label.includes("Supervisor")) return 2;
@@ -69,6 +79,8 @@ export function LoginPage() {
   const [filter, setFilter] = useState("");
   const [error, setError] = useState("");
   const [loadingEmail, setLoadingEmail] = useState<string | null>(null);
+  const [passwordPromptEmail, setPasswordPromptEmail] = useState<string | null>(null);
+  const [adminPassword, setAdminPassword] = useState("");
 
   // Show the picker whenever DEMO_MODE isn't explicitly disabled.
   const showDemoAccounts = config?.demoMode !== false;
@@ -114,18 +126,23 @@ export function LoginPage() {
   // flight — so the badge is a true "backend unreachable" signal.
   const usingFallback = demoUsersError || (!demoUsersLoading && demoUsers.length === 0);
 
-  async function enterAs(email: string) {
+  async function enterAs(email: string, password?: string) {
     setError("");
     setLoadingEmail(email);
     try {
-      await loginDemo(email);
+      await loginDemo(email, password);
+      setPasswordPromptEmail(null);
+      setAdminPassword("");
     } catch (err) {
       const msg = (err as Error).message;
       // One automatic retry — backend may still be coming up after a restart
-      if (/500|unavailable|restarting|Cannot reach/i.test(msg)) {
+      // (skip for auth failures like wrong password / not configured)
+      if (/500|unavailable|restarting|Cannot reach/i.test(msg) && !/password|not configured/i.test(msg)) {
         try {
           await new Promise((r) => setTimeout(r, 800));
-          await loginDemo(email);
+          await loginDemo(email, password);
+          setPasswordPromptEmail(null);
+          setAdminPassword("");
           return;
         } catch (err2) {
           setError((err2 as Error).message);
@@ -136,6 +153,27 @@ export function LoginPage() {
     } finally {
       setLoadingEmail(null);
     }
+  }
+
+  function onSelectDemoUser(hint: DemoHint) {
+    if (isSuperAdminDemoUser(hint)) {
+      setError("");
+      setPasswordPromptEmail(hint.email);
+      setAdminPassword("");
+      return;
+    }
+    void enterAs(hint.email);
+  }
+
+  function submitAdminPassword(e: FormEvent) {
+    e.preventDefault();
+    if (!passwordPromptEmail) return;
+    const password = adminPassword.trim();
+    if (!password) {
+      setError("Enter the Super Admin password");
+      return;
+    }
+    void enterAs(passwordPromptEmail, password);
   }
 
   return (
@@ -152,6 +190,48 @@ export function LoginPage() {
         <div className="bg-white rounded-2xl shadow-xl shadow-brand-600/5 p-6 sm:p-8 border border-border">
           {error && (
             <p className="mb-4 text-sm text-red-600 bg-red-50 rounded-lg p-3">{error}</p>
+          )}
+
+          {passwordPromptEmail && (
+            <form
+              onSubmit={submitAdminPassword}
+              className="mb-5 rounded-xl border border-brand-100 bg-brand-50/40 p-4 space-y-3"
+            >
+              <div>
+                <p className="text-sm font-semibold text-slate-800">Super Admin password required</p>
+                <p className="text-xs text-slate-500 mt-0.5 truncate">{passwordPromptEmail}</p>
+              </div>
+              <input
+                type="password"
+                value={adminPassword}
+                onChange={(e) => setAdminPassword(e.target.value)}
+                placeholder="Password"
+                autoFocus
+                autoComplete="current-password"
+                className="w-full border border-border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 bg-white"
+              />
+              <div className="flex items-center gap-2">
+                <button
+                  type="submit"
+                  disabled={Boolean(loadingEmail)}
+                  className="flex-1 rounded-xl bg-brand-600 text-white text-sm font-semibold px-4 py-2.5 hover:bg-brand-700 disabled:opacity-60"
+                >
+                  {loadingEmail === passwordPromptEmail ? "Signing in…" : "Unlock Super Admin"}
+                </button>
+                <button
+                  type="button"
+                  disabled={Boolean(loadingEmail)}
+                  onClick={() => {
+                    setPasswordPromptEmail(null);
+                    setAdminPassword("");
+                    setError("");
+                  }}
+                  className="rounded-xl border border-border px-4 py-2.5 text-sm text-slate-600 hover:bg-white disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
           )}
 
           {showDemoAccounts && (
@@ -171,18 +251,19 @@ export function LoginPage() {
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
                 placeholder="Search name, email, or role…"
-                autoFocus
+                autoFocus={!passwordPromptEmail}
                 className="w-full border border-border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20"
               />
               <div className="space-y-1 max-h-[min(28rem,55vh)] overflow-y-auto pr-1 -mx-1 px-1">
                 {filtered.map((h) => {
                   const busy = loadingEmail === h.email;
+                  const needsPassword = isSuperAdminDemoUser(h);
                   return (
                     <button
                       key={h.email}
                       type="button"
                       disabled={Boolean(loadingEmail)}
-                      onClick={() => void enterAs(h.email)}
+                      onClick={() => onSelectDemoUser(h)}
                       className="w-full flex items-center justify-between gap-3 text-left text-sm px-3 py-2.5 rounded-xl hover:bg-brand-50 transition border border-transparent hover:border-brand-100 disabled:opacity-60"
                     >
                       <span className="min-w-0">
@@ -192,7 +273,11 @@ export function LoginPage() {
                       <span className="shrink-0 text-right">
                         <span className="block text-xs text-muted">{h.label}</span>
                         <span className="block text-[11px] font-semibold text-brand-700 mt-0.5">
-                          {busy ? "Signing in…" : "Enter →"}
+                          {busy
+                            ? "Signing in…"
+                            : needsPassword
+                              ? "Password →"
+                              : "Enter →"}
                         </span>
                       </span>
                     </button>

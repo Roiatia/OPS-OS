@@ -29,6 +29,7 @@ interface Props {
   onSectionChange: (section: SupervisorSection) => void;
   activeMapCount?: number;
   teamCount?: number;
+  visibleIds?: readonly SupervisorSection[];
 }
 
 export function SupervisorSidebar({
@@ -36,7 +37,12 @@ export function SupervisorSidebar({
   onSectionChange,
   activeMapCount = 0,
   teamCount = 0,
+  visibleIds,
 }: Props) {
+  const items = visibleIds
+    ? NAV_ITEMS.filter((item) => visibleIds.includes(item.id))
+    : NAV_ITEMS;
+
   return (
     <aside className="w-60 shrink-0 border-r border-border bg-white flex flex-col h-[calc(100vh-4rem)] sticky top-16 shadow-sm">
       <div className="px-4 py-4 border-b border-border">
@@ -46,7 +52,7 @@ export function SupervisorSidebar({
       </div>
 
       <nav className="flex-1 p-3 space-y-1">
-        {NAV_ITEMS.map((item) => {
+        {items.map((item) => {
           const active = activeSection === item.id;
           return (
             <button

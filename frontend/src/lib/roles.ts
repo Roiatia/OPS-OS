@@ -11,8 +11,17 @@ export function isOpsManagerRole(role: RoleName): boolean {
   return OPS_MANAGER_ROLES.includes(role);
 }
 
+export function isSuperAdminRole(role: RoleName): boolean {
+  return role === "SUPER_ADMIN";
+}
+
+/** True for OPS managers and Super Admins (manager parity). */
 export function hasOpsManagerRole(user: User | null | undefined): boolean {
-  return user?.roles.some(isOpsManagerRole) ?? false;
+  return user?.roles.some((r) => isOpsManagerRole(r) || isSuperAdminRole(r)) ?? false;
+}
+
+export function hasSuperAdminRole(user: User | null | undefined): boolean {
+  return user?.roles.some(isSuperAdminRole) ?? false;
 }
 
 export function isShiftLeaderRole(role: RoleName): boolean {

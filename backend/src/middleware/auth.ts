@@ -2,9 +2,15 @@ import jwt from "jsonwebtoken";
 import type { Request, Response, NextFunction } from "express";
 import { RoleName } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
-import { isOpsManagerRole, OPS_MANAGER_ROLE_NAMES } from "../domain/roles.js";
+import {
+  isOpsManagerRole,
+  OPS_MANAGER_ROLE_NAMES,
+  SUPER_ADMIN_ROLE,
+  userHasSuperAdminRole,
+} from "../domain/roles.js";
 import type { AuthUser } from "../lib/types.js";
 import { env } from "../lib/env.js";
+import { isAccountDisabled } from "../lib/schemaCapabilities.js";
 
 const JWT_SECRET = env.JWT_SECRET;
 
@@ -42,6 +48,10 @@ export function verifyToken(token: string): AuthUser | null {
   }
 }
 
+export function getAuthUser(req: Request): AuthUser {
+  return (req as AuthedRequest).user;
+}
+
 export async function authMiddleware(req: Request, res: Response, next: NextFunction) {
   const header = req.headers.authorization;
   if (!header?.startsWith("Bearer ")) {
@@ -75,6 +85,12 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
     return;
   }
 
+  if (await isAccountDisabled(dbUser.id)) {
+    userCache.delete(payload.id);
+    res.status(401).json({ error: "Account disabled" });
+    return;
+  }
+
   const authUser: AuthUser = {
     id: dbUser.id,
     email: dbUser.email,
@@ -89,11 +105,13 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
   next();
 }
 
-/** Expand OPS_ADMIN → all OPS manager roles so Manager 2 has the same access */
+/** Expand OPS_ADMIN → all OPS manager roles so Manager 2 has the same access.
+ *  Also include SUPER_ADMIN whenever any OPS manager role is requested. */
 function expandAllowedRoles(roles: RoleName[]): RoleName[] {
   const expanded = new Set<RoleName>(roles);
   if (roles.some((r) => isOpsManagerRole(r) || r === RoleName.OPS_ADMIN)) {
     for (const r of OPS_MANAGER_ROLE_NAMES) expanded.add(r);
+    expanded.add(SUPER_ADMIN_ROLE);
   }
   return [...expanded];
 }
@@ -108,4 +126,14 @@ export function requireRoles(...roles: RoleName[]) {
     }
     next();
   };
+}
+
+/** Restrict a route to Super Admins only. */
+export function requireSuperAdmin(req: Request, res: Response, next: NextFunction) {
+  const user = (req as AuthedRequest).user;
+  if (!user || !userHasSuperAdminRole(user)) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+  next();
 }

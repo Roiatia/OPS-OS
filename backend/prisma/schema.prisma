@@ -17,6 +17,11 @@ enum RoleName {
   OPS_ADMIN
   OPS_MANAGER
   OPS_MANAGER_2
+  SUPER_ADMIN
+
+  // Cloud SQL: postgres owns legacy "RoleName"; ops_dev owns "RoleName_new"
+  // (see migration 20260722160000_super_admin_role).
+  @@map("RoleName_new")
 }
 
 enum MapPhase {
@@ -104,6 +109,8 @@ model User {
   name      String
   avatarUrl String?
   googleId  String?    @unique
+  /** Soft-disable: inactive users cannot authenticate. */
+  active    Boolean    @default(true)
   shiftStartedAt DateTime?
   fridayContract   Boolean  @default(false)
   /** Can work Sunday — independent of Friday form (tap both for Friday+hagim+Sunday). */
@@ -138,6 +145,8 @@ model User {
   shiftChangesTo          ShiftChangeRequest[]  @relation("ShiftChangeTo")
   shiftChangesOps         ShiftChangeRequest[]  @relation("ShiftChangeOps")
   supervisorClients       SupervisorClientCapability[]
+  featureFlagOverrides    FeatureFlagOverride[]
+  usageEvents             UsageEvent[]
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
 }
@@ -479,4 +488,49 @@ model AvailabilityDay {
 
   @@unique([submissionId, dayOfWeek])
   @@index([submissionId])
+}
+
+/** Admin-controlled feature flags (master switch + optional role rollout). */
+model FeatureFlag {
+  id             String                @id @default(cuid())
+  key            String                @unique
+  label          String
+  description    String?
+  enabled        Boolean               @default(false)
+  isExperimental Boolean               @default(false)
+  rolloutRoles   RoleName[]            @default([])
+  overrides      FeatureFlagOverride[]
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+}
+
+/** Per-user override for a feature flag (wins over master + role rollout). */
+model FeatureFlagOverride {
+  id        String      @id @default(cuid())
+  flagId    String
+  flag      FeatureFlag @relation(fields: [flagId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  enabled   Boolean
+  createdAt DateTime    @default(now())
+
+  @@unique([flagId, userId])
+  @@index([userId])
+}
+
+/** Product-usage events for admin metrics (section views, etc.). */
+model UsageEvent {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  event     String
+  section   String?
+  role      String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([event])
+  @@index([userId])
+  @@index([event, createdAt])
 }

@@ -13,7 +13,7 @@ import type { User } from "../types";
 interface AuthContextValue {
   user: User | null;
   loading: boolean;
-  loginDemo: (email: string) => Promise<void>;
+  loginDemo: (email: string, password?: string) => Promise<void>;
   loginGoogle: (credential: string) => Promise<void>;
   logout: () => void;
 }
@@ -43,8 +43,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .finally(() => setLoading(false));
   }, []);
 
-  const loginDemo = useCallback(async (email: string) => {
-    const { token, user } = await api.demoLogin(email);
+  const loginDemo = useCallback(async (email: string, password?: string) => {
+    const { token, user } = await api.demoLogin(email, password);
     setAuthToken(token);
     setUser(user);
   }, []);
