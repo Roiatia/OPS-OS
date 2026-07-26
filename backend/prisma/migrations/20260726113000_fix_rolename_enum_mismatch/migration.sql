@@ -1,6 +1,11 @@
--- Repair incomplete RoleName enum swap (RoleName_new left behind by a partial
--- SUPER_ADMIN migration). Prisma casts role filters as "RoleName", which made
--- Hub queries fail with: operator does not exist: "RoleName_new" = "RoleName".
+-- HISTORICAL / SUPERSEDED: this heal moved columns *off* RoleName_new and
+-- remapped SUPER_ADMIN → OPS_ADMIN. That was correct only while Prisma cast
+-- filters as "RoleName". Schema now @@map("RoleName_new"); see
+-- 20260726140000_restore_rolename_new_super_admin and src/db/fixRoleNameEnum.ts.
+--
+-- Original intent: repair incomplete RoleName enum swap that left RoleName_new
+-- behind while the client still cast filters as "RoleName"
+-- (operator does not exist: "RoleName_new" = "RoleName").
 
 DO $$
 BEGIN

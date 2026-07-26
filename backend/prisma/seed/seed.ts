@@ -9,6 +9,7 @@ const MAX_SHIFTS_PER_WEEK: Record<string, number> = {
 
 /** Real ops roster + placeholder QA/inspectors (real QA/inspectors later). */
 const DEMO_USERS: { email: string; name: string; roles: RoleName[] }[] = [
+  { email: "admin@ops-demo.local", name: "Super Admin", roles: [RoleName.SUPER_ADMIN] },
   { email: "eitan@ops-demo.local", name: "Eitan", roles: [RoleName.GRAPHIC_TEAM_LEADER] },
   { email: "magali@ops-demo.local", name: "Magali", roles: [RoleName.OPS_ADMIN] },
   { email: "natali@ops-demo.local", name: "Natali", roles: [RoleName.OPS_MANAGER_2] },

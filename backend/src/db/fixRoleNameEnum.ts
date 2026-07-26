@@ -1,71 +1,130 @@
 import { prisma } from "../lib/prisma.js";
 
 /**
- * Repair incomplete Prisma enum swaps that leave columns on "RoleName_new"
- * while the client still casts filters as "RoleName". That mismatch breaks Hub
- * with: operator does not exist: "RoleName_new" = "RoleName".
+ * Align role columns with Prisma's RoleName @@map("RoleName_new").
  *
- * Idempotent: no-op when RoleName_new is absent.
+ * Cloud SQL: postgres owns legacy "RoleName" (no SUPER_ADMIN; ops_dev cannot
+ * ALTER it). SUPER_ADMIN lives on ops_dev-owned "RoleName_new". Columns must
+ * use RoleName_new or Prisma casts fail and Super Admin cannot be stored.
+ *
+ * Older heal logic moved columns *back* to RoleName and remapped SUPER_ADMIN →
+ * OPS_ADMIN — that undoes the Super Admin migration. This heal goes the other
+ * way and is idempotent when already aligned.
  */
 export async function fixRoleNameEnumMismatch(): Promise<boolean> {
-  const stray = await prisma.$queryRaw<Array<{ exists: boolean }>>`
-    SELECT EXISTS (
-      SELECT 1 FROM pg_type WHERE typname = 'RoleName_new'
-    ) AS exists
+  const cols = await prisma.$queryRaw<
+    Array<{ table_name: string; column_name: string; udt_name: string }>
+  >`
+    SELECT table_name, column_name, udt_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND (
+        (table_name = 'UserRole' AND column_name = 'role')
+        OR (table_name = 'RolePermission' AND column_name = 'role')
+        OR (table_name = 'FeatureFlag' AND column_name = 'rolloutRoles')
+      )
   `;
-  if (!stray[0]?.exists) return false;
 
-  console.warn(
-    "[db] Detected stray RoleName_new enum — repairing role columns onto RoleName"
+  const needsAlign = cols.some(
+    (c) =>
+      c.udt_name === "RoleName" ||
+      c.udt_name === "_RoleName" ||
+      (c.table_name === "UserRole" && c.udt_name !== "RoleName_new") ||
+      (c.table_name === "RolePermission" && c.udt_name !== "RoleName_new") ||
+      (c.table_name === "FeatureFlag" && c.udt_name !== "_RoleName_new")
   );
 
-  await prisma.$executeRawUnsafe(`
-    DO $$
-    BEGIN
-      IF EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = 'UserRole'
-          AND column_name = 'role' AND udt_name = 'RoleName_new'
-      ) THEN
-        ALTER TABLE "UserRole" ALTER COLUMN "role" TYPE text USING ("role"::text);
-        UPDATE "UserRole" SET role = 'OPS_ADMIN' WHERE role = 'SUPER_ADMIN';
-        DELETE FROM "UserRole" a USING "UserRole" b
-          WHERE a.ctid < b.ctid AND a."userId" = b."userId" AND a.role = b.role;
-        ALTER TABLE "UserRole" ALTER COLUMN "role" TYPE "RoleName" USING ("role"::"RoleName");
-      END IF;
+  let changed = false;
 
-      IF EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = 'RolePermission'
-          AND column_name = 'role' AND udt_name = 'RoleName_new'
-      ) THEN
-        ALTER TABLE "RolePermission" ALTER COLUMN "role" TYPE text USING ("role"::text);
-        DELETE FROM "RolePermission" WHERE role = 'SUPER_ADMIN';
-        ALTER TABLE "RolePermission" ALTER COLUMN "role" TYPE "RoleName" USING ("role"::"RoleName");
-      END IF;
+  if (needsAlign) {
+    console.warn(
+      "[db] Aligning role columns onto RoleName_new (preserves SUPER_ADMIN)"
+    );
 
-      IF EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = 'FeatureFlag'
-          AND column_name = 'rolloutRoles' AND udt_name = '_RoleName_new'
-      ) THEN
-        ALTER TABLE "FeatureFlag" ALTER COLUMN "rolloutRoles" DROP DEFAULT;
-        ALTER TABLE "FeatureFlag" ALTER COLUMN "rolloutRoles" TYPE text[] USING ("rolloutRoles"::text[]);
-        UPDATE "FeatureFlag"
-          SET "rolloutRoles" = array_remove("rolloutRoles", 'SUPER_ADMIN')
-          WHERE 'SUPER_ADMIN' = ANY ("rolloutRoles");
-        ALTER TABLE "FeatureFlag" ALTER COLUMN "rolloutRoles" TYPE "RoleName"[] USING ("rolloutRoles"::"RoleName"[]);
-        ALTER TABLE "FeatureFlag" ALTER COLUMN "rolloutRoles" SET DEFAULT ARRAY[]::"RoleName"[];
-      END IF;
+    await prisma.$executeRawUnsafe(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'RoleName_new') THEN
+          CREATE TYPE "RoleName_new" AS ENUM (
+            'GRAPHIC_TEAM_LEADER',
+            'MAPPING_INSPECTOR',
+            'GRAPHIC_QA',
+            'OPS_ADMIN',
+            'SUPERVISOR',
+            'SUPERVISOR_SHIFT_LEADER',
+            'OPS_MANAGER_2',
+            'OPS_MANAGER',
+            'SUPER_ADMIN'
+          );
+        END IF;
+      END $$;
+    `);
 
-      DROP CAST IF EXISTS ("RoleName_new" AS "RoleName");
-      DROP CAST IF EXISTS ("RoleName" AS "RoleName_new");
-      DROP FUNCTION IF EXISTS public.rolename_new_to_rolename("RoleName_new");
-      DROP FUNCTION IF EXISTS public.rolename_to_rolename_new("RoleName");
-      DROP TYPE IF EXISTS "RoleName_new";
-    END $$;
-  `);
+    // ops_dev owns RoleName_new — safe even when the type already existed.
+    await prisma.$executeRawUnsafe(
+      `ALTER TYPE "RoleName_new" ADD VALUE IF NOT EXISTS 'SUPER_ADMIN'`
+    );
 
-  console.warn("[db] RoleName enum repair complete");
-  return true;
+    await prisma.$executeRawUnsafe(`
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'UserRole'
+            AND column_name = 'role' AND udt_name = 'RoleName'
+        ) THEN
+          ALTER TABLE "UserRole"
+            ALTER COLUMN "role" TYPE "RoleName_new"
+            USING ("role"::text::"RoleName_new");
+        END IF;
+
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'RolePermission'
+            AND column_name = 'role' AND udt_name = 'RoleName'
+        ) THEN
+          ALTER TABLE "RolePermission"
+            ALTER COLUMN "role" TYPE "RoleName_new"
+            USING ("role"::text::"RoleName_new");
+        END IF;
+
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'FeatureFlag'
+            AND column_name = 'rolloutRoles' AND udt_name = '_RoleName'
+        ) THEN
+          ALTER TABLE "FeatureFlag" ALTER COLUMN "rolloutRoles" DROP DEFAULT;
+          ALTER TABLE "FeatureFlag"
+            ALTER COLUMN "rolloutRoles" TYPE "RoleName_new"[]
+            USING ("rolloutRoles"::text::"RoleName_new"[]);
+          ALTER TABLE "FeatureFlag"
+            ALTER COLUMN "rolloutRoles" SET DEFAULT ARRAY[]::"RoleName_new"[];
+        END IF;
+      END $$;
+    `);
+    changed = true;
+  }
+
+  // Always restore demo Super Admin if a prior heal remapped them to OPS_ADMIN.
+  // Must run after columns are on RoleName_new (or already were).
+  const roleType = await prisma.$queryRaw<Array<{ udt_name: string }>>`
+    SELECT udt_name FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'UserRole' AND column_name = 'role'
+  `;
+  if (roleType[0]?.udt_name === "RoleName_new") {
+    const restored = await prisma.$executeRawUnsafe(`
+      UPDATE "UserRole" ur
+      SET role = 'SUPER_ADMIN'::"RoleName_new"
+      FROM "User" u
+      WHERE ur."userId" = u.id
+        AND lower(u.email) = 'admin@ops-demo.local'
+        AND ur.role::text = 'OPS_ADMIN'
+    `);
+    if (typeof restored === "number" && restored > 0) changed = true;
+  }
+
+  if (changed) {
+    console.warn("[db] RoleName_new alignment complete");
+  }
+  return changed;
 }

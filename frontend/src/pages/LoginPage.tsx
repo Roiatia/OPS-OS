@@ -9,6 +9,7 @@ const SUPER_ADMIN_DEMO_EMAIL = "admin@ops-demo.local";
 
 /** Fallback when /auth/demo-users is unavailable — keep in sync with prisma/seed/seed.ts */
 const KNOWN_DEMO_USERS = [
+  { email: "admin@ops-demo.local", name: "Super Admin", label: "Super Admin" },
   { email: "magali@ops-demo.local", name: "Magali", label: "OPS Manager" },
   { email: "natali@ops-demo.local", name: "Natali", label: "OPS Manager 2" },
   { email: "eitan@ops-demo.local", name: "Eitan", label: "Graphic Team Leader" },
