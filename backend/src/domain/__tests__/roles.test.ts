@@ -5,6 +5,7 @@ import {
   isOpsManagerRole,
   userHasSupervisorRole,
   userHasOpsManagerRole,
+  userHasSuperAdminRole,
   userHasShiftLeaderRole,
   userIsShiftLeader,
 } from "../roles.js";
@@ -32,6 +33,15 @@ describe("role predicates", () => {
     expect(userHasOpsManagerRole({ roles: [RoleName.OPS_MANAGER] })).toBe(true);
     expect(userHasOpsManagerRole({ roles: [RoleName.OPS_MANAGER_2] })).toBe(true);
     expect(userHasOpsManagerRole({ roles: [RoleName.MAPPING_INSPECTOR] })).toBe(false);
+  });
+
+  it("userHasOpsManagerRole includes SUPER_ADMIN for manager parity", () => {
+    expect(userHasOpsManagerRole({ roles: [RoleName.SUPER_ADMIN] })).toBe(true);
+  });
+
+  it("userHasSuperAdminRole detects SUPER_ADMIN", () => {
+    expect(userHasSuperAdminRole({ roles: [RoleName.SUPER_ADMIN] })).toBe(true);
+    expect(userHasSuperAdminRole({ roles: [RoleName.OPS_ADMIN] })).toBe(false);
   });
 
   it("shift-leader helpers accept their respective shapes", () => {

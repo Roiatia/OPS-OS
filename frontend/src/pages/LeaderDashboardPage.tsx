@@ -1,10 +1,13 @@
-import { Suspense, lazy, useCallback, useMemo, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { AssignmentBoard } from "../components/leader/AssignmentBoard";
 import { CsvImportPanel } from "../components/leader/CsvImportPanel";
 import { LeaderSidebar, type LeaderSection } from "../components/leader/LeaderSidebar";
 import { SettingsPanel } from "../components/leader/SettingsPanel";
+import { useFeatures } from "../hooks/useFeatures";
+import { filterVisibleSections } from "../lib/features";
+import { useTrackSection } from "../hooks/useUsageTracker";
 
 // The default "maps" section (AssignmentBoard) stays eager; the other sections
 // are code-split so they don't bloat the leader's initial chunk.
@@ -60,6 +63,15 @@ const SECTION_TITLES: Record<LeaderSection, { title: string; subtitle: string }>
 
 export function LeaderDashboardPage() {
   const qc = useQueryClient();
+  const { map: featureMap } = useFeatures();
+  const visibleSections = useMemo(
+    () =>
+      filterVisibleSections(
+        LEADER_SECTIONS.map((id) => ({ id })),
+        featureMap
+      ).map((s) => s.id),
+    [featureMap]
+  );
   const [showAddMap, setShowAddMap] = useState(false);
   const [showCsvImport, setShowCsvImport] = useState(false);
   const [error, setError] = useState("");
@@ -68,6 +80,14 @@ export function LeaderDashboardPage() {
     LEADER_SECTIONS,
     "maps"
   );
+  useTrackSection(activeSection);
+
+  useEffect(() => {
+    if (visibleSections.length > 0 && !visibleSections.includes(activeSection)) {
+      setActiveSection(visibleSections[0] ?? "maps");
+    }
+  }, [activeSection, visibleSections, setActiveSection]);
+
   const [form, setForm] = useState({
     mapNumber: "",
     jiraTicketId: "",
@@ -153,6 +173,7 @@ export function LeaderDashboardPage() {
         onSectionChange={setActiveSection}
         idleInspectorCount={idleInspectorCount}
         needsQaCount={needsQaCount}
+        visibleIds={visibleSections}
       />
 
       <div className="flex-1 min-w-0 px-6 py-6 overflow-y-auto">

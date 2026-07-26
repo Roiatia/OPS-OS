@@ -5,6 +5,12 @@ import { prisma } from "../lib/prisma.js";
 import { authMiddleware, signToken, type AuthedRequest } from "../middleware/auth.js";
 import { ROLE_LABELS } from "../lib/types.js";
 import { env } from "../lib/env.js";
+import { isAccountDisabled } from "../lib/schemaCapabilities.js";
+import {
+  isSuperAdminDemoTarget,
+  isSuperAdminPasswordConfigured,
+  verifySuperAdminPassword,
+} from "../lib/superAdminPassword.js";
 
 const router = Router();
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
@@ -67,6 +73,9 @@ router.post("/google", async (req, res) => {
         },
         include: { roles: true },
       });
+    } else if (await isAccountDisabled(user.id)) {
+      res.status(401).json({ error: "Account disabled" });
+      return;
     } else if (!user.googleId) {
       user = await prisma.user.update({
         where: { id: user.id },
@@ -95,7 +104,7 @@ router.post("/demo", async (req, res) => {
     return;
   }
 
-  const { email } = req.body as { email?: string };
+  const { email, password } = req.body as { email?: string; password?: string };
   if (!email) {
     res.status(400).json({ error: "Email required" });
     return;
@@ -111,12 +120,36 @@ router.post("/demo", async (req, res) => {
     return;
   }
 
+  if (await isAccountDisabled(user.id)) {
+    res.status(401).json({ error: "Account disabled" });
+    return;
+  }
+
+  const roles = user.roles.map((r) => r.role);
+  if (isSuperAdminDemoTarget(user.email, roles)) {
+    if (!isSuperAdminPasswordConfigured()) {
+      res.status(503).json({
+        error:
+          "Super Admin password is not configured. Set SUPER_ADMIN_PASSWORD in backend/.env and restart the backend.",
+      });
+      return;
+    }
+    if (typeof password !== "string" || !password.trim()) {
+      res.status(401).json({ error: "Super Admin password required" });
+      return;
+    }
+    if (!verifySuperAdminPassword(password)) {
+      res.status(401).json({ error: "Incorrect Super Admin password" });
+      return;
+    }
+  }
+
   const authUser = {
     id: user.id,
     email: user.email,
     name: user.name,
     avatarUrl: user.avatarUrl,
-    roles: user.roles.map((r) => r.role),
+    roles,
   };
 
   res.json({ token: signToken(authUser), user: authUser });

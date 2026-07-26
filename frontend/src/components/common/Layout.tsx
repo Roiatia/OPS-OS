@@ -1,5 +1,5 @@
 import { Outlet, Link, useNavigate } from "react-router-dom";
-import { hasSupervisorRole } from "@/lib/roles";
+import { hasOpsManagerRole, hasSuperAdminRole, hasSupervisorRole } from "@/lib/roles";
 import { useAuth, hasRole } from "@/context/AuthContext";
 import { OriientLogo } from "@/components/common/OriientLogo";
 import { useRealtimeCacheBridge } from "@/hooks/useMapsRealtime";
@@ -15,9 +15,11 @@ export function Layout() {
   if (!user) return null;
 
   const primaryRole = user.roles[0];
-  const isLeader = hasRole(user, "GRAPHIC_TEAM_LEADER", "OPS_ADMIN", "OPS_MANAGER", "OPS_MANAGER_2");
+  const isSuperAdmin = hasSuperAdminRole(user);
+  const isLeader =
+    hasRole(user, "GRAPHIC_TEAM_LEADER") || hasOpsManagerRole(user) || isSuperAdmin;
   const isSupervisor = hasSupervisorRole(user);
-  const useFullWidth = isLeader || isSupervisor;
+  const useFullWidth = isLeader || isSupervisor || isSuperAdmin;
 
   return (
     <div className="min-h-screen flex flex-col bg-surface">
@@ -29,8 +31,16 @@ export function Layout() {
             <OriientLogo size="md" />
           </Link>
           <div className="flex items-center gap-4">
+            {isSuperAdmin && (
+              <Link
+                to="/app/admin/overview"
+                className="text-sm font-medium text-brand-700 hover:text-brand-900 hidden sm:inline"
+              >
+                Admin
+              </Link>
+            )}
             <span className="text-sm text-muted hidden sm:inline px-3 py-1 rounded-full bg-slate-50">
-              {ROLE_LABELS[primaryRole]}
+              {ROLE_LABELS[primaryRole] ?? primaryRole}
             </span>
             <div className="flex items-center gap-2.5">
               <div className="w-9 h-9 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-sm font-semibold ring-2 ring-brand-50">

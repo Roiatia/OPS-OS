@@ -1,6 +1,7 @@
 import { Navigate } from "react-router-dom";
 import { useAuth, hasRole } from "../context/AuthContext";
-import { hasOpsManagerRole, hasSupervisorRole } from "../lib/roles";
+import { hasOpsManagerRole, hasSuperAdminRole, hasSupervisorRole } from "../lib/roles";
+import { loadWorkspaceSettings } from "../components/leader/SettingsPanel";
 
 /** Redirects `/app` to the current user's default role-prefixed section. */
 export function DashboardPage() {
@@ -8,8 +9,13 @@ export function DashboardPage() {
 
   if (!user) return null;
 
+  const preferMaps = loadWorkspaceSettings().defaultViewMaps;
+
+  if (hasSuperAdminRole(user)) {
+    return <Navigate to="/app/admin/overview" replace />;
+  }
   if (hasOpsManagerRole(user)) {
-    return <Navigate to="/app/ops/hub" replace />;
+    return <Navigate to={preferMaps ? "/app/ops/maps" : "/app/ops/hub"} replace />;
   }
   if (hasRole(user, "GRAPHIC_TEAM_LEADER")) {
     return <Navigate to="/app/leader/maps" replace />;

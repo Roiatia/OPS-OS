@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useMemo } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { MapHubBoard } from "../components/hub/MapHubBoard";
 import { SettingsPanel } from "../components/leader/SettingsPanel";
@@ -6,6 +6,9 @@ import { SupervisorSidebar, type SupervisorSection } from "../components/supervi
 import { ConfluencePanel } from "../components/shared/ConfluencePanel";
 import { AvailabilityPanel } from "../components/shared/AvailabilityPanel";
 import { AvailabilityReminderModal } from "../components/availability/AvailabilityReminderModal";
+import { useFeatures } from "../hooks/useFeatures";
+import { filterVisibleSections } from "../lib/features";
+import { useTrackSection } from "../hooks/useUsageTracker";
 
 // Non-default sections are code-split so the Hub (default) paints without the
 // maps board, team panel, company dashboard or availability form in the chunk.
@@ -61,11 +64,28 @@ const SECTION_TITLES: Record<SupervisorSection, { title: string; subtitle: strin
 export function SupervisorDashboardPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
+  const { map: featureMap } = useFeatures(Boolean(user));
+  const visibleSections = useMemo(
+    () =>
+      filterVisibleSections(
+        SUPERVISOR_SECTIONS.map((id) => ({ id })),
+        featureMap
+      ).map((s) => s.id),
+    [featureMap]
+  );
   const [activeSection, setActiveSection] = useSectionRoute(
     "/app/supervisor",
     SUPERVISOR_SECTIONS,
     "hub"
   );
+  useTrackSection(activeSection);
+
+  useEffect(() => {
+    if (visibleSections.length > 0 && !visibleSections.includes(activeSection)) {
+      setActiveSection(visibleSections[0] ?? "hub");
+    }
+  }, [activeSection, visibleSections, setActiveSection]);
+
   const availabilityReminder = useAvailabilityReminder(hasSupervisorRole(user));
 
   function openAvailability() {
@@ -141,6 +161,7 @@ export function SupervisorDashboardPage() {
         }}
         activeMapCount={stats.uncompleted}
         teamCount={supervisors.length}
+        visibleIds={visibleSections}
       />
 
       <div className="flex-1 min-w-0 px-6 py-6 overflow-y-auto">

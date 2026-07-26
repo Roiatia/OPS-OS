@@ -21,7 +21,8 @@ const BULK_WRITE_OPS = new Set(["createMany", "updateMany", "deleteMany"]);
  * failures must never break the DB write.
  */
 function emitMapChange(
-  base: PrismaClient,
+  // Looser than PrismaClient so omit:/extended clients still type-check.
+  base: { map: PrismaClient["map"] },
   operation: string,
   result: unknown
 ): void {
@@ -65,8 +66,15 @@ function emitMapChange(
 }
 
 function createPrismaClient() {
+  // Always omit User.active from Prisma SELECTs/writes. Shared Cloud SQL may
+  // briefly lag the Super Admin migration; selecting a missing column breaks
+  // every auth path. Soft-disable reads/writes go through schemaCapabilities
+  // raw SQL (and re-probe on a short TTL when the column was previously absent).
+  // RoleName is @@map'd to RoleName_new — restart after `prisma generate` so
+  // the query engine casts to the live enum, not the unused legacy RoleName.
   const base = new PrismaClient({
     log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
+    omit: { user: { active: true } },
   });
 
   return base.$extends({
@@ -75,7 +83,7 @@ function createPrismaClient() {
         async $allOperations({ operation, args, query }) {
           const result = await query(args);
           if (SINGLE_WRITE_OPS.has(operation) || BULK_WRITE_OPS.has(operation) || operation === "delete") {
-            emitMapChange(base, operation, result);
+            emitMapChange(base as unknown as { map: PrismaClient["map"] }, operation, result);
           }
           return result;
         },

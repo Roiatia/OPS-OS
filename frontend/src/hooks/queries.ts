@@ -126,3 +126,19 @@ export function useReportDetailQuery(id: string | null) {
     enabled: Boolean(id),
   });
 }
+
+export const featureKeys = {
+  mine: ["features", "mine"] as const,
+};
+
+/** Resolved feature flags for the current user. Fail-open while loading. */
+export function useMyFeaturesQuery(enabled = true) {
+  return useQuery({
+    queryKey: featureKeys.mine,
+    queryFn: api.getMyFeatures,
+    staleTime: 60_000,
+    enabled,
+    // Never hard-fail the UI into a locked-out state if flags can't load.
+    retry: 1,
+  });
+}

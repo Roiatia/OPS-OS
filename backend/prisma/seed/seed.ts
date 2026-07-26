@@ -79,6 +79,11 @@ const DEMO_USERS = [
     name: "Noa Ops Manager",
     roles: [RoleName.OPS_MANAGER] as RoleName[],
   },
+  {
+    email: "admin@ops-demo.local",
+    name: "Super Admin",
+    roles: [RoleName.SUPER_ADMIN] as RoleName[],
+  },
 ];
 
 async function seedUsers() {
@@ -90,6 +95,14 @@ async function seedUsers() {
       create: { email: demo.email, name: demo.name },
     });
 
+    // Keep demo roles exact — remove stale roles (e.g. admin left as OPS_ADMIN
+    // before SUPER_ADMIN existed) then ensure the intended set is present.
+    await prisma.userRole.deleteMany({
+      where: {
+        userId: user.id,
+        role: { notIn: demo.roles },
+      },
+    });
     for (const role of demo.roles) {
       await prisma.userRole.upsert({
         where: { userId_role: { userId: user.id, role } },

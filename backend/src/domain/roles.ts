@@ -13,6 +13,9 @@ export const OPS_MANAGER_ROLE_NAMES = [
   "OPS_MANAGER_2",
 ].filter((role): role is RoleName => role != null && role !== undefined);
 
+/** All-access administrator above OPS managers */
+export const SUPER_ADMIN_ROLE = "SUPER_ADMIN" as RoleName;
+
 export function isSupervisorRole(role: RoleName | string): boolean {
   return SUPERVISOR_ROLE_NAMES.includes(role as RoleName);
 }
@@ -21,12 +24,24 @@ export function isOpsManagerRole(role: RoleName | string): boolean {
   return OPS_MANAGER_ROLE_NAMES.includes(role as RoleName);
 }
 
+export function isSuperAdminRole(role: RoleName | string): boolean {
+  return role === SUPER_ADMIN_ROLE || role === RoleName.SUPER_ADMIN;
+}
+
 export function userHasSupervisorRole(user: { roles: RoleName[] }): boolean {
   return user.roles.some((r) => isSupervisorRole(r));
 }
 
+/**
+ * True for OPS managers and Super Admins. Super Admin inherits every capability
+ * that OPS managers have, without being listed as a manager in roster queries.
+ */
 export function userHasOpsManagerRole(user: { roles: RoleName[] }): boolean {
-  return user.roles.some((r) => isOpsManagerRole(r));
+  return user.roles.some((r) => isOpsManagerRole(r) || isSuperAdminRole(r));
+}
+
+export function userHasSuperAdminRole(user: { roles: RoleName[] }): boolean {
+  return user.roles.some((r) => isSuperAdminRole(r));
 }
 
 export function userIsShiftLeader(user: { roles: { role: RoleName }[] }): boolean {
